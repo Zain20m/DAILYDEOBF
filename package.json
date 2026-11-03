@@ -1,0 +1,19 @@
+{
+  "name": "daily-deobf",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DAILY DEOBF Discord bot for Luau source analysis",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "check": "node --check index.js && node --check scripts/setup-engine.js",
+    "postinstall": "node scripts/setup-engine.js"
+  },
+  "engines": { "node": ">=20.11.0" },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "discord.js": "^14.22.1",
+    "fengari": "^0.1.5",
+    "luaparse": "^0.3.1"
+  }
+}

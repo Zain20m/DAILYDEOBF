@@ -1,104 +1,50 @@
-name: Inspect Luraph 15.1 upload
+name: Import newest Luraph v15 engine
 
 on:
   push:
     paths:
-      - "upload/**"
-  workflow_dispatch:
+      - "upload/DAILY-DEOBF-LURAPH-V15-NEWEST*.zip"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  inspect-151:
+  import-engine:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-      - name: Unwrap ZIP and inspect nested RAR without executing it
+
+      - name: Extract and install newest engine
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y 7zip
-          SEVEN="$(command -v 7zz || command -v 7z)"
-          export SEVEN
-          python3 - <<'PY'
-          from pathlib import Path, PurePosixPath
-          from zipfile import ZipFile
-          import os, subprocess, tempfile
+          shopt -s nullglob
+          ARCHIVES=(upload/DAILY-DEOBF-LURAPH-V15-NEWEST*.zip)
+          if [ "${#ARCHIVES[@]}" -eq 0 ]; then
+            echo "No matching Luraph v15 archive found."
+            exit 1
+          fi
+          ARCHIVE="${ARCHIVES[0]}"
+          echo "Importing: $ARCHIVE"
 
-          wrapper = Path("upload/Luraph_v15_1_Deobfuscator_Newest.zip")
-          if not wrapper.is_file():
-              raise SystemExit(f"Missing ZIP: {wrapper}")
-          with ZipFile(wrapper) as z:
-              files = [i for i in z.infolist() if not i.is_dir()]
-              if len(files) != 1 or not files[0].filename.lower().endswith(".rar"):
-                  raise SystemExit("Expected the uploaded ZIP to contain exactly one .rar file.")
-              nested = z.read(files[0])
-          print(f"WRAPPER_OK: {wrapper.stat().st_size} bytes; nested RAR={files[0].filename} ({len(nested)} bytes)")
+          rm -rf /tmp/daily-deobf-import
+          mkdir -p /tmp/daily-deobf-import
+          unzip -q "$ARCHIVE" -d /tmp/daily-deobf-import
+          test -f /tmp/daily-deobf-import/luraph-v15-engine/deob.js
+          test -f /tmp/daily-deobf-import/luraph-v15-engine/bin/luau
+          test -f /tmp/daily-deobf-import/luraph-v15-engine/bin/luau-ast
 
-          with tempfile.TemporaryDirectory(prefix="luraph151-inspect-") as tmp:
-              root = Path(tmp)
-              rar = root / "payload.rar"
-              out = root / "extracted"
-              out.mkdir()
-              rar.write_bytes(nested)
-              seven = os.environ["SEVEN"]
-              subprocess.run([seven, "t", str(rar)], check=True, capture_output=True, text=True)
+          rm -rf luraph-v15-engine
+          cp -R /tmp/daily-deobf-import/luraph-v15-engine ./luraph-v15-engine
+          chmod +x luraph-v15-engine/bin/luau luraph-v15-engine/bin/luau-ast
+          python3 scripts/apply-luraph-newest.py
+          rm -f "$ARCHIVE"
 
-              listing = subprocess.run([seven, "l", "-slt", str(rar)], check=True, capture_output=True, text=True).stdout
-              records, current = [], {}
-              for line in listing.split("----------", 1)[-1].splitlines():
-                  if not line.strip():
-                      if current:
-                          records.append(current)
-                          current = {}
-                  elif " = " in line:
-                      key, value = line.split(" = ", 1)
-                      current[key] = value
-              if current:
-                  records.append(current)
-
-              entries = []
-              for rec in records:
-                  name = rec.get("Path", "")
-                  if not name or name == str(rar):
-                      continue
-                  p = PurePosixPath(name.replace("\\", "/"))
-                  if p.is_absolute() or ".." in p.parts:
-                      raise SystemExit(f"Unsafe archive path: {name}")
-                  if "Symbolic Link" in rec.get("Attributes", ""):
-                      raise SystemExit(f"Symlink entry is not allowed: {name}")
-                  size = int(rec.get("Size", "0") or 0)
-                  entries.append((name, size, rec.get("Folder") == "+"))
-              total = sum(size for _, size, is_dir in entries if not is_dir)
-              if len(entries) > 5000 or total > 256 * 1024 * 1024:
-                  raise SystemExit(f"Archive too large: {len(entries)} entries, {total} bytes")
-              print(f"RAR_OK: {len(entries)} entries; uncompressed={total} bytes")
-              for name, size, is_dir in entries:
-                  print(f"ENTRY {size:>10} {'DIR ' if is_dir else 'FILE'} {name}")
-
-              subprocess.run([seven, "x", "-y", f"-o{out}", str(rar)], check=True, capture_output=True, text=True)
-              src = out / "v15_tool_attempt_source"
-              print("\n--- KEY ENGINE FILES (read only) ---")
-              for relative in (
-                  "deob.js",
-                  "src/detect.js",
-                  "src/driver.js",
-                  "protocol.json",
-                  "core/obfuscators/luraph_v15/__init__.py",
-              ):
-                  path = src / relative
-                  if not path.is_file():
-                      print(f"MISSING {relative}")
-                      continue
-                  text = path.read_text(encoding="utf-8", errors="replace")
-                  print(f"\n### {relative} ({len(text)} chars)\n{text[:14000]}")
-              print("\n--- sample filenames ---")
-              samples = src / "samples_v15.1_deobfuscated"
-              if samples.is_dir():
-                  for path in sorted(samples.iterdir()):
-                      if path.is_file():
-                          print(f"SAMPLE {path.stat().st_size} {path.name}")
-          PY
+          node --check index.js
+          node --check luraph-v15-engine/deob.js
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Replace legacy v15 engine with newest Luraph v15"
+          git push

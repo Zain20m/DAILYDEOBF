@@ -1,0 +1,83 @@
+name: Test original v15 engine against 15.1 beta sample
+
+on:
+  push:
+    paths:
+      - "upload/TEST_V15_BETA_TRIGGER.txt"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the original v15 lifter on beta 15.1 sample
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y 7zip
+          SEVEN="$(command -v 7zz || command -v 7z)"
+          export SEVEN
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          import os, subprocess, tempfile
+
+          wrapper = Path("upload/Luraph_v15_1_Deobfuscator_Newest.zip")
+          with ZipFile(wrapper) as z:
+              rar_entries = [x for x in z.infolist() if x.filename.lower().endswith(".rar")]
+              if len(rar_entries) != 1:
+                  raise SystemExit("Expected one nested RAR")
+              rar_data = z.read(rar_entries[0])
+
+          with tempfile.TemporaryDirectory(prefix="v15-beta-test-") as temp:
+              root = Path(temp)
+              rar = root / "payload.rar"
+              extracted = root / "extracted"
+              extracted.mkdir()
+              rar.write_bytes(rar_data)
+              subprocess.run([os.environ["SEVEN"], "x", "-y", f"-o{extracted}", str(rar)], check=True, capture_output=True)
+              sample = extracted / "v15_tool_attempt_source/samples_v15.1_deobfuscated/2153b779fa7a87f2_obfuscated.lua"
+              if not sample.is_file():
+                  raise SystemExit("Beta sample not found")
+
+              cases = [
+                  ("payload_vm", {"DEVIRT_FULL_ROUNDS":"1"}, ["--max-runs","12","--devirt-rounds","200","--budget","60","--timeout","120"]),
+                  ("all_vms", {"DEVIRT_FULL_ROUNDS":"1","DEVIRT_LOADERS":"1","DEVIRT_WALK_LIMIT":"750000"}, ["--max-runs","16","--devirt-rounds","200","--budget","60","--timeout","120"]),
+              ]
+              for name, flags, args in cases:
+                  outdir = root / name
+                  outdir.mkdir()
+                  output = outdir / "result.luau"
+                  env = os.environ.copy()
+                  env.update(flags)
+                  print(f"\n===== ORIGINAL V15 CASE: {name} =====", flush=True)
+                  try:
+                      result = subprocess.run(
+                          [
+                              "python3","luraph-v15-engine/deob.py",str(sample),
+                              "-o",str(output),"--obfuscator","luraph_v15",
+                              "--debug","--strings","--no-pypy",*args,
+                          ],
+                          cwd=Path.cwd(),
+                          env=env,
+                          capture_output=True,
+                          text=True,
+                          timeout=720,
+                      )
+                      print("EXIT="+str(result.returncode))
+                      print("OUTPUT_BYTES="+str(output.stat().st_size if output.exists() else 0))
+                      print("STDOUT:\n"+result.stdout[-4000:])
+                      print("STDERR:\n"+result.stderr[-10000:])
+                      print("ARTIFACTS:")
+                      for p in sorted(outdir.iterdir()):
+                          if p.is_file():
+                              print(p.name, p.stat().st_size)
+                  except subprocess.TimeoutExpired as exc:
+                      print("TIMEOUT after 720s")
+                      print("STDERR:\n"+str(exc.stderr)[-10000:])
+          PY

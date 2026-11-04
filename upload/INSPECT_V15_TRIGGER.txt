@@ -1,1 +1,1 @@
-Inspect the uploaded Deobfuscator.zip for the separate Luraph v15 engine.
+Inspect the uploaded Deobfuscator.zip CLI and v15 analysis pipeline.

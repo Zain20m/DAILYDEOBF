@@ -13,7 +13,7 @@ const path = require('node:path');
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const PREFIX = '.deobf';
-const MAX_INPUT_BYTES = 400 * 1024;
+const MAX_INPUT_BYTES = 2 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 18 * 1024 * 1024;
 const INPUT_WAIT_MS = 180_000;
 const PICKER_WAIT_MS = 120_000;
@@ -138,7 +138,7 @@ async function inputFromAttachment(attachment) {
     throw new Error('Upload a `.lua`, `.luau`, or `.txt` file.');
   }
   if (attachment.size > MAX_INPUT_BYTES) {
-    throw new Error('The file is too large. Maximum size is 400 KB.');
+    throw new Error('The file is too large. Maximum size is 2 MB.');
   }
 
   // Discord CDN attachments are trusted HTTPS URLs; download them directly.
@@ -248,7 +248,7 @@ function runEngine(inputPath, outDir) {
           ? [...lines.slice(0, 9), '…', ...lines.slice(-5)].join('\n')
           : lines.join('\n');
         const parserHint = /luaparse|parseSubExpression|parseExpectedExpression/i.test(raw)
-          ? '\n\nThe engine parser rejected this input. This commonly happens when a Luau-only construct reaches its Lua parser; the exact line/column above is needed to add a safe compatibility fix.'
+          ? '\n\nParser compatibility error: the bundled Luraph engine reached its Lua parser and rejected syntax in this input. The line and column above identify the failure. Raising the upload limit does not fix parser incompatibility; this engine build currently has no verified Luau-to-Lua compatibility pass.'
           : '';
         return reject(new Error((detail || `Deobfuscator exited with code ${code}.`) + parserHint));
       }
@@ -301,7 +301,7 @@ async function processLuraph151(message, prompt, input) {
 
 async function startWorkflow(message) {
   const prompt = await message.reply({
-    content: '📄 **DAILY DEOBF**\nSend a `.lua`, `.luau`, or `.txt` file, or paste a direct URL to your Luau script.\n\nMaximum input size: 400 KB.',
+    content: '📄 **DAILY DEOBF**\nSend a `.lua`, `.luau`, or `.txt` file, or paste a direct URL to your Luau script.\n\nMaximum input size: 2 MB.',
     allowedMentions: { repliedUser: false },
   });
   // Accept attachments on the original command message too.

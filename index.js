@@ -435,22 +435,38 @@ function runPythonEngine(engineDir, engineCli, inputPath, outputPath, timeoutMs,
 }
 
 
-async function cleanLuraph151Candidate(filePath) {
+async function cleanLuraph151Candidate(filePath, engineDir) {
+  const rawPath = filePath.replace(/\\.luau$/i, '.raw.luau');
+  let backupMade = false;
   try {
     const raw = await fs.readFile(filePath, 'utf8');
     if (!raw.trim()) return { cleaned: false, reason: 'empty' };
-    const rawPath = filePath.replace(/\.luau$/i, '.raw.luau');
     await fs.copyFile(filePath, rawPath);
+    backupMade = true;
+
     const cleaner = path.join(__dirname, 'scripts', 'luau-cleaner.js');
     await runCommand(process.execPath, [cleaner, rawPath, filePath], __dirname, 120_000);
     const cleaned = await fs.readFile(filePath, 'utf8');
-    if (!cleaned.trim()) {
-      await fs.copyFile(rawPath, filePath);
-      return { cleaned: false, reason: 'empty cleaner output' };
-    }
-    return { cleaned: true, beforeBytes: Buffer.byteLength(raw), afterBytes: Buffer.byteLength(cleaned) };
+    if (!cleaned.trim()) throw new Error('cleaner produced an empty file');
+
+    // The formatter is intentionally conservative, but still verify its output.
+    // Keep the raw lifter output if formatting damaged Luau syntax.
+    const parser = path.join(engineDir, 'bin', 'luau-ast');
+    await runCommand(parser, [filePath], engineDir, 120_000);
+
+    return {
+      cleaned: true,
+      beforeBytes: Buffer.byteLength(raw),
+      afterBytes: Buffer.byteLength(cleaned),
+      syntaxChecked: true,
+    };
   } catch (error) {
-    return { cleaned: false, reason: String(error.message || error).slice(0, 180) };
+    if (backupMade) await fs.copyFile(rawPath, filePath).catch(() => {});
+    return {
+      cleaned: false,
+      reason: String(error.message || error).slice(0, 180),
+      restoredRaw: backupMade,
+    };
   }
 }
 
@@ -482,7 +498,7 @@ async function inspectLiftFile(filePath, engineDir) {
       await runCommand(parser, [filePath], engineDir, 120_000);
       assessment.syntaxChecked = true;
       assessment.syntaxValid = true;
-      assessment.score += 10_000;
+      assessment.score += assessment.complete ? 10_000 : 1_000;
     } catch (error) {
       assessment.syntaxChecked = true;
       assessment.syntaxValid = false;
@@ -587,7 +603,7 @@ async function sendAnalysisOutput(message, input, config) {
     'String dump: ' + (stringBytes ? formatBytes(stringBytes) : 'not produced'),
     'Source candidate: ' + (hasLiftCandidate ? formatBytes(liftedBytes) : 'not produced'),
     'Lift validation: ' + (hasLiftedSource ? 'passed' : 'failed'),
-    'Luau syntax check: ' + (validation.syntaxChecked ? (validation.syntaxValid ? 'passed' : 'failed') : 'not run because structural checks failed'),
+    'Luau syntax check: ' + (validation.syntaxChecked ? (validation.syntaxValid ? 'passed' : 'failed') : 'not available because no source candidate was produced'),
     'Behaviour trace: ' + (traceBytes ? formatBytes(traceBytes) : 'not produced'),
     '',
     'Validation diagnostics:',
@@ -920,7 +936,7 @@ async function processLuraph151(message, prompt, input) {
       'The dedicated pass returned. Inspecting its actual output for unresolved VM values, placeholder functions and Luau syntax before deciding whether to run the compatibility engine.'
     );
 
-    await cleanLuraph151Candidate(dedicated.base + '.devirt.luau');
+    await cleanLuraph151Candidate(dedicated.base + '.devirt.luau', ENGINE_151_DIR);
 
     dedicatedValidation = await inspectLiftFile(
       dedicated.base + '.devirt.luau',
@@ -980,7 +996,7 @@ async function processLuraph151(message, prompt, input) {
         'The compatibility pass returned. Measuring its reconstruction quality and syntax independently from the dedicated 15.1 result.'
       );
 
-      await cleanLuraph151Candidate(compatible.base + '.devirt.luau');
+      await cleanLuraph151Candidate(compatible.base + '.devirt.luau', ENGINE_V15_DIR);
 
       compatibilityValidation = await inspectLiftFile(
         compatible.base + '.devirt.luau',

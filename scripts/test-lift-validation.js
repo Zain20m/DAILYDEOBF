@@ -38,6 +38,7 @@ const inertStub = inspectLiftText([
   'end',
   'print("runtime helper never referenced")',
 ].join('\n'));
-assert.equal(inertStub.complete, true);
+assert.equal(inertStub.complete, false);
+assert.ok(inertStub.metrics.runtimeStubDefinitions > 0);
 
 console.log('lift-validation tests passed');

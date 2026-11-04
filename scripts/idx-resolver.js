@@ -305,10 +305,17 @@ async function resolveWithExtractor(source, options, extractor) {
 }
 
 async function resolveLoadstringSources(source, options = {}) {
-  const extractAllLoadstringUrls = (text) => uniqueUrls([
-    ...extractLoadstringHttpGetUrls(text),
-    ...extractStaticFetchUrls(text),
-  ]);
+  const extractAllLoadstringUrls = (text) => {
+    const inlineChunks = extractInlineLoadstringSources(text);
+    return uniqueUrls([
+      ...extractLoadstringHttpGetUrls(text),
+      ...extractStaticFetchUrls(text),
+      ...inlineChunks.flatMap((chunk) => [
+        ...extractLoadstringHttpGetUrls(chunk),
+        ...extractStaticFetchUrls(chunk),
+      ]),
+    ]);
+  };
   return resolveWithExtractor(source, {
     ...options,
     namePrefix: 'loadstring',

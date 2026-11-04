@@ -492,7 +492,7 @@ async function inspectLiftFile(filePath, engineDir) {
   assessment.syntaxChecked = false;
   assessment.syntaxValid = null;
 
-  if (assessment.complete) {
+  if (assessment.candidate) {
     const parser = path.join(engineDir, 'bin', 'luau-ast');
     try {
       await runCommand(parser, [filePath], engineDir, 120_000);

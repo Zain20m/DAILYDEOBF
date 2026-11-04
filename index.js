@@ -1302,7 +1302,7 @@ async function handleIdxFiles(message) {
 async function startIdxWorkflow(message, inlineSource = null) {
   const prompt = await message.reply({
     content: inlineSource
-      ? '⚙️ DAILY DEOBF · .idx\\nBuilding a capture runner from your supplied loadstring expression...'
+      ? '⚙️ DAILY DEOBF · .idx\nBuilding a capture runner from your supplied loadstring expression...'
       : '📄 DAILY DEOBF · .idx\\nAttach the .lua, .luau, or .txt script whose loadstring calls you want to capture, or paste a direct script URL. I will return a runner file with the hook inserted.',
     allowedMentions: { repliedUser: false },
   });

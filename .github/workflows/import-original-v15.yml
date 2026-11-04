@@ -145,6 +145,18 @@ jobs:
                   print(f"Uncompressed bytes: {total}")
           PY
 
+          node --check index.js
+          node --check scripts/setup-engines.js
+          node scripts/setup-engines.js
+          python3 - <<'PY'
+          from pathlib import Path
+          engine = Path("luraph-v15-engine/deobf")
+          for source in engine.rglob("*.py"):
+              if "__pycache__" not in source.parts:
+                  compile(source.read_text(encoding="utf-8"), str(source), "exec")
+          print("Original v15 Python sources compile successfully.")
+          PY
+
       - name: Commit staged original engine for inspection
         shell: bash
         run: |

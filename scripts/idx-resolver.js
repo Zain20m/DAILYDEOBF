@@ -7,6 +7,22 @@ const REQUEST_FUNCTIONS = new Set([
 ]);
 const URL_FIELDS = new Set(['url', 'uri', 'urlstring']);
 
+function extractInlineLoadstringSources(source) {
+  const tokens = tokenizeLua(String(source || ''));
+  const chunks = [];
+  for (let i = 0; i + 2 < tokens.length; i++) {
+    if (
+      tokens[i].type !== 'identifier' || tokens[i].value.toLowerCase() !== 'loadstring' ||
+      tokens[i + 1].value !== '(' ||
+      tokens[i + 2].type !== 'string'
+    ) continue;
+
+    const chunk = tokens[i + 2].value;
+    if (chunk.trim() && !isHttpUrl(chunk)) chunks.push(chunk);
+  }
+  return chunks;
+}
+
 function tokenizeLua(source) {
   const tokens = [];
   let i = 0;
@@ -124,10 +140,26 @@ function extractLoadstringHttpGetUrls(source) {
 function extractStaticFetchUrls(source) {
   const tokens = tokenizeLua(String(source || ''));
   const urls = [];
+  const literalStrings = new Map();
+  const requestAliases = new Set(REQUEST_FUNCTIONS);
+
+  for (let i = 0; i + 2 < tokens.length; i++) {
+    if (tokens[i].type === 'identifier' && tokens[i + 1].value === '=' && tokens[i + 2].type === 'string') {
+      literalStrings.set(tokens[i].value, tokens[i + 2].value);
+    }
+    if (tokens[i].type === 'identifier' && tokens[i + 1].value === '=') {
+      const target = tokens.slice(i + 2, i + 7)
+        .find((part) => part.type === 'identifier' && REQUEST_FUNCTIONS.has(part.value.toLowerCase()));
+      if (target) requestAliases.add(tokens[i].value.toLowerCase());
+    }
+  }
 
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
-    if (token.type !== 'string' || !isHttpUrl(token.value)) continue;
+    const literalUrl = token.type === 'string'
+      ? token.value
+      : (token.type === 'identifier' ? literalStrings.get(token.value) : null);
+    if (!isHttpUrl(literalUrl)) continue;
 
     const previous = tokens[i - 1];
     const beforePrevious = tokens[i - 2];
@@ -138,9 +170,9 @@ function extractStaticFetchUrls(source) {
     // HttpGet/GetAsync/request("https://...") and dotted equivalents.
     if (
       previous && previous.value === '(' &&
-      REQUEST_FUNCTIONS.has(apiName)
+      requestAliases.has(apiName)
     ) {
-      urls.push(token.value);
+      urls.push(literalUrl);
       continue;
     }
 
@@ -150,9 +182,9 @@ function extractStaticFetchUrls(source) {
       previous && previous.value === ',' &&
       tokens[i - 3] && tokens[i - 3].value === '(' &&
       apiBeforeExplicitReceiver && apiBeforeExplicitReceiver.type === 'identifier' &&
-      REQUEST_FUNCTIONS.has(apiBeforeExplicitReceiver.value.toLowerCase())
+      requestAliases.has(apiBeforeExplicitReceiver.value.toLowerCase())
     ) {
-      urls.push(token.value);
+      urls.push(literalUrl);
       continue;
     }
 
@@ -162,7 +194,19 @@ function extractStaticFetchUrls(source) {
       beforePrevious && beforePrevious.type === 'identifier' &&
       URL_FIELDS.has(beforePrevious.value.toLowerCase())
     ) {
-      urls.push(token.value);
+      urls.push(literalUrl);
+      continue;
+    }
+
+    // request({ ["Url"] = "https://..." }) and bracket-key variants.
+    const bracketField = tokens[i - 3];
+    if (
+      previous && previous.value === '=' &&
+      tokens[i - 2] && tokens[i - 2].value === ']' &&
+      bracketField && bracketField.type === 'string' &&
+      URL_FIELDS.has(bracketField.value.toLowerCase())
+    ) {
+      urls.push(literalUrl);
     }
   }
 
@@ -188,6 +232,24 @@ async function resolveWithExtractor(source, options, extractor) {
   const visited = new Set();
   const captures = [];
   const failures = [];
+  const inlineSeen = new Set();
+  const inlineExtractor = typeof options.inlineExtractor === 'function' ? options.inlineExtractor : null;
+  const addInlineChunks = (text, depth, sourceUrl) => {
+    if (!inlineExtractor) return;
+    for (const chunk of inlineExtractor(text)) {
+      const key = chunk;
+      if (inlineSeen.has(key) || captures.length >= maxFiles) continue;
+      inlineSeen.add(key);
+      captures.push({
+        name: namePrefix + (captures.length + 1) + '.' + extension,
+        source: chunk,
+        url: sourceUrl || null,
+        depth,
+        inline: true,
+      });
+    }
+  };
+  addInlineChunks(source, 0, null);
   let discovered = initialUrls.length;
   let attempts = 0;
 
@@ -209,7 +271,9 @@ async function resolveWithExtractor(source, options, extractor) {
         source: text,
         url: item.url,
         depth: item.depth,
+        inline: false,
       });
+      addInlineChunks(text, item.depth, item.url);
 
       if (item.depth < maxDepth && captures.length + queue.length < maxFiles) {
         for (const childUrl of extractor(text)) {
@@ -241,7 +305,16 @@ async function resolveWithExtractor(source, options, extractor) {
 }
 
 async function resolveLoadstringSources(source, options = {}) {
-  return resolveWithExtractor(source, { ...options, namePrefix: 'loadstring', extension: 'txt' }, extractLoadstringHttpGetUrls);
+  const extractAllLoadstringUrls = (text) => uniqueUrls([
+    ...extractLoadstringHttpGetUrls(text),
+    ...extractStaticFetchUrls(text),
+  ]);
+  return resolveWithExtractor(source, {
+    ...options,
+    namePrefix: 'loadstring',
+    extension: 'txt',
+    inlineExtractor: extractInlineLoadstringSources,
+  }, extractAllLoadstringUrls);
 }
 
 async function resolveStaticSources(source, options = {}) {
@@ -249,6 +322,7 @@ async function resolveStaticSources(source, options = {}) {
 }
 
 module.exports = {
+  extractInlineLoadstringSources,
   extractLoadstringHttpGetUrls,
   extractStaticFetchUrls,
   resolveLoadstringSources,

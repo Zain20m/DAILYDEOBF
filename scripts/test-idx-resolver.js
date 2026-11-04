@@ -209,3 +209,28 @@ test('returns more than ten chunks when the configured limit allows it', async (
   assert.equal(result.captures.length, 24);
   assert.equal(result.captures[23].name, 'loadstring24.txt');
 });
+
+
+test('follows URLs inside inline literal loadstring code', async () => {
+  const source = 'loadstring([=[loadstring(game:HttpGet("https://example.com/inner.lua"))()]=])()';
+  const result = await resolveLoadstringSources(source, {
+    maxFiles: 10,
+    fetchText: async (url) => {
+      assert.equal(url, 'https://example.com/inner.lua');
+      return 'print("inner source")';
+    },
+  });
+
+  assert.equal(result.captures.length, 2);
+  assert.equal(result.captures[0].inline, true);
+  assert.equal(result.captures[1].source, 'print("inner source")');
+});
+
+test('marks the result truncated when inline chunks exceed the cap', async () => {
+  const source = Array.from({ length: 14 }, (_, i) =>
+    'loadstring("print(' + i + ')")()'
+  ).join('\n');
+  const result = await resolveLoadstringSources(source, { maxFiles: 10, fetchText: async () => '' });
+  assert.equal(result.captures.length, 10);
+  assert.equal(result.truncated, true);
+});

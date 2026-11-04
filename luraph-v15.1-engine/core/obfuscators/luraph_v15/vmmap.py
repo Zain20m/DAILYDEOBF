@@ -668,6 +668,9 @@ def ctor_assignments(root):
                 if target == current:
                     pending.append(alias)
                     names.update(local_names.get(alias, ()))
+                elif alias == current:
+                    pending.append(target)
+                    names.update(local_names.get(target, ()))
         return names
 
     def add(var, value):

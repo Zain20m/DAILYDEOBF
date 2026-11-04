@@ -749,7 +749,7 @@ async function processLuraphV14(message, prompt, input, version) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-v14-'));
   const inputPath = path.join(tempRoot, 'input.lua');
   const outputPath = path.join(tempRoot, 'deobfuscated.luau');
-  const inputBytes = Buffer.byteLength(source, 'utf8');
+  const inputBytes = Buffer.byteLength(input.source, 'utf8');
   const progress = createAnalysisProgress(prompt, input.filename, inputBytes, 'Luraph v' + version);
   const startedAt = Date.now();
 

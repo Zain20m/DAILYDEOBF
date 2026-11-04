@@ -883,8 +883,9 @@ class ProtoLifter:
         self.reg_def_idx = {}
         self.war_saved = {}
         self.cur_it = None
-        self.stack_base = None       
-        self.captured_regs = set()   
+        self.stack_base = None
+        self.current_ast = None
+        self.captured_regs = set()
         self.frame_uses = set()      
         self.packs = {}         
         self.pack_copies = {}
@@ -1542,20 +1543,47 @@ class ProtoLifter:
             if isinstance(k, (int, float)) and (k < 0 or k >= 800000):
                 detail = ""
                 if os.environ.get("DEVIRT_TB"):
-                    detail = " [last_op=%r stack_candidates=%r]" % (
-                        getattr(self, "last_op", None),
-                        getattr(self, "sp_debug", ())[:12],
-                    )
-                if os.environ.get("DEVIRT_TB") and len(getattr(self.dump, "bad_registers", ())) < 16:
-                    self.dump.bad_registers.append({
-                        "index": k,
+                    node = self.current_ast if isinstance(self.current_ast, dict) else {}
+                    node_location = node.get("location")
+                    node_type = node.get("type")
+                    opcode = node.get("op")
+                    try:
+                        preceding = [fmt_stmt(st)[:180] for st in self.out[-4:]]
+                    except Exception:
+                        preceding = []
+                    known_values = []
+                    for reg, value in sorted(self.jvals.items(), key=lambda item: str(item[0]))[:10]:
+                        known_values.append((str(reg), repr(value)[:64]))
+                    unknown_registers = sorted(
+                        (str(reg) for reg in self.jump_regs if reg not in self.jvals)
+                    )[:10]
+                    register_context = {
+                        "prototype_id": self.dump.pid_of_table.get(
+                            getattr(self.proto, "tid", None), getattr(self.proto, "tid", None)),
+                        "prototype_table": getattr(self.proto, "tid", None),
+                        "vm_tag": getattr(self.vm, "tag", None),
+                        "source_offset": node_location,
+                        "ast_operation": node_type,
+                        "opcode": opcode,
+                        "register_operand": k,
                         "stack_base": self.stack_base,
-                        "proto": getattr(self.proto, "tid", None),
-                        "last_op": getattr(self, "last_op", None),
-                        "sp_candidates": getattr(self, "sp_debug", ())[:8],
-                    })
+                        "last_dispatch": getattr(self, "last_op", None),
+                        "stack_pointer_candidates": getattr(self, "sp_debug", ())[:8],
+                        "known_register_values": known_values,
+                        "unknown_registers": unknown_registers,
+                        "preceding_ir": preceding,
+                    }
+                    if len(getattr(self.dump, "bad_registers", ())) < 16:
+                        self.dump.bad_registers.append(register_context)
+                    detail = (" [source=%r ast=%r opcode=%r vm=%r known=%r unknown=%r]" %
+                              (node_location, node_type, opcode,
+                               getattr(self.vm, "tag", None), known_values[:4],
+                               unknown_registers[:4]))
                 raise Unsupported("invalid register index %s [stack_base=%r, proto=%r]%s"
-                                   % (k, self.stack_base, getattr(self.proto, "tid", None), detail))
+                                   % (k, self.stack_base,
+                                      self.dump.pid_of_table.get(getattr(self.proto, "tid", None),
+                                                                 getattr(self.proto, "tid", None)),
+                                      detail))
             if self.jvals.get(k) is FRAME:
                 return obj
             if k in self.jvals:

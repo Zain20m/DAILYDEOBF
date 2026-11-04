@@ -1300,6 +1300,7 @@ class ProtoLifter:
         raise Unsupported("varargs outside vararg function")
 
     def as_expr(self, v):
+        self._require_known(v, "expression reconstruction")
         if isinstance(v, MaybeBox):
             return Reg(v.reg)
         if isinstance(v, BoxPart):
@@ -1509,11 +1510,20 @@ class ProtoLifter:
                         if isinstance(r.n, int) and r.n > self.stack_base and r.n not in self.jump_regs:
                             self.need_jump_regs.add(r.n)
 
+    def _require_known(self, value, operation):
+        unresolved = _unknown_in(value)
+        if unresolved is not None:
+            context = " (%s)" % unresolved.context if unresolved.context else ""
+            raise Unsupported("%s depends on unresolved VM value: %s%s" %
+                              (operation, unresolved.reason, context))
+
     def index(self, obj, key, it):
         if isinstance(obj, Multi):
             obj = obj.first()
         if isinstance(key, Multi):
             key = key.first()
+        self._require_known(obj, "table/register read")
+        self._require_known(key, "table/register index")
         if isinstance(obj, RegFile):
             if is_sym(key):
                 arr = self.reg_array(key)
@@ -1583,7 +1593,10 @@ class ProtoLifter:
                 raise Unsupported("open upvalue index %r" % (key,))
             return MaybeBox(key)
         if isinstance(obj, MaybeBox):
-            return None
+            return UnknownValue(
+                "open-upvalue box contents were not captured",
+                "register=%s key=%r" % (obj.reg, key),
+            )
         if isinstance(obj, BoxProxy):
             if is_sym(key):
                 return Index(Upval(obj.idx), self.as_expr(key))
@@ -1727,6 +1740,8 @@ class ProtoLifter:
     def newindex(self, obj, key, v, it):
         if isinstance(key, Multi):
             key = key.first()
+        self._require_known(obj, "table/register write target")
+        self._require_known(key, "table/register write index")
         if isinstance(obj, RegFile):
             if is_sym(key):
                 arr = self.reg_array(key)
@@ -1856,12 +1871,15 @@ class ProtoLifter:
         self.ov.set(key, v, base)
 
     def check_decision(self, cond):
-
+        unresolved = _unknown_in(cond)
+        if unresolved is not None:
+            self._require_known(cond, "control-flow decision")
         if any(isinstance(x, Missing) for x in walk_expr(cond)):
             raise Unsupported("needs a constant that is not decoded yet")
 
     def value_of(self, v):
         """Value for an IR assignment: expressions, constants, closures, lists."""
+        self._require_known(v, "value emission")
         if isinstance(v, Multi):
             v = v.first()
         if isinstance(v, GenIterMaker):
@@ -1915,6 +1933,7 @@ class ProtoLifter:
             stack.discard(id(t))
 
     def call_builtin(self, fn, args, it, stat):
+        self._require_known(args, "builtin call")
         name = fn.name
         a = args
         if name in ("table.create",):
@@ -2181,6 +2200,8 @@ class ProtoLifter:
             raise Unsupported("move into %r" % (dst,))
 
     def call_symbolic(self, fn, args, it, stat):
+        self._require_known(fn, "function reference")
+        self._require_known(args, "function arguments")
         if isinstance(fn, GenIterMaker):
             fn.args = args
             return Multi([])
@@ -2469,8 +2490,47 @@ class MaybeBox:
     def __init__(self, reg):
         self.reg = reg
 
-    def __repr__(self):     
+    def __repr__(self):
         return "box(r%s)" % self.reg
+
+
+class UnknownValue(Expr):
+    """A value that the capture cannot determine; never a Lua nil value."""
+
+    def __init__(self, reason, context=None):
+        self.reason = str(reason)
+        self.context = context
+
+    def __repr__(self):
+        return "UnknownValue(%r)" % self.reason
+
+
+def _unknown_in(value):
+    """Return the first unresolved sentinel nested in an IR/symbolic value."""
+    if isinstance(value, UnknownValue):
+        return value
+    if isinstance(value, Expr):
+        return next((node for node in walk_expr(value) if isinstance(node, UnknownValue)), None)
+    if isinstance(value, Multi):
+        for item in value.items:
+            found = _unknown_in(item)
+            if found is not None:
+                return found
+    if isinstance(value, SymList):
+        for item in value.items:
+            found = _unknown_in(item)
+            if found is not None:
+                return found
+        for item in value.extra.values():
+            found = _unknown_in(item)
+            if found is not None:
+                return found
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            found = _unknown_in(item)
+            if found is not None:
+                return found
+    return None
 
 class UpList:
     """The upvalue list of the proto being lifted. y[i] is a BoxProxy, or a

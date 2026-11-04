@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { convertToPureLuau } = require('./pureluau.js');
+const { convertToPureLuau } = require('../pureluau.js');
 
 const decoderSource = [
   'local _l, _O, _P, _R =',

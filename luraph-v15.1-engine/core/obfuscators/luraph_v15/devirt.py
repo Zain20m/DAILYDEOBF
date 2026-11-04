@@ -1300,6 +1300,36 @@ class ProtoLifter:
             s = s.parent
         raise Unsupported("varargs outside vararg function")
 
+    def _shared_function_expr(self, fn):
+        """Emit a runtime helper reference and retain the evidence for its use."""
+        n = self.dump.shared.setdefault(fn.lfid, len(self.dump.shared) + 1)
+        meta = self.dump.shared_meta.setdefault(n, {
+            "lfid": fn.lfid,
+            "proto": fn.pf_tid,
+            "source_captured": bool(fn.source),
+            "constructor_matched": fn.node is not None,
+            "refs": fn.refs[:4],
+            "binding": fn.binding,
+            "use_sites": [],
+        })
+        site_node = self.current_ast if isinstance(getattr(self, "current_ast", None), dict) else {}
+        proto_tid = getattr(self.proto, "tid", None)
+        site = {
+            "prototype_id": self.dump.pid_of_table.get(proto_tid, proto_tid),
+            "prototype_table": proto_tid,
+            "vm_tag": getattr(self.vm, "tag", None),
+            "source_offset": site_node.get("location"),
+            "operation": site_node.get("type"),
+            "opcode": site_node.get("op"),
+            "dispatch_state": getattr(self, "last_op", None),
+        }
+        sites = meta.setdefault("use_sites", [])
+        if any(existing == site for existing in sites):
+            pass
+        elif len(sites) < 8:
+            sites.append(site)
+        return SharedFn(fn, n)
+
     def as_expr(self, v):
         self._require_known(v, "expression reconstruction")
         if isinstance(v, MaybeBox):
@@ -1328,26 +1358,14 @@ class ProtoLifter:
             # function IDs, so preserve the chunk as a real Luau function.
             return Opaque("function", "function(...)\n" + v.source + "\nend")
         if isinstance(v, OpaqueFn) and v.pf_tid is not None and v.node is None:
-            n = self.dump.shared.setdefault(v.lfid, len(self.dump.shared) + 1)
-            self.dump.shared_meta.setdefault(n, {
-                "lfid": v.lfid, "proto": v.pf_tid,
-                "source_captured": bool(v.source), "constructor_matched": v.node is not None,
-                "refs": v.refs[:4], "binding": v.binding,
-            })
-            return SharedFn(v, n)
+            return self._shared_function_expr(v)
         if isinstance(v, OpaqueFn):
             if v.node is not None:
                 clo = self.plain_closure(LuaFunc(v.node, Scope()))
                 if clo is not None:
                     return clo
                 return Opaque("function", self.plain_function_text(v.node) or "function(...) end")
-            n = self.dump.shared.setdefault(v.lfid, len(self.dump.shared) + 1)
-            self.dump.shared_meta.setdefault(n, {
-                "lfid": v.lfid, "proto": v.pf_tid,
-                "source_captured": bool(v.source), "constructor_matched": v.node is not None,
-                "refs": v.refs[:4], "binding": v.binding,
-            })
-            return SharedFn(v, n)
+            return self._shared_function_expr(v)
         if isinstance(v, Buf):
 
             t = self.new_temp()
@@ -5486,7 +5504,8 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
         if prog.dump.shared_meta:
             unresolved_shared = [
                 (n, meta) for n, meta in sorted(prog.dump.shared_meta.items())
-                if not meta.get("constructor_matched") and not meta.get("source_captured")
+                if not meta.get("constructor_matched")
+                and (meta.get("proto") is not None or not meta.get("source_captured"))
             ]
             print("[fn-stub-summary] count=%d examples=%r" %
                   (len(unresolved_shared), unresolved_shared[:8]), file=sys.stderr)

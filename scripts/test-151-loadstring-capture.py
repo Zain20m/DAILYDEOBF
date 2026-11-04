@@ -3,7 +3,6 @@
 
 from pathlib import Path
 import sys
-from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / "luraph-v15.1-engine" / "core"
@@ -34,7 +33,7 @@ def main():
     lifted = lifter.as_expr(fn)
     assert isinstance(lifted, Opaque)
     assert lifted.kind == "function"
-    assert lifted.src == "function(...)\\n" + source + "\\nend"
+    assert lifted.src == "function(...)\n" + source + "\nend"
 
     # A proto-backed function must continue through the normal proto closure
     # path, even if a source field is also present.
@@ -52,7 +51,7 @@ def main():
     unresolved = dump.val({"lf": 9})
     unresolved_expr = lifter.as_expr(unresolved)
     assert isinstance(unresolved_expr, SharedFn)
-    assert dump.shared_meta[unresolved_expr.fn.lfid and 2]["lfid"] == 9
+    assert dump.shared_meta[2]["lfid"] == 9
 
     runtime = (ROOT / "luraph-v15.1-engine" / "runtime" / "envlog.luau").read_text(
         encoding="utf-8"

@@ -662,19 +662,20 @@ async function processLuraph151(message, prompt, input) {
           '--obfuscator', 'luraph_v15',
           '--debug',
           '--strings',
-          '--max-runs', '8',
-          '--devirt-rounds', '60',
-          '--budget', '25',
-          '--timeout', '90',
+          '--max-runs', '16',
+          '--devirt-rounds', '200',
+          '--budget', '60',
+          '--timeout', '180',
           '--no-pypy',
         ],
         {
           env: {
+            DEVIRT_FULL_ROUNDS: '1',
             DEVIRT_LOADERS: '1',
             DEVIRT_TIMING: '1',
             DEVIRT_ERRS: '1',
             DEVIRT_TB: '1',
-            DEVIRT_WALK_LIMIT: '300000',
+            DEVIRT_WALK_LIMIT: '750000',
           },
           onProgress: progress.onLine,
         },
@@ -687,7 +688,7 @@ async function processLuraph151(message, prompt, input) {
 
     // A trace or prototype dump is useful output. Do not spend another full
     // engine pass merely because the source lift is incomplete.
-    if (!(await hasArtifacts(primary.base))) {
+    if (!(await hasLift(primary.base))) {
       await progress.setPhase(
         'Trying the 15.1 beta fallback',
         'The primary engine produced no usable artifacts, so the separate beta runner is being tried with a smaller recovery budget.'
@@ -706,10 +707,10 @@ async function processLuraph151(message, prompt, input) {
             '--plugin', 'luraph_v15',
             '--debug',
             '--strings',
-            '--max-runs', '4',
-            '--devirt-rounds', '30',
-            '--budget', '15',
-            '--timeout', '60',
+            '--max-runs', '16',
+            '--devirt-rounds', '200',
+            '--budget', '60',
+            '--timeout', '180',
           ],
           {
             env: {
@@ -717,7 +718,8 @@ async function processLuraph151(message, prompt, input) {
               DEVIRT_TIMING: '1',
               DEVIRT_ERRS: '1',
               DEVIRT_TB: '1',
-              DEVIRT_WALK_LIMIT: '200000',
+              DEVIRT_FULL_ROUNDS: '1',
+              DEVIRT_WALK_LIMIT: '750000',
             },
             onProgress: progress.onLine,
           },
@@ -749,8 +751,8 @@ async function processLuraph151(message, prompt, input) {
       outputDir: chosen.outputDir,
       elapsedMs: Date.now() - startedAt,
       stderr: combinedLogs,
-      maxRuns: 8,
-      devirtRounds: 60,
+      maxRuns: 16,
+      devirtRounds: 200,
       loaderAnalysis: true,
     });
 

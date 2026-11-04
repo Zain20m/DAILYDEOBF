@@ -72,6 +72,14 @@ def main():
             },
             {
                 "type": "AstStatLocal",
+                "vars": [{"name": "helperTableAlias", "location": "table-alias@1"}],
+                "values": [{
+                    "type": "AstExprLocal",
+                    "local": {"name": "helpers", "location": "helpers@1"},
+                }],
+            },
+            {
+                "type": "AstStatLocal",
                 "vars": [{"name": "helperAlias", "location": "alias@1"}],
                 "values": [{
                     "type": "AstExprLocal",
@@ -109,6 +117,18 @@ def main():
                 }],
             },
             {
+                "type": "AstStatAssign",
+                "vars": [{
+                    "type": "AstExprIndexExpr",
+                    "expr": {
+                        "type": "AstExprLocal",
+                        "local": {"name": "helperTableAlias", "location": "table-alias@1"},
+                    },
+                    "index": {"type": "AstExprConstantNumber", "value": 19},
+                }],
+                "values": [fn_node],
+            },
+            {
                 "type": "AstStatFunction",
                 "name": {
                     "type": "AstExprIndexName",
@@ -125,6 +145,7 @@ def main():
     ctor_map = ctor_assignments(root)
     assert ctor_map[(b"helpers", b"create")] is fn_node
     assert ctor_map[(b"helpers", 17)] is fn_node
+    assert ctor_map[(b"helpers", 19)] is fn_node
     assert ctor_map[(b"helpers", b"run")] is fn_node
 
     runtime = (ROOT / "luraph-v15.1-engine" / "runtime" / "envlog.luau").read_text(

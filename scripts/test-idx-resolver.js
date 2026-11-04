@@ -127,6 +127,7 @@ test('extracts common static HTTP fetch patterns for .get', () => {
     'https://example.com/dot.lua',
     'https://example.com/getasync.lua',
     'https://example.com/request.lua',
+    'https://ignored.example/bracket.lua',
     'https://example.com/http-request.lua',
     'https://example.com/loadstring-url.lua',
   ]);

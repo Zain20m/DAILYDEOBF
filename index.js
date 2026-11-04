@@ -249,7 +249,7 @@ function runEngine(inputPath, outputPath) {
     });
   });
 }
-async function processLuraph151(message, prompt, input) {
+async function processLuraphV15(message, prompt, input) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-'));
   const inputPath = path.join(tempRoot, 'input.lua');
   const outDir = path.join(tempRoot, 'output');
@@ -290,8 +290,8 @@ async function startWorkflow(message) {
     : await collectInput(message, prompt);
   const chooseRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(`deobf-151:${message.author.id}`)
-      .setLabel('15.1')
+      .setCustomId(`deobf-luraph-v15:${message.author.id}`)
+      .setLabel('Luraph v15')
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
       .setCustomId(`deobf-cancel:${message.author.id}`)
@@ -313,11 +313,11 @@ async function startWorkflow(message) {
       componentCollector.stop('cancelled');
       return;
     }
-    if (interaction.customId === `deobf-151:${message.author.id}`) {
+    if (interaction.customId === `deobf-luraph-v15:${message.author.id}`) {
       await interaction.deferUpdate();
       componentCollector.stop('selected');
       try {
-        await processLuraph151(message, prompt, input);
+        await processLuraphV15(message, prompt, input);
       } catch (error) {
         const messageText = String(error.message || error).slice(0, 1500);
         await prompt.edit({

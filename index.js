@@ -480,6 +480,16 @@ async function inspectLiftFile(filePath, engineDir) {
       complete: false,
       issues: ['The VM lifter did not produce a source candidate.'],
       metrics: {},
+      categories: {
+        syntax: { status: 'not_checked' },
+        vmReconstruction: { status: 'incomplete' },
+        registerRecovery: { status: 'not_proven' },
+        functionReferences: { status: 'not_proven' },
+        runtimeOperations: { status: 'not_proven' },
+        devirtualizationStubs: { status: 'not_proven' },
+        controlFlow: { status: 'not_proven' },
+        behavioralConsistency: { status: 'not_checked' },
+      },
       score: -1,
       bytes: 0,
       syntaxChecked: false,
@@ -498,10 +508,14 @@ async function inspectLiftFile(filePath, engineDir) {
       await runCommand(parser, [filePath], engineDir, 120_000);
       assessment.syntaxChecked = true;
       assessment.syntaxValid = true;
+      assessment.categories = assessment.categories || {};
+      assessment.categories.syntax = { status: 'valid' };
       assessment.score += assessment.complete ? 10_000 : 1_000;
     } catch (error) {
       assessment.syntaxChecked = true;
       assessment.syntaxValid = false;
+      assessment.categories = assessment.categories || {};
+      assessment.categories.syntax = { status: 'invalid' };
       assessment.complete = false;
       assessment.score -= 50_000;
       assessment.issues.push(
@@ -614,6 +628,12 @@ async function sendAnalysisOutput(message, input, config) {
     'Lift validation: ' + (hasLiftedSource ? 'passed' : 'failed'),
     'Luau syntax check: ' + (validation.syntaxChecked ? (validation.syntaxValid ? 'passed' : 'failed') : 'not available because no source candidate was produced'),
     'Behaviour trace: ' + (traceBytes ? formatBytes(traceBytes) : 'not produced'),
+    '',
+    'Validation categories:',
+    ...Object.entries(validation.categories || {}).map(([name, category]) =>
+      '- ' + name + ': ' + category.status +
+      (Number.isFinite(category.unresolved) ? ' (' + category.unresolved + ' unresolved)' : '')
+    ),
     '',
     'Validation diagnostics:',
     ...validationIssueText(validation).split('\n'),

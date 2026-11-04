@@ -4832,18 +4832,74 @@ class Program:
             if node is None:
                 try:
                     lf.cur_facts = facts.get(k, {})
+                    lf.current_ast = None
                     node = st.step(s, "%d_%d_" % (s.pc, len(order)))
                 except Unsupported as e:
-                    if os.environ.get("DEVIRT_TB"):
-                        import traceback
-                        print("-- at %s:%s op %s" % (s.mode, s.pc, lf.last_op), file=sys.stderr)
-                        for arr in [v_ for v_ in lf.proto.h.values() if isinstance(v_, LTable)]:
-                            for pc_ in range(s.pc - 2, s.pc + 2):
-                                base = arr.get(pc_)
-                                print("   arr#%s[%d] = %s -> %s" % (arr.tid, pc_, base, st.gov.d.get((id(arr), pc_), base)), file=sys.stderr)
-                        traceback.print_exc()
                     node = Node([], outcome=None)
                     node.error = str(e)
+                    src = lf.current_ast if isinstance(getattr(lf, "current_ast", None), dict) else {}
+                    def brief_operand(value):
+                        if not isinstance(value, dict):
+                            return repr(value)[:80]
+                        kind = value.get("type", "?")
+                        if kind == "AstExprLocal":
+                            local = value.get("local", {})
+                            return {"type": kind, "name": local.get("name"),
+                                    "location": local.get("location")}
+                        if kind in ("AstExprConstantNumber", "AstExprConstantString",
+                                    "AstExprConstantBool", "AstExprConstantNil"):
+                            return {"type": kind, "value": repr(value.get("value"))[:72]}
+                        if kind in ("AstExprIndexName", "AstExprGlobal"):
+                            return {"type": kind, "name": value.get("index") or value.get("global")}
+                        return {"type": kind, "op": value.get("op"),
+                                "location": value.get("location")}
+                    operands = {}
+                    for operand_name in ("expr", "index", "left", "right", "func", "value", "args"):
+                        operand = src.get(operand_name)
+                        if isinstance(operand, list):
+                            operands[operand_name] = [brief_operand(x) for x in operand[:4]]
+                        elif isinstance(operand, dict):
+                            operands[operand_name] = brief_operand(operand)
+                    try:
+                        preceding = [fmt_stmt(stmt)[:160] for stmt in lf.out[-4:]]
+                    except Exception:
+                        preceding = []
+                    known_values = [
+                        (str(reg), repr(value)[:64])
+                        for reg, value in sorted(lf.jvals.items(), key=lambda item: str(item[0]))[:8]
+                    ]
+                    unknown_registers = sorted(
+                        str(reg) for reg in lf.jump_regs if reg not in lf.jvals
+                    )[:8]
+                    node.vm_context = {
+                        "prototype_id": lf.dump.pid_of_table.get(
+                            getattr(lf.proto, "tid", None), getattr(lf.proto, "tid", None)),
+                        "prototype_table": getattr(lf.proto, "tid", None),
+                        "vm_tag": getattr(lf.vm, "tag", None),
+                        "source_offset": src.get("location"),
+                        "ast_operation": src.get("type"),
+                        "opcode": src.get("op"),
+                        "operands": operands,
+                        "register_operands": [
+                            operand for operand in (
+                                operands.get("expr"), operands.get("index"),
+                                operands.get("left"), operands.get("right"))
+                            if operand is not None
+                        ],
+                        "stack_base": lf.stack_base,
+                        "stack_candidates": getattr(lf, "sp_debug", ())[:8],
+                        "dispatch_state": (s.mode, s.pc),
+                        "last_dispatch": getattr(lf, "last_op", None),
+                        "known_values": known_values,
+                        "unknown_registers": unknown_registers,
+                        "preceding_ir": preceding,
+                        "reason": str(e)[:280],
+                    }
+                    if os.environ.get("DEVIRT_TB"):
+                        print("[walk-step-error] %s" % node.vm_context, file=sys.stderr)
+                    if os.environ.get("DEVIRT_TRACEBACK"):
+                        import traceback
+                        traceback.print_exc()
                     nerr += 1
                 if getattr(st, "new_carry", False):
 
@@ -5667,10 +5723,22 @@ def _walk_one(prog, vm, vmobj, proto, pkey, init_facts=None):
     ent["requests"] = lf.requests
     ent["errors"] = sum(1 for _, n in order if getattr(n, "error", None))
     if os.environ.get("DEVIRT_ERRS"):
-        for s, n in order:
+        for state_key, n in order:
             if getattr(n, "error", None):
-                print("[walk] %s %s %s" % (pkey.get(proto.tid, proto.tid), s[:2], n.error),
-                      file=sys.stderr)
+                context = getattr(n, "vm_context", None)
+                if context:
+                    print("[walk] proto=%s state=%s reason=%s source=%r operation=%r opcode=%r " 
+                          "registers=%r stack_base=%r known=%r unknown=%r preceding=%r" %
+                          (context.get("prototype_id"), state_key[:2], n.error,
+                           context.get("source_offset"), context.get("ast_operation"),
+                           context.get("opcode"), context.get("register_operands"),
+                           context.get("stack_base"), context.get("known_values"),
+                           context.get("unknown_registers"), context.get("preceding_ir")),
+                          file=sys.stderr)
+                else:
+                    print("[walk] proto=%s state=%s %s" %
+                          (dump.pid_of_table.get(proto.tid, proto.tid), state_key[:2], n.error),
+                          file=sys.stderr)
     kids = [c for c in lf.children if isinstance(c.proto, LTable)]
     ent["children"] = [pkey.get(c.proto.tid, c.proto) for c in kids]
     if os.environ.get("DEVIRT_TB") and kids:

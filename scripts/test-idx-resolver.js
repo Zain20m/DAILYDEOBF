@@ -178,7 +178,7 @@ test('.get supports a supplied direct URL seed', async () => {
 
 
 test('captures literal source passed directly to loadstring', () => {
-  const source = 'loadstring("print(1)")()\\nloadstring([=[print(2)]=])()';
+  const source = ['loadstring("print(1)")()', 'loadstring([=[print(2)]=])()'].join('\\n');
   assert.deepEqual(extractInlineLoadstringSources(source), ['print(1)', 'print(2)']);
 });
 

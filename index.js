@@ -628,7 +628,7 @@ async function processLuraph151(message, prompt, input) {
     return score;
   }
 
-  const primary = await prepare(primaryRoot);
+  async function hasArtifacts(base) {\n    for (const suffix of ['.protos.json', '.strings.txt', '.trace.luau', '.luau', '.devirt.luau']) {\n      try { if ((await fs.stat(base + suffix)).size > 0) return true; } catch {}\n    }\n    return false;\n  }\n\n  const primary = await prepare(primaryRoot);
   const inputBytes = Buffer.byteLength(input.source, 'utf8');
   const progress = createAnalysisProgress(prompt, input.filename, inputBytes, 'Luraph 15.1');
   const startedAt = Date.now();
@@ -667,7 +667,7 @@ async function processLuraph151(message, prompt, input) {
             DEVIRT_TIMING: '1',
             DEVIRT_ERRS: '1',
             DEVIRT_TB: '1',
-            DEVIRT_WALK_LIMIT: '750000',
+            DEVIRT_WALK_LIMIT: '300000',
           },
           onProgress: progress.onLine,
         },
@@ -678,7 +678,7 @@ async function processLuraph151(message, prompt, input) {
       combinedLogs += '\n[!] v15-compatible pass: ' + String(error.message || error) + '\n';
     }
 
-    if (!(await hasLift(primary.base))) {
+    if (!(await hasArtifacts(primary.base))) {
       await progress.setPhase(
         'Trying the 15.1 beta compatibility pass',
         'The v15 lifter did not produce reconstructed source on its first pass. Trying the bundled beta runner and comparing the VM artifacts.'
@@ -709,7 +709,7 @@ async function processLuraph151(message, prompt, input) {
               DEVIRT_TIMING: '1',
               DEVIRT_ERRS: '1',
               DEVIRT_TB: '1',
-              DEVIRT_WALK_LIMIT: '750000',
+              DEVIRT_WALK_LIMIT: '200000',
             },
             onProgress: progress.onLine,
           },
@@ -748,7 +748,7 @@ async function processLuraph151(message, prompt, input) {
 
     await progress.complete(summary.hasLiftedSource
       ? 'Full reconstructed Luau generated. The behaviour trace and VM artifacts are attached separately.'
-      : 'Both compatible passes were attempted. Only a behaviour trace could be reconstructed, so it is clearly labelled and not presented as original source.');
+      : 'The primary pass completed, but did not produce a full lift. Available trace and VM artifacts are labelled separately.');
 
     await prompt.edit({
       content: summary.hasLiftedSource

@@ -1,0 +1,143 @@
+name: Install the uploaded Luraph v15 engine
+
+on:
+  push:
+    paths:
+      - "upload/IMPORT_V15_TRIGGER.txt"
+
+permissions:
+  contents: write
+
+jobs:
+  install-v15:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract Deobfuscator.zip and verify the v15 engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path, PurePosixPath
+          from zipfile import ZipFile
+          import shutil
+          import subprocess
+          import tempfile
+
+          root = Path.cwd()
+          archive = root / "upload/Deobfuscator.zip"
+          if not archive.is_file():
+              raise SystemExit("upload/Deobfuscator.zip is missing")
+
+          destination = root / "luraph-v15-engine"
+          runtime_source = root / "luraph-v15.1-engine/bin"
+          for name in ("luau", "luau-ast"):
+              if not (runtime_source / name).is_file():
+                  raise SystemExit(f"Reusable patched runtime is missing: {runtime_source / name}")
+
+          with ZipFile(archive) as z:
+              bad = z.testzip()
+              if bad:
+                  raise SystemExit(f"ZIP CRC check failed: {bad}")
+              entries = [i for i in z.infolist() if not i.is_dir()]
+              if len(entries) > 5000 or sum(i.file_size for i in entries) > 128 * 1024 * 1024:
+                  raise SystemExit("Deobfuscator.zip exceeds extraction limits")
+              for entry in entries:
+                  name = entry.filename.replace("\\", "/")
+                  rel = PurePosixPath(name)
+                  if rel.is_absolute() or ".." in rel.parts:
+                      raise SystemExit(f"Unsafe ZIP entry: {entry.filename}")
+              prefix = "Deobfuscator/deobf/"
+              engine_files = [i for i in entries if i.filename.startswith(prefix)]
+              if not engine_files or not any(i.filename == prefix + "deob.py" for i in engine_files):
+                  raise SystemExit("Deobfuscator.zip does not contain Deobfuscator/deobf/deob.py")
+
+              if destination.exists():
+                  shutil.rmtree(destination)
+              destination.mkdir(parents=True)
+              for entry in engine_files:
+                  rel = PurePosixPath(entry.filename[len(prefix):])
+                  if not rel.parts or "__pycache__" in rel.parts or rel.suffix == ".pyc":
+                      continue
+                  target = destination.joinpath(*rel.parts)
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_bytes(z.read(entry))
+
+              # Both engines use the same patched Luau 0.739 runtime build.
+              bin_dir = destination / "bin"
+              bin_dir.mkdir(exist_ok=True)
+              for name in ("luau", "luau-ast"):
+                  shutil.copy2(runtime_source / name, bin_dir / name)
+                  (bin_dir / name).chmod(0o755)
+
+              required = (
+                  "deob.py",
+                  "harness.py",
+                  "envlog.luau",
+                  "roblox_api.luau",
+                  "unicode_data.luau",
+                  "datatypes.luau",
+                  "obfuscators/luraph_v15/__init__.py",
+                  "obfuscators/luraph_v15/driver.py",
+                  "obfuscators/luraph_v15/devirt.py",
+                  "bin/luau",
+                  "bin/luau-ast",
+              )
+              missing = [name for name in required if not (destination / name).is_file()]
+              if missing:
+                  raise SystemExit("Imported v15 engine is incomplete: " + ", ".join(missing))
+
+          # Compile Python source without executing project modules.
+          for path in destination.rglob("*.py"):
+              if "__pycache__" not in path.parts:
+                  compile(path.read_text(encoding="utf-8"), str(path), "exec")
+
+          # Smoke-test the actual v15 CLI on the project's own Luraph regression sample.
+          sample = root / "luraph-v15-engine" / "samples" / "001_vm_like_dispatch-obfuscated.lua"
+          if not sample.is_file():
+              # The samples are stored beside the deobf folder in the uploaded archive.
+              with ZipFile(archive) as z:
+                  sample_entry = "Deobfuscator/samples/001_vm_like_dispatch-obfuscated.lua"
+                  if sample_entry not in z.namelist():
+                      raise SystemExit("Bundled v15 Luraph regression sample was not found")
+                  sample = Path(tempfile.gettempdir()) / "daily-deobf-v15-regression.lua"
+                  sample.write_bytes(z.read(sample_entry))
+
+          output = Path(tempfile.gettempdir()) / "daily-deobf-v15-regression-output.luau"
+          result = subprocess.run(
+              [
+                  "python3", str(destination / "deob.py"), str(sample),
+                  "-o", str(output),
+                  "--obfuscator", "luraph_v15",
+                  "--timeout", "120",
+                  "--budget", "30",
+                  "--max-runs", "12",
+                  "--devirt-rounds", "200",
+                  "--no-pypy",
+              ],
+              cwd=destination,
+              capture_output=True,
+              text=True,
+              timeout=480,
+          )
+          if result.returncode != 0 or not output.is_file() or output.stat().st_size == 0:
+              print("STDOUT:\n" + result.stdout[-6000:])
+              print("STDERR:\n" + result.stderr[-12000:])
+              raise SystemExit("Uploaded v15 engine failed its bundled regression sample")
+          print(f"V15 REGRESSION PASSED: {output.stat().st_size} output bytes")
+          print("V15 SAMPLE LOG:\n" + result.stderr[-6000:])
+          PY
+
+      - name: Commit the new v15 engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f upload/IMPORT_V15_TRIGGER.txt
+          rm -f upload/INSPECT_V15_TRIGGER.txt upload/INSPECT_V15_SOURCE_TRIGGER.txt
+          rm -f .github/workflows/inspect-v15-upload.yml .github/workflows/inspect-v15-source.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Install Deobfuscator.zip as the separate Luraph v15 engine"
+          git push

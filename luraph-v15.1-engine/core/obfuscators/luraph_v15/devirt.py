@@ -1313,11 +1313,11 @@ class ProtoLifter:
             "use_sites": [],
         })
         site_node = self.current_ast if isinstance(getattr(self, "current_ast", None), dict) else {}
-        proto_tid = getattr(self.proto, "tid", None)
+        proto_tid = getattr(getattr(self, "proto", None), "tid", None)
         site = {
-            "prototype_id": self.dump.pid_of_table.get(proto_tid, proto_tid),
+            "prototype_id": getattr(self.dump, "pid_of_table", {}).get(proto_tid, proto_tid),
             "prototype_table": proto_tid,
-            "vm_tag": getattr(self.vm, "tag", None),
+            "vm_tag": getattr(getattr(self, "vm", None), "tag", None),
             "source_offset": site_node.get("location"),
             "operation": site_node.get("type"),
             "opcode": site_node.get("op"),

@@ -4,7 +4,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   extractLoadstringHttpGetUrls,
+  extractStaticFetchUrls,
   resolveLoadstringSources,
+  resolveStaticSources,
 } = require('./idx-resolver');
 
 test('extracts only literal loadstring(game:HttpGet(url)) calls', () => {
@@ -103,4 +105,72 @@ test('caps total fetch attempts even when URLs fail', async () => {
   assert.equal(attempts, 4);
   assert.equal(result.attempts, 4);
   assert.equal(result.truncated, true);
+});
+
+
+test('extracts common static HTTP fetch patterns for .get', () => {
+  const source = [
+    '-- request({Url = "https://ignored.example/comment"})',
+    'local text = "HttpGet(\'https://ignored.example/string\')"',
+    'local a = game:HttpGet("https://example.com/colon.lua")',
+    'local b = game.HttpGet(game, "https://example.com/dot.lua")',
+    'local c = game:GetService("HttpService"):GetAsync("https://example.com/getasync.lua")',
+    'request({Url = "https://example.com/request.lua", Method = "GET"})',
+    'syn.request({["Url"] = "https://ignored.example/bracket.lua"})',
+    'http_request({url = "https://example.com/http-request.lua"})',
+    'loadstring("https://example.com/loadstring-url.lua")()',
+  ].join('\n');
+
+  assert.deepEqual(extractStaticFetchUrls(source), [
+    'https://example.com/colon.lua',
+    'https://example.com/dot.lua',
+    'https://example.com/getasync.lua',
+    'https://example.com/request.lua',
+    'https://example.com/http-request.lua',
+    'https://example.com/loadstring-url.lua',
+  ]);
+});
+
+test('.get recursively follows request-table and HttpGet links', async () => {
+  const pages = new Map([
+    ['https://example.com/a.lua', 'request({Url = "https://example.com/b.lua"})'],
+    ['https://example.com/b.lua', 'game:HttpGet("https://example.com/c.lua")'],
+    ['https://example.com/c.lua', 'print("complete")'],
+  ]);
+  const result = await resolveStaticSources(
+    'loadstring(game:HttpGet("https://example.com/a.lua"))()',
+    {
+      maxFiles: 5,
+      maxDepth: 4,
+      fetchText: async (url) => {
+        assert.ok(pages.has(url), 'unexpected URL: ' + url);
+        return pages.get(url);
+      },
+    }
+  );
+
+  assert.deepEqual(result.captures.map((item) => item.name), [
+    'get1.lua',
+    'get2.lua',
+    'get3.lua',
+  ]);
+  assert.equal(result.failures.length, 0);
+  assert.equal(result.discovered, 3);
+});
+
+test('.idx keeps its original loadstringN.txt names after resolver sharing', async () => {
+  const result = await resolveLoadstringSources(
+    'loadstring(game:HttpGet("https://example.com/a.lua"))()',
+    { fetchText: async () => 'print("ok")' }
+  );
+  assert.equal(result.captures[0].name, 'loadstring1.txt');
+});
+
+test('.get supports a supplied direct URL seed', async () => {
+  const result = await resolveStaticSources('', {
+    initialUrls: ['https://example.com/direct.lua'],
+    fetchText: async () => 'print("downloaded")',
+  });
+  assert.equal(result.captures[0].name, 'get1.lua');
+  assert.equal(result.captures[0].source, 'print("downloaded")');
 });

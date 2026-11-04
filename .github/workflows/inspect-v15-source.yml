@@ -1,0 +1,33 @@
+name: Inspect Luraph v15 CLI source
+
+on:
+  push:
+    paths:
+      - "upload/INSPECT_V15_SOURCE_TRIGGER.txt"
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read v15 docs and CLI only
+        run: |
+          python3 - <<'PY'
+          from zipfile import ZipFile
+          from pathlib import Path
+          zpath = Path("upload/Deobfuscator.zip")
+          with ZipFile(zpath) as z:
+              for name in (
+                  "Deobfuscator/LURAPH.md",
+                  "Deobfuscator/deobf/deob.py",
+                  "Deobfuscator/deobf/obfuscators/luraph_v15/__init__.py",
+                  "Deobfuscator/deobf/obfuscators/luraph_v15/driver.py",
+                  "Deobfuscator/deobf/obfuscators/base.py",
+                  "Deobfuscator/deobf/build_luau.py",
+              ):
+                  raw = z.read(name).decode("utf-8", "replace")
+                  print(f"\n### {name} [{len(raw)} chars]\n{raw[:16000]}")
+          PY

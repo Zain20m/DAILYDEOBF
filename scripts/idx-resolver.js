@@ -1,5 +1,12 @@
 'use strict';
 
+const REQUEST_FUNCTIONS = new Set([
+  'httpget', 'httpgetasync', 'getasync',
+  'request', 'http_request', 'httprequest',
+  'get', 'fetch',
+]);
+const URL_FIELDS = new Set(['url', 'uri', 'urlstring']);
+
 function tokenizeLua(source) {
   const tokens = [];
   let i = 0;
@@ -12,13 +19,26 @@ function tokenizeLua(source) {
 
     if (ch === '-' && source[i + 1] === '-') {
       i += 2;
-      if (source[i] === '[' && source[i + 1] === '[') {
-        i += 2;
-        const end = source.indexOf(']]', i);
-        i = end === -1 ? source.length : end + 2;
+      const longComment = source.slice(i).match(/^\[(=*)\[/);
+      if (longComment) {
+        const close = ']' + longComment[1] + ']';
+        i += longComment[0].length;
+        const end = source.indexOf(close, i);
+        i = end === -1 ? source.length : end + close.length;
       } else {
         while (i < source.length && source[i] !== '\n') i++;
       }
+      continue;
+    }
+
+    const longString = source.slice(i).match(/^\[(=*)\[/);
+    if (longString) {
+      const close = ']' + longString[1] + ']';
+      i += longString[0].length;
+      const end = source.indexOf(close, i);
+      const value = end === -1 ? source.slice(i) : source.slice(i, end);
+      i = end === -1 ? source.length : end + close.length;
+      tokens.push({ type: 'string', value });
       continue;
     }
 
@@ -65,42 +85,90 @@ function tokenizeLua(source) {
   return tokens;
 }
 
-function extractLoadstringHttpGetUrls(source) {
-  const tokens = tokenizeLua(String(source || ''));
-  const urls = [];
+function isHttpUrl(value) {
+  return typeof value === 'string' &&
+    /^https?:\/\/[^\s"'<>]+$/i.test(value.trim());
+}
+
+function uniqueUrls(values) {
   const seen = new Set();
-
-  for (let i = 0; i + 6 < tokens.length; i++) {
-    if (
-      tokens[i].type !== 'identifier' || tokens[i].value !== 'loadstring' ||
-      tokens[i + 1].value !== '(' ||
-      tokens[i + 2].type !== 'identifier' || tokens[i + 2].value !== 'game' ||
-      tokens[i + 3].value !== ':' ||
-      tokens[i + 4].type !== 'identifier' || tokens[i + 4].value !== 'HttpGet' ||
-      tokens[i + 5].value !== '(' ||
-      tokens[i + 6].type !== 'string'
-    ) {
-      continue;
-    }
-
-    const url = tokens[i + 6].value.trim();
-    if (!/^https?:\/\//i.test(url) || seen.has(url)) continue;
+  const urls = [];
+  for (const value of values) {
+    const url = String(value || '').trim();
+    if (!isHttpUrl(url) || seen.has(url)) continue;
     seen.add(url);
     urls.push(url);
   }
-
   return urls;
 }
 
-async function resolveLoadstringSources(source, options = {}) {
+function extractLoadstringHttpGetUrls(source) {
+  const tokens = tokenizeLua(String(source || ''));
+  const urls = [];
+  for (let i = 0; i + 6 < tokens.length; i++) {
+    if (
+      tokens[i].type === 'identifier' && tokens[i].value.toLowerCase() === 'loadstring' &&
+      tokens[i + 1].value === '(' &&
+      tokens[i + 2].type === 'identifier' && tokens[i + 2].value.toLowerCase() === 'game' &&
+      (tokens[i + 3].value === ':' || tokens[i + 3].value === '.') &&
+      tokens[i + 4].type === 'identifier' && tokens[i + 4].value.toLowerCase() === 'httpget' &&
+      tokens[i + 5].value === '(' &&
+      tokens[i + 6].type === 'string'
+    ) {
+      urls.push(tokens[i + 6].value);
+    }
+  }
+  return uniqueUrls(urls);
+}
+
+function extractStaticFetchUrls(source) {
+  const tokens = tokenizeLua(String(source || ''));
+  const urls = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token.type !== 'string' || !isHttpUrl(token.value)) continue;
+
+    const previous = tokens[i - 1];
+    const beforePrevious = tokens[i - 2];
+    const apiName = beforePrevious && beforePrevious.type === 'identifier'
+      ? beforePrevious.value.toLowerCase()
+      : '';
+
+    // HttpGet/GetAsync/request("https://...") and dotted equivalents.
+    if (
+      previous && previous.value === '(' &&
+      REQUEST_FUNCTIONS.has(apiName)
+    ) {
+      urls.push(token.value);
+      continue;
+    }
+
+    // request({ Url = "https://..." }) and similar options-table forms.
+    if (
+      previous && previous.value === '=' &&
+      beforePrevious && beforePrevious.type === 'identifier' &&
+      URL_FIELDS.has(beforePrevious.value.toLowerCase())
+    ) {
+      urls.push(token.value);
+    }
+  }
+
+  return uniqueUrls(urls);
+}
+
+async function resolveWithExtractor(source, options, extractor) {
   const fetchText = options.fetchText;
   if (typeof fetchText !== 'function') {
-    throw new TypeError('resolveLoadstringSources requires a fetchText function.');
+    throw new TypeError('A fetchText function is required.');
   }
 
   const maxFiles = Number.isInteger(options.maxFiles) ? Math.max(1, options.maxFiles) : 10;
   const maxDepth = Number.isInteger(options.maxDepth) ? Math.max(0, options.maxDepth) : 4;
-  const initialUrls = extractLoadstringHttpGetUrls(source);
+  const initialUrls = uniqueUrls([
+    ...(Array.isArray(options.initialUrls) ? options.initialUrls : []),
+    ...extractor(source),
+  ]);
   const queue = initialUrls.slice(0, maxFiles).map((url) => ({ url, depth: 0 }));
   const queued = new Set(queue.map((item) => item.url));
   const visited = new Set();
@@ -122,16 +190,15 @@ async function resolveLoadstringSources(source, options = {}) {
         throw new Error('The URL returned an empty or non-text response.');
       }
 
-      const index = captures.length + 1;
       captures.push({
-        name: 'loadstring' + index + '.txt',
+        name: 'source' + (captures.length + 1) + '.lua',
         source: text,
         url: item.url,
         depth: item.depth,
       });
 
       if (item.depth < maxDepth && captures.length + queue.length < maxFiles) {
-        for (const childUrl of extractLoadstringHttpGetUrls(text)) {
+        for (const childUrl of extractor(text)) {
           if (visited.has(childUrl) || queued.has(childUrl)) continue;
           if (captures.length + queue.length >= maxFiles) break;
           queue.push({ url: childUrl, depth: item.depth + 1 });
@@ -159,7 +226,18 @@ async function resolveLoadstringSources(source, options = {}) {
   };
 }
 
+async function resolveLoadstringSources(source, options = {}) {
+  return resolveWithExtractor(source, options, extractLoadstringHttpGetUrls);
+}
+
+async function resolveStaticSources(source, options = {}) {
+  return resolveWithExtractor(source, options, extractStaticFetchUrls);
+}
+
 module.exports = {
   extractLoadstringHttpGetUrls,
+  extractStaticFetchUrls,
   resolveLoadstringSources,
+  resolveStaticSources,
+  tokenizeLua,
 };

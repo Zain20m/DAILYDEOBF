@@ -1299,15 +1299,22 @@ async function handleIdxFiles(message) {
   });
 }
 
-async function startIdxWorkflow(message) {
+async function startIdxWorkflow(message, inlineSource = null) {
   const prompt = await message.reply({
-    content: '📄 DAILY DEOBF · .idx\nAttach the .lua, .luau, or .txt script whose loadstring calls you want to capture, or paste a direct script URL. I will return a runner file with the hook inserted.',
+    content: inlineSource
+      ? '⚙️ DAILY DEOBF · .idx\\nBuilding a capture runner from your supplied loadstring expression...'
+      : '📄 DAILY DEOBF · .idx\\nAttach the .lua, .luau, or .txt script whose loadstring calls you want to capture, or paste a direct script URL. I will return a runner file with the hook inserted.',
     allowedMentions: { repliedUser: false },
   });
   const firstAttachment = message.attachments.first();
-  const input = firstAttachment
-    ? await inputFromAttachment(firstAttachment)
-    : await collectInput(message, prompt);
+  if (inlineSource && firstAttachment) {
+    throw new Error('Use either an inline loadstring expression or a file attachment, not both.');
+  }
+  const input = inlineSource
+    ? { source: inlineSource, filename: 'inline-loadstring.lua' }
+    : (firstAttachment
+      ? await inputFromAttachment(firstAttachment)
+      : await collectInput(message, prompt));
 
   const runner = buildIdxCaptureRunner(input.source);
   const data = Buffer.from(runner, 'utf8');
@@ -1455,7 +1462,8 @@ function helpText() {
     'DAILY DEOBF commands',
     '',
     '.deobf - upload a script or paste a direct URL, then choose a Luraph engine.',
-    '.idx - generate a runner that captures dynamic loadstring chunks as numbered text files.',
+    '.idx <loadstring expression> - build a capture runner directly from an expression, e.g. .idx loadstring(game:HttpGet("https://example.com/script.lua"))().',
+    '.idx - attach a script or paste a direct script URL to build a capture runner.',
     '.idx files - upload loadstringN.txt files and receive them back as attachments.',
     '.help - show this command list.',
     '/purelua or /pureluau - run the static PureLuau readability/conversion pass and return the source plus a report.',
@@ -1618,8 +1626,9 @@ client.on(Events.MessageCreate, async (message) => {
       }
       return;
     }
-    if (parts.length > 1) {
-      await message.reply('Use .idx by itself to create a capture runner, or .idx files to return captured text files.');
+    const inlineSource = content.slice(command.length).trim();
+    if (inlineSource.length > MAX_INPUT_BYTES) {
+      await message.reply('❌ The inline expression is too large. Maximum size is 2 MB.');
       return;
     }
     if (activeUsers.has(message.author.id)) {
@@ -1628,7 +1637,7 @@ client.on(Events.MessageCreate, async (message) => {
     }
     activeUsers.add(message.author.id);
     try {
-      await startIdxWorkflow(message);
+      await startIdxWorkflow(message, inlineSource || null);
     } catch (error) {
       await message.reply('❌ ' + String(error.message || error).slice(0, 1500)).catch(() => {});
     } finally {

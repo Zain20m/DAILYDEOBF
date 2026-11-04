@@ -22,7 +22,8 @@ const PREFIX = '.deobf';
 const MAX_INPUT_BYTES = 2 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 18 * 1024 * 1024;
 const MAX_PURELUA_CHARS = 1_500_000;
-const MAX_IDX_CAPTURE_FILES = 10;
+const MAX_IDX_CAPTURE_FILES = 50;
+const MAX_GET_FILES = 10;
 const INPUT_WAIT_MS = 180_000;
 const PICKER_WAIT_MS = 120_000;
 const ENGINE_TIMEOUT_MS = 25 * 60_000;
@@ -1303,8 +1304,8 @@ async function handleIdxFiles(message) {
 async function startIdxWorkflow(message, inlineSource = null) {
   const prompt = await message.reply({
     content: inlineSource
-      ? '⚙️ DAILY DEOBF · .idx\nResolving the supplied loadstring expression automatically...'
-      : '📄 DAILY DEOBF · .idx\nAttach a script or send a direct URL. I will resolve literal loadstring(HttpGet(...)) links automatically.',
+      ? '⚙️ DAILY DEOBF · .idx\nFinding every statically recoverable loadstring source...'
+      : '📄 DAILY DEOBF · .idx\nAttach a script or send a direct URL. I will collect inline loadstrings and follow nested HTTP source links automatically.',
     allowedMentions: { repliedUser: false },
   });
   const firstAttachment = message.attachments.first();
@@ -1321,7 +1322,6 @@ async function startIdxWorkflow(message, inlineSource = null) {
     input = await collectInput(message, prompt);
   }
 
-  // A bare URL is treated as the target returned by loadstring(game:HttpGet(url)).
   let sourceToScan = input.source;
   const trimmed = sourceToScan.trim();
   if (/^https?:\/\/\S+$/i.test(trimmed)) {
@@ -1330,21 +1330,22 @@ async function startIdxWorkflow(message, inlineSource = null) {
 
   const resolution = await resolveLoadstringSources(sourceToScan, {
     maxFiles: MAX_IDX_CAPTURE_FILES,
-    maxDepth: 4,
+    maxDepth: 8,
     fetchText: async (rawUrl) => {
       const fetched = await fetchPublicText(rawUrl);
       return { source: decodeSource(fetched.bytes), filename: fetched.filename };
     },
   });
 
-  if (!resolution.discovered) {
+  if (!resolution.discovered && !resolution.captures.length) {
     throw new Error(
-      'I could not resolve a literal loadstring(game:HttpGet("URL")) call. ' +
-      'This automatic mode follows hard-coded HTTP/HTTPS URLs only; it does not execute arbitrary Luau or guess dynamically-built URLs.'
+      'No statically recoverable loadstring source was found. .idx supports literal loadstring strings, ' +
+      'game:HttpGet(...), HttpGetAsync, HttpService:GetAsync, request({Url=...}), and literal URL variables. ' +
+      'Dynamically generated URLs or runtime-only chunks cannot be recovered by static inspection.'
     );
   }
 
-  const attachments = [];
+  const outputFiles = [];
   let totalBytes = 0;
   const omittedNames = [];
   for (const capture of resolution.captures) {
@@ -1353,30 +1354,35 @@ async function startIdxWorkflow(message, inlineSource = null) {
       omittedNames.push(capture.name);
       continue;
     }
-    attachments.push(new AttachmentBuilder(data, { name: capture.name }));
+    outputFiles.push({ data, name: capture.name });
     totalBytes += data.length;
   }
 
   const reportLines = [
-    'DAILY DEOBF · automatic .idx resolution report',
+    'DAILY DEOBF · .idx complete loadstring collection report',
     'Input: ' + String(input.filename || 'inline-loadstring.lua'),
-    'Discovered static URLs: ' + resolution.discovered,
-    'Fetched chunks: ' + resolution.captures.length,
-    'Failed URLs: ' + resolution.failures.length,
-    'Fetch attempts: ' + resolution.attempts,
-    'Resolution truncated by safety limits: ' + (resolution.truncated ? 'yes' : 'no'),
-    'Maximum chain depth: ' + resolution.maxDepth,
-    'Maximum returned chunks: ' + resolution.maxFiles,
+    'Static URLs discovered: ' + resolution.discovered,
+    'HTTP fetch attempts: ' + resolution.attempts,
+    'Loadstring/source chunks recovered: ' + resolution.captures.length,
+    'Inline literal loadstrings recovered: ' + resolution.captures.filter((capture) => capture.inline).length,
+    'Remote source files recovered: ' + resolution.captures.filter((capture) => !capture.inline).length,
+    'Fetch failures: ' + resolution.failures.length,
+    'Safety cap reached: ' + (resolution.truncated ? 'yes' : 'no'),
+    'Maximum URL fetches: ' + resolution.maxFiles,
+    'Maximum nested depth: ' + resolution.maxDepth,
     '',
-    'Captured chunks:',
+    'Recovered chunks:',
     ...(resolution.captures.length
       ? resolution.captures.map((capture) => {
-          let host = 'URL';
-          try { host = new URL(capture.url).host; } catch {}
-          return '- ' + capture.name + ' · depth ' + capture.depth + ' · ' + host +
+          let origin = 'inline input';
+          if (!capture.inline && capture.url) {
+            try { origin = new URL(capture.url).host; } catch { origin = 'remote URL'; }
+          }
+          return '- ' + capture.name + ' · ' + (capture.inline ? 'inline loadstring' : 'downloaded source') +
+            ' · depth ' + capture.depth + ' · ' + origin +
             ' · ' + formatBytes(Buffer.byteLength(capture.source, 'utf8'));
         })
-      : ['- None downloaded successfully.']),
+      : ['- None recovered.']),
     '',
     'Fetch failures:',
     ...(resolution.failures.length
@@ -1387,39 +1393,53 @@ async function startIdxWorkflow(message, inlineSource = null) {
         })
       : ['- None.']),
     ...(omittedNames.length
-      ? ['', 'Not attached because the response-size limit was reached:', ...omittedNames.map((name) => '- ' + name)]
+      ? ['', 'Not attached because the combined 18 MB response limit was reached:', ...omittedNames.map((name) => '- ' + name)]
       : []),
     '',
-    'Method: static URL discovery and HTTP fetching only.',
-    'The bot did not execute the downloaded Luau. Roblox runtime APIs, computed URLs, encrypted strings and runtime-generated loadstring chunks cannot be evaluated on Railway.',
+    'Discovery covers literal HTTP URLs, common Roblox HTTP APIs, request URL fields, and inline literal loadstring arguments.',
+    'No downloaded Luau was executed. Dynamic code, encrypted/computed URLs, and chunks created only at runtime require a runtime capture and are not claimed as recovered.',
   ];
 
   const reportBuffer = Buffer.from(reportLines.join('\n'), 'utf8');
   if (totalBytes + reportBuffer.length <= MAX_OUTPUT_BYTES) {
-    attachments.push(new AttachmentBuilder(reportBuffer, { name: 'idx_report.txt' }));
+    outputFiles.push({ data: reportBuffer, name: 'idx_report.txt' });
   }
 
-  const summary = resolution.captures.length
-    ? '✅ **.idx automatic resolution complete.**\nFetched ' +
-      resolution.captures.length + ' chunk(s) from ' + resolution.discovered +
-      ' discovered URL(s). ' +
-      (resolution.failures.length ? resolution.failures.length + ' URL(s) failed. ' : '') +
-      'Files are attached as loadstringN.txt.'
-    : '⚠️ **.idx found the URL chain, but no chunk could be downloaded.** See idx_report.txt for the fetch errors.';
+  const batchSize = 9;
+  const totalBatches = Math.max(1, Math.ceil(outputFiles.length / batchSize));
+  const summary = '✅ **.idx collection finished.** Recovered ' +
+    resolution.captures.length + ' chunk(s) from ' + resolution.discovered +
+    ' static URL(s).' +
+    (resolution.failures.length ? ' ' + resolution.failures.length + ' URL(s) failed.' : '') +
+    (resolution.truncated ? ' The 50-fetch safety cap was reached.' : '') +
+    (omittedNames.length ? ' Some files exceeded the combined size limit; see the report.' : '');
 
-  await message.reply({
-    content: summary,
-    files: attachments,
-    allowedMentions: { repliedUser: false },
-  });
+  if (!outputFiles.length) {
+    await message.reply({
+      content: summary + '\nNo files fit within the response size limit.',
+      allowedMentions: { repliedUser: false },
+    });
+  } else {
+    for (let offset = 0; offset < outputFiles.length; offset += batchSize) {
+      const batch = outputFiles.slice(offset, offset + batchSize);
+      const batchNumber = Math.floor(offset / batchSize) + 1;
+      const files = batch.map((file) => new AttachmentBuilder(file.data, { name: file.name }));
+      await message.reply({
+        content: summary + '\nFiles ' + (offset + 1) + '-' +
+          (offset + batch.length) + ' of ' + outputFiles.length +
+          ' · batch ' + batchNumber + '/' + totalBatches,
+        files,
+        allowedMentions: { repliedUser: false },
+      });
+    }
+  }
+
   await prompt.edit({
-    content: resolution.captures.length
-      ? '✅ .idx finished. The bot fetched and attached the statically discoverable loadstring chunks.'
-      : '⚠️ .idx finished, but the discovered URLs could not be fetched.',
+    content: '✅ .idx finished. Recovered ' + resolution.captures.length +
+      ' loadstring/source chunk(s). ' + totalBatches + ' attachment batch(es) sent.',
     components: [],
   }).catch(() => {});
 }
-
 
 async function startGetWorkflow(message, inlineSource = null) {
   const prompt = await message.reply({
@@ -1455,7 +1475,7 @@ async function startGetWorkflow(message, inlineSource = null) {
 
   const resolution = await resolveStaticSources(sourceToScan, {
     initialUrls,
-    maxFiles: MAX_IDX_CAPTURE_FILES,
+    maxFiles: MAX_GET_FILES,
     maxDepth: 4,
     fetchText: async (rawUrl) => {
       if (input.url && rawUrl === input.url) return input.source;
@@ -1672,14 +1692,14 @@ function helpText() {
     'DAILY DEOBF commands',
     '',
     '.deobf - upload a script or paste a direct URL, then choose a Luraph engine.',
-    '.idx <loadstring expression> - automatically fetch literal loadstring(game:HttpGet("URL")) chunks and follow nested links, e.g. .idx loadstring(game:HttpGet("https://example.com/script.lua"))().',
-    '.idx - attach a script or paste a direct URL and automatically resolve its literal loadstring(HttpGet(...)) chain.',
+    '.idx <loadstring expression> - recover inline literal loadstrings plus nested HTTP-loaded chunks, return them all in batches (up to 50 fetches).',
+    '.idx - attach a script or paste a direct URL to collect statically recoverable loadstrings and nested remote sources.',
     '.idx files - upload loadstringN.txt files and receive them back as attachments.',
     '.get <URL or script/expression> - fetch remote scripts using HttpGet, GetAsync and request({Url=...}) patterns, following nested static links.',
     '.help - show this command list.',
     '/purelua or /pureluau - run the static PureLuau readability/conversion pass and return the source plus a report.',
     '',
-    '.idx follows literal loadstring(game:HttpGet(...)) chains; .get supports broader static HTTP-fetch patterns. Neither command executes Luau on the bot.',
+    '.idx collects inline literal loadstrings and nested remote sources; .get discovers broader static HTTP fetches. Neither command executes Luau on the bot.'
   ].join('\n');
 }
 

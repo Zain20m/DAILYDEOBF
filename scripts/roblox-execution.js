@@ -79,8 +79,7 @@ async function runLuauTask(options) {
 
   if (
     typeof created.path !== 'string' ||
-    !/^universes\\d+/.test(created.path.replace(/^universes\\//, 'universes')) ||
-    !/^universes\\/\\d+\\/places\\/\\d+\\/(?:versions\\/\\d+\\/)?luau-execution-sessions\\/[A-Za-z0-9-]+\\/tasks\\/[A-Za-z0-9-]+$/.test(created.path)
+    !/^universes\/\d+\/places\/\d+\/(?:versions\/\d+\/)?luau-execution-sessions\/[A-Za-z0-9-]+\/tasks\/[A-Za-z0-9-]+$/.test(created.path)
   ) {
     throw new Error('Roblox created a task but did not return a valid task path.');
   }

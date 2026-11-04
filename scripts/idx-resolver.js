@@ -3,7 +3,7 @@
 const REQUEST_FUNCTIONS = new Set([
   'httpget', 'httpgetasync', 'getasync',
   'request', 'http_request', 'httprequest',
-  'get', 'fetch',
+  'get', 'fetch', 'loadstring',
 ]);
 const URL_FIELDS = new Set(['url', 'uri', 'urlstring']);
 

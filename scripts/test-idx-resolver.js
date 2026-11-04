@@ -234,3 +234,20 @@ test('marks the result truncated when inline chunks exceed the cap', async () =>
   assert.equal(result.captures.length, 10);
   assert.equal(result.truncated, true);
 });
+
+
+test('recovers inline loadstring source assigned to a literal variable', () => {
+  const source = [
+    'local firstChunk = "print(123)"',
+    'loadstring(firstChunk)()',
+    'local secondChunk = [[warn("hello")]]',
+    'loadstring(secondChunk)()',
+    'secondChunk = buildAtRuntime()',
+    'loadstring(secondChunk)()',
+  ].join('\n');
+
+  assert.deepEqual(extractInlineLoadstringSources(source), [
+    'print(123)',
+    'warn("hello")',
+  ]);
+});

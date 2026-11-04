@@ -41,6 +41,9 @@ function inspectLiftText(source) {
   if (metrics.nilArithmetic) issues.push(metrics.nilArithmetic + ' arithmetic operation(s) use nil as an operand.');
   if (metrics.nilBit32Calls) issues.push(metrics.nilBit32Calls + ' bit32 call(s) use nil as the first argument.');
   if (metrics.nilComparisons) issues.push(metrics.nilComparisons + ' numeric comparison(s) use nil.');
+  if (metrics.runtimeStubDefinitions) {
+    issues.push(metrics.runtimeStubDefinitions + ' unlifted Luraph runtime placeholder definition(s) remain.');
+  }
   if (metrics.unresolvedRuntimeCalls) {
     issues.push(metrics.unresolvedRuntimeCalls + ' call(s) target unlifted Luraph runtime placeholder(s).');
   }

@@ -15,6 +15,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { inspectLiftText } = require('./scripts/lift-validation');
 const { convertToPureLuau } = require('./pureluau');
+const { resolveLoadstringSources } = require('./scripts/idx-resolver');
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const PREFIX = '.deobf';
@@ -1302,40 +1303,119 @@ async function handleIdxFiles(message) {
 async function startIdxWorkflow(message, inlineSource = null) {
   const prompt = await message.reply({
     content: inlineSource
-      ? '⚙️ DAILY DEOBF · .idx\nBuilding a capture runner from your supplied loadstring expression...'
-      : '📄 DAILY DEOBF · .idx\\nAttach the .lua, .luau, or .txt script whose loadstring calls you want to capture, or paste a direct script URL. I will return a runner file with the hook inserted.',
+      ? '⚙️ DAILY DEOBF · .idx\nResolving the supplied loadstring expression automatically...'
+      : '📄 DAILY DEOBF · .idx\nAttach a script or send a direct URL. I will resolve literal loadstring(HttpGet(...)) links automatically.',
     allowedMentions: { repliedUser: false },
   });
   const firstAttachment = message.attachments.first();
   if (inlineSource && firstAttachment) {
     throw new Error('Use either an inline loadstring expression or a file attachment, not both.');
   }
-  const input = inlineSource
-    ? { source: inlineSource, filename: 'inline-loadstring.lua' }
-    : (firstAttachment
-      ? await inputFromAttachment(firstAttachment)
-      : await collectInput(message, prompt));
 
-  const runner = buildIdxCaptureRunner(input.source);
-  const data = Buffer.from(runner, 'utf8');
-  if (data.length > MAX_OUTPUT_BYTES) {
-    throw new Error('The generated capture runner exceeds the 18 MB file limit.');
+  let input;
+  if (inlineSource) {
+    input = { source: inlineSource, filename: 'inline-loadstring.lua' };
+  } else if (firstAttachment) {
+    input = await inputFromAttachment(firstAttachment);
+  } else {
+    input = await collectInput(message, prompt);
   }
-  const baseName = path.basename(input.filename || 'script.lua', path.extname(input.filename || 'script.lua'))
-    .replace(/[^A-Za-z0-9._-]/g, '_') || 'script';
-  const outputName = 'idx_capture_' + baseName + '.lua';
+
+  // A bare URL is treated as the target returned by loadstring(game:HttpGet(url)).
+  let sourceToScan = input.source;
+  const trimmed = sourceToScan.trim();
+  if (/^https?:\/\/\S+$/i.test(trimmed)) {
+    sourceToScan = 'loadstring(game:HttpGet(' + JSON.stringify(trimmed) + '))()';
+  }
+
+  const resolution = await resolveLoadstringSources(sourceToScan, {
+    maxFiles: MAX_IDX_CAPTURE_FILES,
+    maxDepth: 4,
+    fetchText: async (rawUrl) => {
+      const fetched = await fetchPublicText(rawUrl);
+      return { source: decodeSource(fetched.bytes), filename: fetched.filename };
+    },
+  });
+
+  if (!resolution.discovered) {
+    throw new Error(
+      'I could not resolve a literal loadstring(game:HttpGet("URL")) call. ' +
+      'This automatic mode follows hard-coded HTTP/HTTPS URLs only; it does not execute arbitrary Luau or guess dynamically-built URLs.'
+    );
+  }
+
+  const attachments = [];
+  let totalBytes = 0;
+  const omittedNames = [];
+  for (const capture of resolution.captures) {
+    const data = Buffer.from(capture.source, 'utf8');
+    if (totalBytes + data.length > MAX_OUTPUT_BYTES - 4096) {
+      omittedNames.push(capture.name);
+      continue;
+    }
+    attachments.push(new AttachmentBuilder(data, { name: capture.name }));
+    totalBytes += data.length;
+  }
+
+  const reportLines = [
+    'DAILY DEOBF · automatic .idx resolution report',
+    'Input: ' + String(input.filename || 'inline-loadstring.lua'),
+    'Discovered static URLs: ' + resolution.discovered,
+    'Fetched chunks: ' + resolution.captures.length,
+    'Failed URLs: ' + resolution.failures.length,
+    'Maximum chain depth: ' + resolution.maxDepth,
+    'Maximum returned chunks: ' + resolution.maxFiles,
+    '',
+    'Captured chunks:',
+    ...(resolution.captures.length
+      ? resolution.captures.map((capture) => {
+          let host = 'URL';
+          try { host = new URL(capture.url).host; } catch {}
+          return '- ' + capture.name + ' · depth ' + capture.depth + ' · ' + host +
+            ' · ' + formatBytes(Buffer.byteLength(capture.source, 'utf8'));
+        })
+      : ['- None downloaded successfully.']),
+    '',
+    'Fetch failures:',
+    ...(resolution.failures.length
+      ? resolution.failures.map((failure) => {
+          let host = 'URL';
+          try { host = new URL(failure.url).host; } catch {}
+          return '- ' + host + ': ' + failure.message;
+        })
+      : ['- None.']),
+    ...(omittedNames.length
+      ? ['', 'Not attached because the response-size limit was reached:', ...omittedNames.map((name) => '- ' + name)]
+      : []),
+    '',
+    'Method: static URL discovery and HTTP fetching only.',
+    'The bot did not execute the downloaded Luau. Roblox runtime APIs, computed URLs, encrypted strings and runtime-generated loadstring chunks cannot be evaluated on Railway.',
+  ];
+
+  const reportBuffer = Buffer.from(reportLines.join('\n'), 'utf8');
+  if (totalBytes + reportBuffer.length <= MAX_OUTPUT_BYTES) {
+    attachments.push(new AttachmentBuilder(reportBuffer, { name: 'idx_report.txt' }));
+  }
+
+  const summary = resolution.captures.length
+    ? '✅ **.idx automatic resolution complete.**\nFetched ' +
+      resolution.captures.length + ' chunk(s) from ' + resolution.discovered +
+      ' discovered URL(s). ' +
+      (resolution.failures.length ? resolution.failures.length + ' URL(s) failed. ' : '') +
+      'Files are attached as loadstringN.txt.'
+    : '⚠️ **.idx found the URL chain, but no chunk could be downloaded.** See idx_report.txt for the fetch errors.';
+
   await message.reply({
-    content: [
-      '✅ Capture runner generated.',
-      'Run the attached file in an executor environment you are authorized to use.',
-      'It saves each captured chunk as loadstring1.txt, loadstring2.txt, and so on.',
-      'When those files are on your device, use .idx files and attach them to receive the files back from the bot.',
-      'The bot does not execute executor APIs or run the script on Railway.',
-    ].join('\n'),
-    files: [new AttachmentBuilder(data, { name: outputName })],
+    content: summary,
+    files: attachments,
     allowedMentions: { repliedUser: false },
   });
-  await prompt.edit({ content: '✅ .idx runner attached as ' + outputName + '.' }).catch(() => {});
+  await prompt.edit({
+    content: resolution.captures.length
+      ? '✅ .idx finished. The bot fetched and attached the statically discoverable loadstring chunks.'
+      : '⚠️ .idx finished, but the discovered URLs could not be fetched.',
+    components: [],
+  }).catch(() => {});
 }
 
 async function handlePureLuauCommand(interaction) {
@@ -1462,8 +1542,8 @@ function helpText() {
     'DAILY DEOBF commands',
     '',
     '.deobf - upload a script or paste a direct URL, then choose a Luraph engine.',
-    '.idx <loadstring expression> - build a capture runner directly from an expression, e.g. .idx loadstring(game:HttpGet("https://example.com/script.lua"))().',
-    '.idx - attach a script or paste a direct script URL to build a capture runner.',
+    '.idx <loadstring expression> - automatically fetch literal loadstring(game:HttpGet("URL")) chunks and follow nested links, e.g. .idx loadstring(game:HttpGet("https://example.com/script.lua"))().',
+    '.idx - attach a script or paste a direct URL and automatically resolve its literal loadstring(HttpGet(...)) chain.',
     '.idx files - upload loadstringN.txt files and receive them back as attachments.',
     '.help - show this command list.',
     '/purelua or /pureluau - run the static PureLuau readability/conversion pass and return the source plus a report.',

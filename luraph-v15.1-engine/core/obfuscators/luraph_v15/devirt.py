@@ -1452,11 +1452,9 @@ class ProtoLifter:
             if isinstance(k, (int, float)) and k < 1 and self.stack_base is not None:
                 raise Unsupported("read below the stack VM's frame (register %s)" % k)
             if isinstance(k, (int, float)) and (k < 0 or (1024 < k < 800000)) and self.stack_base is None:
-                raise Unsupported(
-                    "corrupt/encrypted register index %s (stack_base=%r, stack_pointer_candidates=%d, proto=%r)"
-                    % (k, self.stack_base, len(getattr(self.vm, "_sp_cands", {}).get(None, ())),
-                       getattr(self.proto, "tid", None))
-                )
+                raise Unsupported("corrupt/encrypted register index %s [stack_base=%r, stack_pointer_candidates=%d, proto=%r]"
+                                   % (k, self.stack_base, len(getattr(self.vm, "_sp_cands", {}).get(None, ())),
+                                      getattr(self.proto, "tid", None)))
             if self.jvals.get(k) is FRAME:
                 return obj
             if k in self.jvals:
@@ -1661,11 +1659,9 @@ class ProtoLifter:
             if isinstance(key, (int, float)) and key < 1 and self.stack_base is not None:
                 raise Unsupported("store below the stack VM's frame (register %s)" % key)
             if isinstance(key, (int, float)) and (key < 0 or (1024 < key < 800000)) and self.stack_base is None:
-                raise Unsupported(
-                    "corrupt/encrypted register store %s (stack_base=%r, stack_pointer_candidates=%d, proto=%r)"
-                    % (key, self.stack_base, len(getattr(self.vm, "_sp_cands", {}).get(None, ())),
-                       getattr(self.proto, "tid", None))
-                )
+                raise Unsupported("corrupt/encrypted register store %s [stack_base=%r, stack_pointer_candidates=%d, proto=%r]"
+                                   % (key, self.stack_base, len(getattr(self.vm, "_sp_cands", {}).get(None, ())),
+                                      getattr(self.proto, "tid", None)))
             self.emit(Assign(Reg(S.norm_key(key)), self.value_of(v)))
             return
         if isinstance(obj, FrameProxy):
@@ -1727,11 +1723,9 @@ class ProtoLifter:
             if id(obj) in self.proto_arrays:
                 if is_sym(v):
                     self.out.clear()
-                    raise Unsupported(
-                        "symbolic value store into proto array (key=%s, value=%s, stack_base=%r, pending_jump_regs=%s, proto=%r)"
-                        % (fmt_expr(key), fmt_expr(v), self.stack_base,
-                           sorted(self.need_jump_regs)[:16], getattr(self.proto, "tid", None))
-                    )
+                    raise Unsupported("symbolic value store into proto array [key=%s, value=%s, stack_base=%r, pending_jump_regs=%s, proto=%r]"
+                                       % (fmt_expr(key), fmt_expr(v), self.stack_base,
+                                          sorted(self.need_jump_regs)[:16], getattr(self.proto, "tid", None)))
                 self.mutated = True
             if self.ov_base is not None and obj.tid is not None:
 
@@ -3495,11 +3489,53 @@ class Stepper:
                         return st["values"][k]
         return None
 
-    def _sp_value(self, locs):
-        """The (int) stack-pointer value among the carried locals, if any."""
+    def _sp_value(self, locs, scope=None):
+        """Find the VM register-stack base.
+
+        The first walk can reach a high absolute register index before the
+        stack-pointer local has been marked as carried. Looking only at
+        State.locs therefore misses a value that is already present in the
+        initial prologue scope and leaves ProtoLifter.stack_base unset.
+        Prefer the established carried value; otherwise inspect the live
+        initial scope chain, but only infer from an unambiguous candidate.
+        """
         cands = getattr(self, "sp_cands", None)
-        ints = [v for k, v in locs if (cands is None or k in cands) and isinstance(v, int) and not isinstance(v, bool)]
-        return ints[0] if ints else None
+
+        def as_int(value):
+            if isinstance(value, Const):
+                value = value.v
+            return value if type(value) is int else None
+
+        carried = [
+            value for key, value in locs
+            if (cands is None or key in cands) and as_int(value) is not None
+        ]
+        if carried:
+            return as_int(carried[0])
+
+        if scope is None or not cands:
+            return None
+
+        found = {}
+        current = scope
+        while current is not None:
+            for key in cands:
+                if key in found:
+                    continue
+                if key in current.vars:
+                    value = as_int(current.vars[key])
+                    if value is not None:
+                        found[key] = value
+            current = current.parent
+
+        values = list(found.values())
+        if not values:
+            return None
+        high = {value for value in values if value > 1024}
+        if len(high) == 1:
+            return next(iter(high))
+        unique = set(values)
+        return next(iter(unique)) if len(unique) == 1 else None
 
     def initial(self):
         if not hasattr(self, "_init_scope_vars"):
@@ -3522,17 +3558,19 @@ class Stepper:
         mode = inner.lookup(self.mode_decl).vars[self.mode_decl] if self.mode_decl else 0
         ks = inner.lookup(self.vm.kstack_key) if self.vm.kstack_key else None
         locs = self._carried(inner)
-        if locs:
-            sb = self._sp_value(locs)
-            if sb is not None:
-                self.lf.stack_base = sb
-                for k, vreg in list(self.vreg_of.items()):
-                    if self.vreg_init.get(vreg) is None:
-                        del self.vreg_of[k]
-                        self.lf.vreg_set.discard(vreg)
-                    else:
-                        self.lf.jump_regs.add(vreg)
-                        self.lf.cff_regs.add(vreg)
+        # Do not gate stack-base detection on locs: carry is initially empty,
+        # while the prologue locals needed to identify the frame can already
+        # have concrete values in inner/parent scopes.
+        sb = self._sp_value(locs, inner)
+        if sb is not None:
+            self.lf.stack_base = sb
+            for k, vreg in list(self.vreg_of.items()):
+                if self.vreg_init.get(vreg) is None:
+                    del self.vreg_of[k]
+                    self.lf.vreg_set.discard(vreg)
+                else:
+                    self.lf.jump_regs.add(vreg)
+                    self.lf.cff_regs.add(vreg)
         init_jr = tuple(sorted(
             (vr, iv) for vr, iv in self.vreg_init.items()
             if vr in self.lf.vreg_set and vr in self.lf.jump_regs and iv is not None

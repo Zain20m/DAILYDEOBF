@@ -17,9 +17,9 @@ const MAX_INPUT_BYTES = 2 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 18 * 1024 * 1024;
 const INPUT_WAIT_MS = 180_000;
 const PICKER_WAIT_MS = 120_000;
-const ENGINE_TIMEOUT_MS = 15 * 60_000;
+const ENGINE_TIMEOUT_MS = 25 * 60_000;
 const ENGINE_V15_DIR = path.join(__dirname, 'luraph-v15-engine');
-const ENGINE_V15_CLI = path.join(ENGINE_V15_DIR, 'deob.js');
+const ENGINE_V15_CLI = path.join(ENGINE_V15_DIR, 'deob.py');
 const ENGINE_151_DIR = path.join(__dirname, 'luraph-v15.1-engine');
 const ENGINE_151_CLI = path.join(ENGINE_151_DIR, 'deob.js');
 const activeUsers = new Set();
@@ -204,79 +204,366 @@ async function collectInput(message, prompt) {
   });
 }
 
-function runEngine(engineDir, engineCli, inputPath, outputPath, timeoutMs, legacy = false, extraArgs = []) {
+function formatDuration(milliseconds) {
+  const seconds = Math.max(0, Math.ceil(milliseconds / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remaining = seconds % 60;
+  if (hours) return hours + 'h ' + minutes + 'm';
+  if (minutes) return minutes + 'm ' + String(remaining).padStart(2, '0') + 's';
+  return remaining + 's';
+}
+
+function formatBytes(bytes) {
+  if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+  if (bytes >= 1024) return Math.round(bytes / 1024) + ' KB';
+  return bytes + ' bytes';
+}
+
+function createAnalysisProgress(prompt, filename, inputBytes, label) {
+  const startedAt = Date.now();
+  const estimateMs = Math.min(15 * 60_000, Math.max(60_000, 60_000 + (inputBytes / (1024 * 1024)) * 6 * 60_000));
+  const safeName = String(filename || 'script.lua').replaceAll(String.fromCharCode(96), '').replace(/[\r\n]/g, ' ');
+  let phase = 'Preparing full VM analysis';
+  let detail = 'Starting the isolated Luau runtime and preparing VM capture.';
+  let lastEdit = 0;
+  let editing = false;
+  let stopped = false;
+
+  function render() {
+    const elapsed = Date.now() - startedAt;
+    const remaining = estimateMs - elapsed;
+    const eta = remaining > 0 ? '~' + formatDuration(remaining) + ' remaining' : 'Estimate passed; analysis is still running';
+    return [
+      '🧠 **' + label + ' · full analysis**',
+      '**Status:** ' + phase,
+      '**ETA:** ' + eta,
+      '**Elapsed:** ' + formatDuration(elapsed),
+      '**Input:** ' + safeName + ' · ' + formatBytes(inputBytes),
+      detail,
+    ].join('\n');
+  }
+
+  async function publish(force = false) {
+    if (stopped && !force) return;
+    const now = Date.now();
+    if (!force && now - lastEdit < 9000) return;
+    if (editing) return;
+    editing = true;
+    lastEdit = now;
+    try {
+      await prompt.edit({ content: render(), components: [] });
+    } catch {}
+    editing = false;
+  }
+
+  function onLine(rawLine) {
+    const line = String(rawLine || '').replace(/\x1b\[[0-9;]*m/g, '').trim();
+    if (!line) return;
+    let match;
+
+    if (/obfuscator:/i.test(line)) {
+      phase = 'Identifying the Luraph VM';
+      detail = line.slice(0, 180);
+    } else if ((match = line.match(/tracing .*?\(run\s+(\d+)\)/i))) {
+      phase = 'Tracing VM execution · pass ' + match[1];
+      detail = 'Capturing function entries, VM metadata, constants and runtime-created chunks.';
+    } else if ((match = line.match(/script loadstring.d\s+(\d+)\s+new VM chunk/i))) {
+      phase = 'Inspecting dynamically loaded VM chunks';
+      detail = 'Captured ' + match[1] + ' new VM chunk(s). Instrumenting them and tracing again.';
+    } else if (/anti-tamper trap|anti-tamper trigger|LPH_CRASH/i.test(line)) {
+      phase = 'Mapping protected VM branches';
+      detail = line.slice(0, 180);
+    } else if ((match = line.match(/devirt round\s+(\d+):\s*([\d,]+) functions\s*\(([\d,]+) walked\),\s*([\d,]+) unlifted blocks,\s*([\d,]+) new constant requests/i))) {
+      phase = 'Reconstructing functions · round ' + match[1] + '/200';
+      detail = match[2] + ' functions found · ' + match[3] + ' walked · ' + match[4] + ' unlifted blocks · ' + match[5] + ' new constants requested.';
+    } else if ((match = line.match(/devirtualizing\s+\(round\s+(\d+)\)/i))) {
+      phase = 'Building readable Luau · full lift round ' + match[1];
+      detail = 'Rebuilding control flow, closures, locals and VM branches.';
+    } else if (/functions,\s*[\d,]+\s*unlifted blocks/i.test(line)) {
+      phase = 'Checking reconstructed control flow';
+      detail = line.replace(/^\[\*\]\s*/, '').slice(0, 180);
+    } else if (/constants decoded on request|constant request run/i.test(line)) {
+      phase = 'Resolving hidden constants';
+      detail = line.replace(/^\[\*\]\s*/, '').slice(0, 180);
+    } else if (/devirtualization failed|devirtualization produced no output|devirtualized output is broken/i.test(line)) {
+      phase = 'Recording partial-analysis diagnostics';
+      detail = line.replace(/^\[!\]\s*/, '').slice(0, 180);
+    } else if (/result:|run status: finished|done:.*succeeded/i.test(line)) {
+      phase = 'Finalizing analysis files';
+      detail = line.replace(/^\[\*\]\s*/, '').slice(0, 180);
+    }
+
+    void publish(false);
+  }
+
+  const timer = setInterval(() => { void publish(false); }, 10_000);
+
+  return {
+    start: () => publish(true),
+    onLine,
+    setPhase: async (nextPhase, nextDetail) => {
+      phase = nextPhase;
+      detail = nextDetail || '';
+      await publish(true);
+    },
+    complete: async (nextDetail) => {
+      phase = 'Analysis complete';
+      detail = nextDetail || 'The result and diagnostic files have been prepared.';
+      stopped = true;
+      clearInterval(timer);
+      await publish(true);
+    },
+    fail: async (error) => {
+      phase = 'Analysis stopped';
+      detail = String(error && (error.message || error) || 'Unknown engine error').slice(0, 220);
+      stopped = true;
+      clearInterval(timer);
+      await publish(true);
+    },
+    stop: () => {
+      stopped = true;
+      clearInterval(timer);
+    },
+  };
+}
+
+function runCommand(command, args, cwd, timeoutMs, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [
-      legacy ? '--max-old-space-size=512' : '--max-old-space-size=1024',
-      engineCli,
-      inputPath,
-      '-o',
-      outputPath,
-      ...(legacy ? ['--steps', '180000'] : ['--timeout', '120']),
-      ...extraArgs,
-    ], {
-      cwd: engineDir,
+    const child = spawn(command, args, {
+      cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: false,
       windowsHide: true,
+      env: { ...process.env, ...(options.env || {}) },
     });
 
     let stdout = '';
     let stderr = '';
+    let pendingStderr = '';
+    let timedOut = false;
+
     child.stdout.on('data', (chunk) => {
-      if (stdout.length < 24_000) stdout += chunk.toString();
+      if (stdout.length < 48_000) stdout += chunk.toString().slice(0, 48_000 - stdout.length);
     });
+
     child.stderr.on('data', (chunk) => {
-      if (stderr.length < 12_000) stderr += chunk.toString();
+      const text = chunk.toString();
+      if (stderr.length < 64_000) stderr += text.slice(0, 64_000 - stderr.length);
+      pendingStderr += text;
+      let newline;
+      while ((newline = pendingStderr.indexOf('\n')) !== -1) {
+        const line = pendingStderr.slice(0, newline).trim();
+        pendingStderr = pendingStderr.slice(newline + 1);
+        if (line && options.onProgress) options.onProgress(line);
+      }
     });
-    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, timeoutMs);
+
     child.once('error', (error) => {
       clearTimeout(timer);
       reject(error);
     });
+
     child.once('close', (code, signal) => {
       clearTimeout(timer);
-      if (signal === 'SIGKILL') {
-        return reject(new Error('This script exceeded the engine processing time limit.'));
+      if (pendingStderr.trim() && options.onProgress) options.onProgress(pendingStderr.trim());
+      if (timedOut || signal === 'SIGKILL') {
+        return reject(new Error('The engine exceeded its ' + formatDuration(timeoutMs) + ' processing limit.'));
       }
       if (code !== 0) {
         const raw = (stderr || stdout).trim();
         const lines = raw.split('\n').filter(Boolean);
-        const detail = lines.length > 18
-          ? [...lines.slice(0, 12), '…', ...lines.slice(-6)].join('\n')
-          : lines.join('\n');
+        const detail = lines.length > 18 ? [...lines.slice(0, 12), '…', ...lines.slice(-6)].join('\n') : lines.join('\n');
         return reject(new Error(detail || ('Deobfuscator exited with code ' + code + '.')));
       }
-      resolve(stdout);
+      resolve({ stdout, stderr });
     });
   });
 }
+
+function runEngine(engineDir, engineCli, inputPath, outputPath, timeoutMs, legacy = false, extraArgs = [], options = {}) {
+  const args = [
+    legacy ? '--max-old-space-size=512' : '--max-old-space-size=1024',
+    engineCli,
+    inputPath,
+    '-o',
+    outputPath,
+    ...(legacy ? ['--steps', '180000'] : ['--timeout', '180']),
+    ...extraArgs,
+  ];
+  return runCommand(process.execPath, args, engineDir, timeoutMs, options);
+}
+
+function runPythonEngine(engineDir, engineCli, inputPath, outputPath, timeoutMs, extraArgs = [], options = {}) {
+  const python = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+  return runCommand(python, [engineCli, inputPath, '-o', outputPath, ...extraArgs], engineDir, timeoutMs, options);
+}
+
+async function sendAnalysisOutput(message, input, config) {
+  const base = config.base;
+  const outputDir = config.outputDir;
+  const liftedPath = base + '.devirt.luau';
+  const defaultTracePath = base + '.luau';
+  const preservedTracePath = base + '.trace.luau';
+  const protoPath = base + '.protos.json';
+  const stringsPath = base + '.strings.txt';
+  const reportPath = path.join(outputDir, 'analysis-report.txt');
+
+  async function fileSize(filePath) {
+    try {
+      return (await fs.stat(filePath)).size;
+    } catch {
+      return 0;
+    }
+  }
+
+  const liftedBytes = await fileSize(liftedPath);
+  const hasLiftedSource = liftedBytes > 0;
+  const preferredTracePath = (await fileSize(preservedTracePath)) > 0 ? preservedTracePath : defaultTracePath;
+  const traceBytes = await fileSize(preferredTracePath);
+  const protoBytes = await fileSize(protoPath);
+  const stringBytes = await fileSize(stringsPath);
+  const directoryEntries = await fs.readdir(outputDir);
+  const chunkFiles = directoryEntries
+    .filter((name) => name.startsWith(path.basename(base) + '.chunk_') && name.endsWith('.luau'))
+    .sort();
+
+  let prototypeCount = 0;
+  if (protoBytes > 0 && protoBytes <= 12 * 1024 * 1024) {
+    try {
+      const parsed = JSON.parse(await fs.readFile(protoPath, 'utf8'));
+      if (Array.isArray(parsed)) prototypeCount = parsed.length;
+      else if (parsed && Array.isArray(parsed.protos)) prototypeCount = parsed.protos.length;
+      else if (parsed && typeof parsed === 'object') prototypeCount = Object.keys(parsed).length;
+    } catch {}
+  }
+
+  const notableLogs = String(config.stderr || '').split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('[!]') || /devirt round|devirtualizing \(round|loadstring.d .*VM chunk|anti-tamper/i.test(line))
+    .slice(-18);
+
+  const resultLabel = hasLiftedSource ? 'FULL VM LIFT GENERATED' : 'BEHAVIOUR TRACE ONLY · VM LIFT NOT COMPLETED';
+  const reportLines = [
+    'DAILY DEOBF · ' + config.label + ' analysis report',
+    'Result: ' + resultLabel,
+    'Input: ' + String(input.filename || 'script.lua'),
+    'Input size: ' + formatBytes(Buffer.byteLength(input.source, 'utf8')),
+    'Elapsed: ' + formatDuration(config.elapsedMs || 0),
+    'Analysis mode: full devirtualization, debug artifacts retained',
+    'Maximum VM execution passes: ' + config.maxRuns,
+    'Maximum devirtualization rounds: ' + config.devirtRounds,
+    'Loader VM analysis: enabled',
+    'Full constant-resolution rounds: enabled',
+    'Captured prototypes: ' + (prototypeCount || (protoBytes ? 'present, count unavailable' : 'not captured')),
+    'Dynamic VM chunks: ' + chunkFiles.length,
+    'String dump: ' + (stringBytes ? formatBytes(stringBytes) : 'not produced'),
+    'Lifted source: ' + (hasLiftedSource ? formatBytes(liftedBytes) : 'not produced'),
+    'Behaviour trace: ' + (traceBytes ? formatBytes(traceBytes) : 'not produced'),
+    '',
+    'Important:',
+    hasLiftedSource
+      ? 'The lifted Luau file is the reconstructed source. The behaviour trace and proto map are supporting analysis artifacts.'
+      : 'The attached trace records observed runtime behaviour. It is not the original source or a complete devirtualization.',
+    '',
+    'Engine diagnostics:',
+    ...(notableLogs.length ? notableLogs : ['No additional engine warnings were reported.']),
+  ];
+  await fs.writeFile(reportPath, reportLines.join('\n'), 'utf8');
+
+  const attachments = [];
+  let totalBytes = 0;
+  async function addArtifact(filePath, fileName) {
+    if (attachments.length >= 10) return;
+    try {
+      const data = await fs.readFile(filePath);
+      if (!data.length || data.length > MAX_OUTPUT_BYTES || totalBytes + data.length > MAX_OUTPUT_BYTES) return;
+      attachments.push(new AttachmentBuilder(data, { name: fileName }));
+      totalBytes += data.length;
+    } catch {}
+  }
+
+  if (hasLiftedSource) {
+    await addArtifact(liftedPath, 'deobfuscated.luau');
+    if (traceBytes) await addArtifact(preferredTracePath, 'analysis_trace.luau');
+  } else if (traceBytes) {
+    await addArtifact(preferredTracePath, 'analysis_trace.luau');
+  }
+  if (protoBytes) await addArtifact(protoPath, 'captured_prototypes.json');
+  if (stringBytes) await addArtifact(stringsPath, 'extracted_strings.txt');
+  for (const chunkName of chunkFiles.slice(0, 3)) {
+    await addArtifact(path.join(outputDir, chunkName), chunkName.replace(path.basename(base) + '.', ''));
+  }
+  await addArtifact(reportPath, 'analysis_report.txt');
+
+  if (!attachments.length) throw new Error('The engine finished without producing an attachable result or analysis report.');
+
+  const safeName = String(input.filename || 'script.lua').replaceAll(String.fromCharCode(96), '');
+  const summary = hasLiftedSource
+    ? '**DAILY DEOBF · ' + config.label + '**\n✅ Full VM lift generated.\nProcessed: ' + safeName +
+      '\nCaptured prototypes: ' + (prototypeCount || 'see report') + ' · Dynamic VM chunks: ' + chunkFiles.length +
+      '\nAttached: reconstructed Luau, trace, and available analysis artifacts.'
+    : '**DAILY DEOBF · ' + config.label + '**\n⚠️ Trace-only result. The full VM lift did not complete.\nProcessed: ' + safeName +
+      '\nThe trace is labelled separately so it is not mistaken for reconstructed source. See the attached report and prototype data for diagnostics.';
+
+  await message.reply({
+    content: summary,
+    files: attachments,
+    allowedMentions: { repliedUser: false },
+  });
+  return { hasLiftedSource, prototypeCount, chunks: chunkFiles.length };
+}
+
 async function processLuraphV15(message, prompt, input) {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-'));
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-v15-'));
   const inputPath = path.join(tempRoot, 'input.lua');
-  const outDir = path.join(tempRoot, 'output');
-  const outputPath = path.join(outDir, 'deobfuscated.luau');
-  await fs.mkdir(outDir, { recursive: true });
+  const outputDir = path.join(tempRoot, 'output');
+  const outputPath = path.join(outputDir, 'deobfuscated.luau');
+  const base = path.join(outputDir, 'deobfuscated');
+  await fs.mkdir(outputDir, { recursive: true });
   await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
+  const progress = createAnalysisProgress(prompt, input.filename, Buffer.byteLength(input.source, 'utf8'), 'Luraph v15');
+  const startedAt = Date.now();
 
   try {
-    await prompt.edit({ content: 'Running the newest Luraph v15 engine…', components: [] });
-    await runEngine(ENGINE_V15_DIR, ENGINE_V15_CLI, inputPath, outputPath, ENGINE_TIMEOUT_MS, false);
-    const data = await fs.readFile(outputPath);
-    if (!data.length) throw new Error('The engine returned an empty output file.');
-    if (data.length > MAX_OUTPUT_BYTES) {
-      throw new Error('The deobfuscated output is larger than Discord attachment limit.');
-    }
+    await progress.start();
+    const result = await runPythonEngine(
+      ENGINE_V15_DIR, ENGINE_V15_CLI, inputPath, outputPath, ENGINE_TIMEOUT_MS,
+      [
+        '--obfuscator', 'luraph_v15', '--debug', '--strings',
+        '--max-runs', '16', '--devirt-rounds', '200',
+        '--budget', '60', '--timeout', '180', '--no-pypy',
+      ],
+      {
+        env: {
+          DEVIRT_FULL_ROUNDS: '1', DEVIRT_LOADERS: '1',
+          DEVIRT_TIMING: '1', DEVIRT_ERRS: '1', DEVIRT_TB: '1',
+          DEVIRT_WALK_LIMIT: '750000',
+        },
+        onProgress: progress.onLine,
+      },
+    );
 
-    const safeName = input.filename.replaceAll(String.fromCharCode(96), '');
-    await message.reply({
-      content: '**DAILY DEOBF · Luraph v15 (new engine)**\nProcessed: ' + safeName +
-        '\n\nThe engine reconstructs code from VM paths it can analyze. Unsupported or protected paths may remain incomplete.',
-      files: [new AttachmentBuilder(data, { name: 'deobfuscated.luau' })],
-      allowedMentions: { repliedUser: false },
+    await progress.setPhase('Packaging v15 analysis artifacts', 'Collecting reconstructed Luau, the trace, strings and VM metadata.');
+    const summary = await sendAnalysisOutput(message, input, {
+      label: 'Luraph v15', base, outputDir,
+      elapsedMs: Date.now() - startedAt, stderr: result.stderr,
+      maxRuns: 16, devirtRounds: 200,
     });
-    await prompt.edit({ content: '✅ Deobfuscation finished. The .luau output is attached above.', components: [] });
+    await progress.complete(summary.hasLiftedSource
+      ? 'A reconstructed Luau file and supporting analysis artifacts were attached.'
+      : 'The trace and diagnostic artifacts were attached; the engine did not finish a full lift.');
+    await prompt.edit({ content: '✅ Luraph v15 analysis finished. Check the attached result and analysis report.', components: [] });
+  } catch (error) {
+    await progress.fail(error);
+    throw error;
   } finally {
+    progress.stop();
     await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
   }
 }
@@ -284,41 +571,53 @@ async function processLuraphV15(message, prompt, input) {
 async function processLuraph151(message, prompt, input) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-151-'));
   const inputPath = path.join(tempRoot, 'input.lua');
-  const outDir = path.join(tempRoot, 'output');
-  const outputPath = path.join(outDir, 'deobfuscated.luau');
-  await fs.mkdir(outDir, { recursive: true });
+  const outputDir = path.join(tempRoot, 'output');
+  const outputPath = path.join(outputDir, 'deobfuscated.luau');
+  const base = path.join(outputDir, 'deobfuscated');
+  await fs.mkdir(outputDir, { recursive: true });
   await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
+  const progress = createAnalysisProgress(prompt, input.filename, Buffer.byteLength(input.source, 'utf8'), 'Luraph 15.1');
+  const startedAt = Date.now();
 
   try {
-    await prompt.edit({ content: 'Running Luraph 15.1 with the replacement engine...', components: [] });
-    await runEngine(
-      ENGINE_151_DIR,
-      ENGINE_151_CLI,
-      inputPath,
-      outputPath,
-      ENGINE_TIMEOUT_MS,
-      false,
-      ['--plugin', 'luraph_v15', '--budget', '30'],
+    await progress.start();
+    const result = await runEngine(
+      ENGINE_151_DIR, ENGINE_151_CLI, inputPath, outputPath, ENGINE_TIMEOUT_MS, false,
+      [
+        '--plugin', 'luraph_v15', '--debug', '--strings',
+        '--max-runs', '20', '--devirt-rounds', '200',
+        '--budget', '90', '--timeout', '180',
+      ],
+      {
+        env: {
+          DEVIRT_FULL_ROUNDS: '1', DEVIRT_LOADERS: '1',
+          DEVIRT_TIMING: '1', DEVIRT_ERRS: '1', DEVIRT_TB: '1',
+          DEVIRT_WALK_LIMIT: '750000',
+        },
+        onProgress: progress.onLine,
+      },
     );
 
-    const data = await fs.readFile(outputPath);
-    if (!data.length) throw new Error('The engine returned an empty output file.');
-    if (data.length > MAX_OUTPUT_BYTES) {
-      throw new Error('The deobfuscated output is larger than the Discord attachment limit.');
-    }
-
-    const safeName = String(input.filename || 'script.lua').replaceAll(String.fromCharCode(96), '');
-    await message.reply({
-      content: '**DAILY DEOBF - Luraph 15.1 (new engine)**\nProcessed: ' + safeName +
-        '\n\nThe engine reconstructs code paths it can analyze. Some protected paths may remain incomplete.',
-      files: [new AttachmentBuilder(data, { name: 'deobfuscated.luau' })],
-      allowedMentions: { repliedUser: false },
+    await progress.setPhase('Packaging Luraph 15.1 analysis artifacts', 'Collecting reconstructed Luau, the trace, strings and VM metadata.');
+    const summary = await sendAnalysisOutput(message, input, {
+      label: 'Luraph 15.1', base, outputDir,
+      elapsedMs: Date.now() - startedAt, stderr: result.stderr,
+      maxRuns: 20, devirtRounds: 200,
     });
-    await prompt.edit({ content: 'Luraph 15.1 finished. The deobfuscated Luau file is attached above.', components: [] });
+    await progress.complete(summary.hasLiftedSource
+      ? 'A reconstructed Luau file and supporting analysis artifacts were attached.'
+      : 'The trace and diagnostic artifacts were attached; the engine did not finish a full lift.');
+    await prompt.edit({ content: '✅ Luraph 15.1 analysis finished. Check the attached result and analysis report.', components: [] });
+  } catch (error) {
+    await progress.fail(error);
+    throw error;
   } finally {
+    progress.stop();
     await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
   }
 }
+
+
 async function startWorkflow(message) {
   const prompt = await message.reply({
     content: '📄 **DAILY DEOBF**\nSend a `.lua`, `.luau`, or `.txt` file, or paste a direct URL to your Luau script.\n\nMaximum input size: 2 MB.',

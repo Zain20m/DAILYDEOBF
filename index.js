@@ -1733,26 +1733,42 @@ async function startExecWorkflow(message, inlineSource = null) {
     components: [],
   });
 
-  const result = await runLuauTask({
-    apiKey,
-    universeId,
-    placeId,
-    script: source,
-    timeoutSeconds,
-    onStatus: (status) => {
-      if (status.polls === 1 || status.polls % 5 === 0) {
-        prompt.edit({
-          content: '⏳ DAILY DEOBF · .exec\nRoblox task state: ' + status.state +
-            '\nElapsed: ' + formatDuration(status.elapsedMs) +
-            '\nWaiting for the Roblox runtime to finish...',
-          components: [],
-        }).catch(() => {});
-      }
-    },
-  });
+  let result;
+  try {
+    result = await runLuauTask({
+      apiKey,
+      universeId,
+      placeId,
+      script: source,
+      timeoutSeconds,
+      onStatus: (status) => {
+        if (status.polls === 1 || status.polls % 5 === 0) {
+          prompt.edit({
+            content: '⏳ DAILY DEOBF · .exec\nRoblox task state: ' + status.state +
+              '\nElapsed: ' + formatDuration(status.elapsedMs) +
+              '\nWaiting for the Roblox runtime to finish...',
+            components: [],
+          }).catch(() => {});
+        }
+      },
+    });
+  } catch (error) {
+    await prompt.edit({
+      content: '❌ .exec stopped: ' + String(error.message || error).slice(0, 1200),
+      components: [],
+    }).catch(() => {});
+    throw error;
+  }
 
   const output = formatExecResult(result);
-  const outputBuffer = Buffer.from(output, 'utf8');
+  let outputBuffer = Buffer.from(output, 'utf8');
+  if (outputBuffer.length > MAX_OUTPUT_BYTES) {
+    outputBuffer = Buffer.from(
+      output.slice(0, MAX_OUTPUT_BYTES - 500) +
+        '\n\n[Output shortened by DAILY DEOBF size limit.]',
+      'utf8'
+    );
+  }
   const state = String(result.task.state || 'UNKNOWN').toUpperCase();
   const succeeded = !result.task.error && ['COMPLETE', 'COMPLETED', 'SUCCESS', 'SUCCEEDED'].includes(state);
 

@@ -296,20 +296,40 @@ def run(job):
         # a lift full of calls to nil misread the VM: the trace is the better result
         with open(dpath, encoding="utf-8", errors="replace") as f:
             lifted = f.read()
-        nil_calls = lifted.count("(nil)(")
-        if nil_calls < 50 or nil_calls * 100 < lifted.count("\n"):
-            return dpath
-        print("[!] the devirtualized output is broken (%d calls of nil); writing the behaviour trace "
-              "instead" % nil_calls, file=sys.stderr)
-        if not job.debug:
-            os.remove(dpath)
-        write_trace()
-        return job.trace_path
-    if devirt_on:
-        print("[!] devirtualization produced no output; writing the behaviour trace instead", file=sys.stderr)
-        if not os.path.exists(job.trace_path):
+        issues = []
+        if re.search(r'error\s*\(\s*["\']devirt:', lifted, re.I):
+            issues.append("explicit devirtualization error stubs")
+        nil_calls = len(re.findall(r'\(\s*nil\s*\)\s*\(', lifted))
+        nil_indexes = len(re.findall(r'\[\s*nil\s*\]', lifted))
+        nil_arithmetic = len(re.findall(r'\bnil\s*(?:\+|-|\*|/|//|%)|(?:\+|-|\*|/|//|%)\s*nil\b', lifted))
+        nil_bit32 = len(re.findall(r'\bbit32\.\w+\s*\(\s*nil\s*(?:,|\))', lifted, re.I))
+        runtime_stubs = set(re.findall(
+            r'local\s+function\s+(luraph_runtime\d+)\s*\([^)]*\)\s*error\s*\(\s*["\']Luraph runtime function, not devirtualized["\']',
+            lifted,
+            re.S,
+        ))
+        for name in runtime_stubs:
+            calls = len(re.findall(r'\b' + re.escape(name) + r'\s*\(', lifted))
+            definitions = len(re.findall(r'\blocal\s+function\s+' + re.escape(name) + r'\s*\(', lifted))
+            if calls > definitions:
+                issues.append("%s is still referenced by lifted code" % name)
+            issues.append("%s is an unlifted runtime placeholder" % name)
+        if nil_calls:
+            issues.append("%d nil function calls" % nil_calls)
+        if nil_indexes:
+            issues.append("%d nil table indexes" % nil_indexes)
+        if nil_arithmetic:
+            issues.append("%d nil arithmetic operands" % nil_arithmetic)
+        if nil_bit32:
+            issues.append("%d bit32 calls with nil operands" % nil_bit32)
+        if issues:
+            print("[!] devirtualized candidate failed validation: %s; returning behaviour trace" %
+                  "; ".join(issues), file=sys.stderr)
+            if not job.debug:
+                os.remove(dpath)
             write_trace()
-    return job.trace_path
+            return job.trace_path
+        return dpath
 
 
 def lift(job, runner, patched, cfg, chunks, run_text, ppath, dpath, chunk_paths):

@@ -15,7 +15,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { inspectLiftText } = require('./scripts/lift-validation');
 const { convertToPureLuau } = require('./pureluau');
-const { resolveLoadstringSources } = require('./scripts/idx-resolver');
+const { resolveLoadstringSources, resolveStaticSources } = require('./scripts/idx-resolver');
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const PREFIX = '.deobf';
@@ -212,7 +212,7 @@ async function collectInput(message, prompt) {
           throw new Error('Only HTTP and HTTPS URLs are supported.');
         }
         const result = await fetchPublicText(parsed.toString());
-        resolve({ source: decodeSource(result.bytes), filename: result.filename });
+        resolve({ source: decodeSource(result.bytes), filename: result.filename, url: parsed.toString() });
       } catch (error) {
         reject(error);
       }
@@ -1420,6 +1420,134 @@ async function startIdxWorkflow(message, inlineSource = null) {
   }).catch(() => {});
 }
 
+
+async function startGetWorkflow(message, inlineSource = null) {
+  const prompt = await message.reply({
+    content: inlineSource
+      ? '🔎 DAILY DEOBF · .get\nFinding and downloading static HTTP sources...'
+      : '🔎 DAILY DEOBF · .get\nAttach a script or send a URL. I will inspect common HttpGet, GetAsync and request({Url=...}) patterns.',
+    allowedMentions: { repliedUser: false },
+  });
+
+  const firstAttachment = message.attachments.first();
+  if (inlineSource && firstAttachment) {
+    throw new Error('Use either an inline URL/expression or a file attachment, not both.');
+  }
+
+  let input;
+  if (inlineSource) {
+    input = { source: inlineSource, filename: 'get-input.lua' };
+  } else if (firstAttachment) {
+    input = await inputFromAttachment(firstAttachment);
+  } else {
+    input = await collectInput(message, prompt);
+  }
+
+  let sourceToScan = input.source;
+  const trimmed = sourceToScan.trim();
+  const initialUrls = [];
+  if (/^https?:\/\/\S+$/i.test(trimmed)) {
+    initialUrls.push(trimmed);
+    sourceToScan = '';
+  } else if (input.url) {
+    initialUrls.push(input.url);
+  }
+
+  const resolution = await resolveStaticSources(sourceToScan, {
+    initialUrls,
+    maxFiles: MAX_IDX_CAPTURE_FILES,
+    maxDepth: 4,
+    fetchText: async (rawUrl) => {
+      if (input.url && rawUrl === input.url) return input.source;
+      const fetched = await fetchPublicText(rawUrl);
+      return decodeSource(fetched.bytes);
+    },
+  });
+
+  if (!resolution.discovered) {
+    throw new Error(
+      'No supported static HTTP URL was found. Try a direct URL, game:HttpGet("URL"), ' +
+      'HttpService:GetAsync("URL"), or request({Url = "URL"}). ' +
+      'Computed or runtime-generated URLs cannot be resolved without executing the script.'
+    );
+  }
+
+  const attachments = [];
+  let totalBytes = 0;
+  const omittedNames = [];
+  for (const capture of resolution.captures) {
+    const data = Buffer.from(capture.source, 'utf8');
+    if (totalBytes + data.length > MAX_OUTPUT_BYTES - 4096) {
+      omittedNames.push(capture.name);
+      continue;
+    }
+    attachments.push(new AttachmentBuilder(data, { name: capture.name }));
+    totalBytes += data.length;
+  }
+
+  const reportLines = [
+    'DAILY DEOBF · .get static source retrieval report',
+    'Input: ' + String(input.filename || 'get-input.lua'),
+    'Discovered static URLs: ' + resolution.discovered,
+    'Fetch attempts: ' + resolution.attempts,
+    'Downloaded source files: ' + resolution.captures.length,
+    'Failed URLs: ' + resolution.failures.length,
+    'Safety limit reached: ' + (resolution.truncated ? 'yes' : 'no'),
+    'Maximum chain depth: ' + resolution.maxDepth,
+    'Maximum URLs fetched: ' + resolution.maxFiles,
+    '',
+    'Downloaded files:',
+    ...(resolution.captures.length
+      ? resolution.captures.map((capture) => {
+          let host = 'URL';
+          try { host = new URL(capture.url).host; } catch {}
+          return '- ' + capture.name + ' · depth ' + capture.depth + ' · ' + host +
+            ' · ' + formatBytes(Buffer.byteLength(capture.source, 'utf8'));
+        })
+      : ['- None downloaded successfully.']),
+    '',
+    'Fetch failures:',
+    ...(resolution.failures.length
+      ? resolution.failures.map((failure) => {
+          let host = 'URL';
+          try { host = new URL(failure.url).host; } catch {}
+          return '- ' + host + ': ' + failure.message;
+        })
+      : ['- None.']),
+    ...(omittedNames.length
+      ? ['', 'Not attached because the response-size limit was reached:', ...omittedNames.map((name) => '- ' + name)]
+      : []),
+    '',
+    'Discovery methods: HttpGet, HttpGetAsync, GetAsync, request/http_request URL arguments and Url/Uri table fields.',
+    'Method: static source inspection and HTTP retrieval. The bot never executes the downloaded Luau.',
+    'Dynamically constructed URLs, encrypted values and code generated only at runtime are not discoverable by this static method.',
+  ];
+
+  const reportBuffer = Buffer.from(reportLines.join('\n'), 'utf8');
+  if (totalBytes + reportBuffer.length <= MAX_OUTPUT_BYTES) {
+    attachments.push(new AttachmentBuilder(reportBuffer, { name: 'get_report.txt' }));
+  }
+
+  const summary = resolution.captures.length
+    ? '✅ **.get finished.** Downloaded ' + resolution.captures.length +
+      ' source file(s) from ' + resolution.discovered + ' discovered URL(s).' +
+      (resolution.failures.length ? ' ' + resolution.failures.length + ' URL(s) failed.' : '') +
+      ' Files are attached as getN.lua.'
+    : '⚠️ **.get found the URLs, but none could be downloaded.** Check get_report.txt for details.';
+
+  await message.reply({
+    content: summary,
+    files: attachments,
+    allowedMentions: { repliedUser: false },
+  });
+  await prompt.edit({
+    content: resolution.captures.length
+      ? '✅ .get completed. Static remote sources are attached.'
+      : '⚠️ .get completed, but the remote sources could not be downloaded.',
+    components: [],
+  }).catch(() => {});
+}
+
 async function handlePureLuauCommand(interaction) {
   const attachment = interaction.options.getAttachment('file');
   const pastedSource = interaction.options.getString('source');
@@ -1547,10 +1675,11 @@ function helpText() {
     '.idx <loadstring expression> - automatically fetch literal loadstring(game:HttpGet("URL")) chunks and follow nested links, e.g. .idx loadstring(game:HttpGet("https://example.com/script.lua"))().',
     '.idx - attach a script or paste a direct URL and automatically resolve its literal loadstring(HttpGet(...)) chain.',
     '.idx files - upload loadstringN.txt files and receive them back as attachments.',
+    '.get <URL or script/expression> - fetch remote scripts using HttpGet, GetAsync and request({Url=...}) patterns, following nested static links.',
     '.help - show this command list.',
     '/purelua or /pureluau - run the static PureLuau readability/conversion pass and return the source plus a report.',
     '',
-    'The .idx runner must be run in an environment you are authorized to inspect. The bot does not execute Roblox executor APIs.',
+    '.idx follows literal loadstring(game:HttpGet(...)) chains; .get supports broader static HTTP-fetch patterns. Neither command executes Luau on the bot.',
   ].join('\n');
 }
 
@@ -1658,7 +1787,7 @@ async function startWorkflow(message) {
 
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`DAILY DEOBF is online as ${readyClient.user.tag}`);
-  console.log('Prefix commands: .deobf, .idx, .idx files, .help');
+  console.log('Prefix commands: .deobf, .idx, .idx files, .get, .help');
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
     const route = commandGuildId
@@ -1692,6 +1821,27 @@ client.on(Events.MessageCreate, async (message) => {
       return;
     }
     await message.reply({ content: helpText(), allowedMentions: { repliedUser: false } });
+    return;
+  }
+
+  if (command === '.get') {
+    const inlineSource = content.slice(command.length).trim();
+    if (inlineSource.length > MAX_INPUT_BYTES) {
+      await message.reply('❌ The .get input is too large. Maximum size is 2 MB.');
+      return;
+    }
+    if (activeUsers.has(message.author.id)) {
+      await message.reply('You already have an active .deobf, .idx or .get job. Finish it or wait for it to expire.');
+      return;
+    }
+    activeUsers.add(message.author.id);
+    try {
+      await startGetWorkflow(message, inlineSource || null);
+    } catch (error) {
+      await message.reply('❌ ' + String(error.message || error).slice(0, 1500)).catch(() => {});
+    } finally {
+      activeUsers.delete(message.author.id);
+    }
     return;
   }
 

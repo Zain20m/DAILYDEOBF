@@ -52,7 +52,7 @@ jobs:
               root = Path(td)
               sample = root / "beta.lua"
               sample.write_text(
-                  "-- This file was protected using Luraph Obfuscator v15.1 [https://lura.ph/]\\nreturn function() end\\n",
+                  "-- This file was protected using Luraph Obfuscator v15.1 [https://lura.ph/]\nreturn function() end\n",
                   encoding="utf-8"
               )
               detection = subprocess.run(
@@ -63,7 +63,7 @@ jobs:
               if not detection.stdout.startswith("luraph_v15"):
                   raise SystemExit("15.1 beta header was not detected by the original v15 lifter")
               runtime = root / "runtime.luau"
-              runtime.write_text('print("Luau runtime OK")\\n', encoding="utf-8")
+              runtime.write_text('print("Luau runtime OK")\n', encoding="utf-8")
               subprocess.run([str(engine / "bin" / "luau"), str(runtime)], check=True)
               ast = subprocess.run(
                   [str(engine / "bin" / "luau-ast"), str(runtime)],
@@ -135,8 +135,8 @@ jobs:
                   cwd="luraph-v15-engine/deobf", env=env,
                   capture_output=True, text=True, timeout=1200,
               )
-              print("ENGINE_STDOUT:\\n" + result.stdout[-5000:])
-              print("ENGINE_STDERR:\\n" + result.stderr[-16000:])
+              print("ENGINE_STDOUT:\n" + result.stdout[-5000:])
+              print("ENGINE_STDERR:\n" + result.stderr[-16000:])
               base = output_dir / "deobfuscated"
               lifted = Path(str(base) + ".devirt.luau")
               prototypes = Path(str(base) + ".protos.json")

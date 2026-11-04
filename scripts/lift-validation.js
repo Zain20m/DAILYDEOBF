@@ -4,32 +4,89 @@ function countMatches(source, expression) {
   return [...source.matchAll(expression)].length;
 }
 
+function maskLuaSource(source, maskStrings = true) {
+  const text = String(source || '');
+  const out = text.split('');
+  const blank = (start, end) => {
+    for (let i = start; i < end; i++) {
+      if (out[i] !== '\n' && out[i] !== '\r') out[i] = ' ';
+    }
+  };
+  const longBracketEnd = (start) => {
+    const opener = text.slice(start).match(/^\[(=*)\[/);
+    if (!opener) return null;
+    const close = ']' + opener[1] + ']';
+    const bodyStart = start + opener[0].length;
+    const found = text.indexOf(close, bodyStart);
+    return found < 0 ? text.length : found + close.length;
+  };
+
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '"' || ch === "'") {
+      const quote = ch;
+      let end = i + 1;
+      while (end < text.length) {
+        if (text[end] === '\\') { end += 2; continue; }
+        if (text[end] === quote) { end++; break; }
+        end++;
+      }
+      if (maskStrings) blank(i, end);
+      i = end;
+      continue;
+    }
+    if (text.startsWith('--', i)) {
+      let end = longBracketEnd(i + 2);
+      if (end === null) {
+        end = i + 2;
+        while (end < text.length && text[end] !== '\n' && text[end] !== '\r') end++;
+      }
+      blank(i, end);
+      i = end;
+      continue;
+    }
+    if (ch === '[') {
+      const end = longBracketEnd(i);
+      if (end !== null) {
+        if (maskStrings) blank(i, end);
+        i = end;
+        continue;
+      }
+    }
+    i++;
+  }
+  return out.join('');
+}
+
 function inspectLiftText(source) {
   const text = String(source || '');
-  const nonCommentLines = text.split(/\r?\n/)
+  const code = maskLuaSource(text, true);
+  const withoutComments = maskLuaSource(text, false);
+  const nonCommentLines = withoutComments.split(/\r?\n/)
     .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith('--')).length;
+    .filter(Boolean).length;
 
   const runtimeNames = new Set(
-    [...text.matchAll(/\blocal\s+function\s+(luraph_runtime\d+)\s*\(/g)].map((match) => match[1])
+    [...code.matchAll(/\blocal\s+function\s+(luraph_runtime\d+)\s*\(/g)].map((match) => match[1])
   );
   let unresolvedRuntimeCalls = 0;
   for (const name of runtimeNames) {
-    const calls = countMatches(text, new RegExp('\\b' + name + '\\s*\\(', 'g'));
-    const definitions = countMatches(text, new RegExp('\\blocal\\s+function\\s+' + name + '\\s*\\(', 'g'));
+    const calls = countMatches(code, new RegExp('\\b' + name + '\\s*\\(', 'g'));
+    const definitions = countMatches(code, new RegExp('\\blocal\\s+function\\s+' + name + '\\s*\\(', 'g'));
     unresolvedRuntimeCalls += Math.max(0, calls - definitions);
   }
 
   const metrics = {
     nonCommentLines,
-    devirtErrors: countMatches(text, /error\s*\(\s*(['"])devirt:/gi),
-    nilCalls: countMatches(text, /\(\s*nil\s*\)\s*\(/g) + countMatches(text, /(?:^|[;,\s])nil\s*\(/g),
-    nilIndexes: countMatches(text, /\[\s*nil\s*\]/g),
-    nilArithmetic: countMatches(text, /\bnil\s*(?:\+|-|\*|\/|\/\/|%)/g) +
-      countMatches(text, /(?:\+|-|\*|\/|\/\/|%)\s*nil\b/g),
-    nilBit32Calls: countMatches(text, /\bbit32\.\w+\s*\(\s*nil\s*(?:,|\))/gi),
-    nilComparisons: countMatches(text, /\bnil\s*(?:==|~=|<=|>=|<|>)\s*-?\d|\d\s*(?:==|~=|<=|>=|<|>)\s*nil\b/g),
-    runtimeStubDefinitions: countMatches(text, /error\s*\(\s*(['"])Luraph runtime function, not devirtualized\1\s*\)/g),
+    devirtErrors: countMatches(withoutComments, /error\s*\(\s*(['"])devirt:/gi),
+    nilCalls: countMatches(code, /\(\s*nil\s*\)\s*\(/g) + countMatches(code, /(?:^|[;,\s])nil\s*\(/g),
+    nilIndexes: countMatches(code, /\[\s*nil\s*\]/g),
+    nilArithmetic: countMatches(code, /\bnil\s*(?:\+|-|\*|\/|\/\/|%)/g) +
+      countMatches(code, /(?:\+|-|\*|\/|\/\/|%)\s*nil\b/g),
+    nilBit32Calls: countMatches(code, /\bbit32\.\w+\s*\(\s*nil\s*(?:,|\))/gi),
+    nilComparisons: countMatches(code, /\bnil\s*(?:==|~=|<=|>=|<|>)\s*-?\d|\d\s*(?:==|~=|<=|>=|<|>)\s*nil\b/g),
+    runtimeStubDefinitions: countMatches(withoutComments, /error\s*\(\s*(['"])Luraph runtime function, not devirtualized\1\s*\)/g),
     unresolvedRuntimeCalls,
   };
 
@@ -38,7 +95,7 @@ function inspectLiftText(source) {
   if (metrics.devirtErrors) issues.push(metrics.devirtErrors + ' explicit devirtualization error stub(s) remain.');
   if (metrics.nilCalls) issues.push(metrics.nilCalls + ' call(s) have a nil function target.');
   if (metrics.nilIndexes) issues.push(metrics.nilIndexes + ' table index(es) use nil as the key.');
-  if (metrics.nilArithmetic) issues.push(metrics.nilArithmetic + ' arithmetic operation(s) use nil as an operand.');
+  if (metrics.nilArithmetic) issues.push(metrics.nilArithmetic + ' arithmetic operation(s) use nil.');
   if (metrics.nilBit32Calls) issues.push(metrics.nilBit32Calls + ' bit32 call(s) use nil as the first argument.');
   if (metrics.nilComparisons) issues.push(metrics.nilComparisons + ' numeric comparison(s) use nil.');
   if (metrics.runtimeStubDefinitions) {

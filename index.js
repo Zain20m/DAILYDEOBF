@@ -572,7 +572,9 @@ async function sendAnalysisOutput(message, input, config) {
   const engineLog = String(config.stderr || '');
   const otherEngineLog = String(config.otherEngineStderr || '');
   const isNotableEngineLog = (line) =>
-    line.startsWith('[!]') || /devirt round|devirtualizing \(round|loadstring.d .*VM chunk|anti-tamper/i.test(line);
+    line.startsWith('[!]') ||
+    /^\[(?:fn-bind-summary|fn-stub-summary|register-summary|regfile|sp|sp-value)\]/.test(line) ||
+    /devirt round|devirtualizing \(round|loadstring.d .*VM chunk|anti-tamper/i.test(line);
   const notableLogs = engineLog.split('\n')
     .map((line) => line.trim())
     .filter(isNotableEngineLog)

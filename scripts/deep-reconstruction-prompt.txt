@@ -1,0 +1,26 @@
+Deep-deobfuscate this Luau source.
+
+Do NOT rewrite or invent behavior.
+
+1. Identify every remaining VM dispatcher/control-flow-flattening layer.
+2. Reconstruct the original control-flow graph.
+3. Recover if/elseif/else, while, repeat, and for structures where evidence supports them.
+4. Resolve constant/table indirection and remaining encoded values.
+5. Trace VM registers/state variables back into meaningful local variables.
+6. Rename variables/functions based only on their actual usage.
+7. Remove dead VM scaffolding after proving it is unreachable.
+8. Preserve Roblox API calls, RemoteEvents, UI behavior, callbacks, metatables, and side effects exactly.
+9. Do not remove functionality merely because it looks suspicious.
+10. Do not guess. If something cannot be reconstructed, leave a clearly marked comment explaining exactly what information is missing.
+11. Produce valid, readable Luau source rather than pseudocode.
+12. Compare the reconstructed control flow against the original dispatcher so every removed state has a documented destination.
+
+The goal is behavior-preserving source reconstruction, not merely pretty-printing.
+
+Evidence and output rules:
+- Treat the original input, captured prototype JSON, string dump, runtime trace, and partial VM-lift candidate as separate evidence sources.
+- Keep a mapping from each reconstructed source block to the dispatcher state(s) and prototype(s) that support it.
+- Never infer an unknown register value, function body, branch condition, or return value from naming or appearance alone.
+- Preserve unresolved operations as explicit, localized TODO comments that state what evidence is missing.
+- Do not convert a partial candidate into a claim of full recovery merely because it parses.
+- Return the reconstructed Luau file, a state-to-source mapping report, and a list of unresolved items.

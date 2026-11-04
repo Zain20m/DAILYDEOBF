@@ -5624,8 +5624,14 @@ def _walk_one(prog, vm, vmobj, proto, pkey, init_facts=None):
             s0, order, restart = prog._walk(vm, lf, st, WALK_LIMIT)
             if not restart:
                 break
-    except Unsupported:
+    except Unsupported as exc:
         ent["errors"] = 1
+        ent["failure"] = "%s: %s" % (type(exc).__name__, str(exc)[:500])
+        if os.environ.get("DEVIRT_ERRS"):
+            pid = dump.pid_of_table.get(proto.tid, proto.tid)
+            maker = getattr(vm, "tag", None) or getattr(getattr(vm, "info", {}), "get", lambda *_: None)("maker")
+            print("[walk-failed] proto=%s tid=%s vm=%r failure=%s" %
+                  (pid, proto.tid, maker, ent["failure"]), file=sys.stderr)
         return ent
     finally:
         ent["bw"], ent["tw"] = stable_patches(dump)
@@ -5639,6 +5645,18 @@ def _walk_one(prog, vm, vmobj, proto, pkey, init_facts=None):
                       file=sys.stderr)
     kids = [c for c in lf.children if isinstance(c.proto, LTable)]
     ent["children"] = [pkey.get(c.proto.tid, c.proto) for c in kids]
+    if os.environ.get("DEVIRT_TB") and kids:
+        parent_pid = dump.pid_of_table.get(proto.tid, proto.tid)
+        child_edges = []
+        for child in kids[:12]:
+            child_pid = dump.pid_of_table.get(child.proto.tid, child.proto.tid)
+            child_vm = getattr(getattr(child, "vm", None), "tag", None)
+            up_count = len(getattr(child, "up_facts", None) or {})
+            arg_count = len(getattr(child, "arg_facts", None) or {})
+            child_edges.append((child_pid, child_vm, up_count, arg_count))
+        print("[proto-edges] parent=%s tid=%s vm=%r child_count=%d edges=%r%s" %
+              (parent_pid, proto.tid, getattr(vm, "tag", None), len(kids),
+               child_edges, " ..." if len(kids) > 12 else ""), file=sys.stderr)
     ent["child_vms"] = [getattr(getattr(c, "vm", None), "tag", None) for c in kids]
     cfacts = []
     for c in kids:

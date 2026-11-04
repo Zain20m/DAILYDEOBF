@@ -165,6 +165,8 @@ async function resolveWithExtractor(source, options, extractor) {
 
   const maxFiles = Number.isInteger(options.maxFiles) ? Math.max(1, options.maxFiles) : 10;
   const maxDepth = Number.isInteger(options.maxDepth) ? Math.max(0, options.maxDepth) : 4;
+  const namePrefix = String(options.namePrefix || 'source').replace(/[^A-Za-z0-9_-]/g, '') || 'source';
+  const extension = String(options.extension || 'lua').replace(/[^A-Za-z0-9]/g, '') || 'lua';
   const initialUrls = uniqueUrls([
     ...(Array.isArray(options.initialUrls) ? options.initialUrls : []),
     ...extractor(source),
@@ -191,7 +193,7 @@ async function resolveWithExtractor(source, options, extractor) {
       }
 
       captures.push({
-        name: 'source' + (captures.length + 1) + '.lua',
+        name: namePrefix + (captures.length + 1) + '.' + extension,
         source: text,
         url: item.url,
         depth: item.depth,
@@ -227,11 +229,11 @@ async function resolveWithExtractor(source, options, extractor) {
 }
 
 async function resolveLoadstringSources(source, options = {}) {
-  return resolveWithExtractor(source, options, extractLoadstringHttpGetUrls);
+  return resolveWithExtractor(source, { ...options, namePrefix: 'loadstring', extension: 'txt' }, extractLoadstringHttpGetUrls);
 }
 
 async function resolveStaticSources(source, options = {}) {
-  return resolveWithExtractor(source, options, extractStaticFetchUrls);
+  return resolveWithExtractor(source, { ...options, namePrefix: 'get', extension: 'lua' }, extractStaticFetchUrls);
 }
 
 module.exports = {

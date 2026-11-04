@@ -105,7 +105,17 @@ jobs:
                   raise SystemExit("15.1 full-analysis pipeline is missing: " + required)
           if "DEVIRT_FULL_ROUNDS: '1'" not in pipeline:
               raise SystemExit("15.1 full-lift-every-round mode was not restored")
-          if "if (!(await hasLift(primary.base)))" not in pipeline:
-              raise SystemExit("15.1 fallback must run when the primary has no full source lift")
-          print("15.1 FULL ANALYSIS ROUTING OK: restored full VM lift + fallback")
+          for required in (
+              "Running the dedicated 15.1 engine",
+              "if (!dedicatedValidation.complete)",
+              "inspectLiftFile(",
+              "Running the v15 compatibility pass",
+          ):
+              if required not in pipeline:
+                  raise SystemExit("15.1 strict validation/routing is missing: " + required)
+          validator = Path("scripts/lift-validation.js").read_text(encoding="utf-8")
+          for required in ("devirtErrors", "nilCalls", "nilIndexes", "runtimeStubDefinitions"):
+              if required not in validator:
+                  raise SystemExit("Strict lift validator is missing check: " + required)
+          print("15.1 ROUTING OK: dedicated engine first, strict candidate validation, compatibility fallback")
           PY

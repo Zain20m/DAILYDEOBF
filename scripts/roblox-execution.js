@@ -1,6 +1,8 @@
 'use strict';
 
 const API_ROOT = 'https://apis.roblox.com/cloud/v2';
+const MAX_LOCAL_CONCURRENT_TASKS = 2;
+let activeLocalTasks = 0;
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -75,10 +77,20 @@ async function runLuauTask(options) {
   });
   const created = await readJsonResponse(createResponse, 'Roblox task creation');
 
-  if (typeof created.path !== 'string' || !created.path.startsWith('universes/')) {
+  if (
+    typeof created.path !== 'string' ||
+    !/^universes\\d+/.test(created.path.replace(/^universes\\//, 'universes')) ||
+    !/^universes\\/\\d+\\/places\\/\\d+\\/(?:versions\\/\\d+\\/)?luau-execution-sessions\\/[A-Za-z0-9-]+\\/tasks\\/[A-Za-z0-9-]+$/.test(created.path)
+  ) {
     throw new Error('Roblox created a task but did not return a valid task path.');
   }
 
+  if (activeLocalTasks >= MAX_LOCAL_CONCURRENT_TASKS) {
+    throw new Error('The local Roblox execution queue is full. Try again after another task finishes.');
+  }
+  activeLocalTasks++;
+
+  try {
   const taskUrl = API_ROOT + '/' + created.path;
   const startedAt = Date.now();
   const maxWaitMs = timeoutSeconds * 1000 + 45_000;
@@ -145,6 +157,9 @@ async function runLuauTask(options) {
     polls,
     elapsedMs: Date.now() - startedAt,
   };
+  } finally {
+    activeLocalTasks--;
+  }
 }
 
 module.exports = { runLuauTask };

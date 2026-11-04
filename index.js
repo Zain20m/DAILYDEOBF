@@ -570,6 +570,7 @@ async function sendAnalysisOutput(message, input, config) {
   }
 
   const engineLog = String(config.stderr || '');
+  const otherEngineLog = String(config.otherEngineStderr || '');
   const notableLogs = engineLog.split('\n')
     .map((line) => line.trim())
     .filter((line) => line.startsWith('[!]') || /devirt round|devirtualizing \(round|loadstring.d .*VM chunk|anti-tamper/i.test(line))
@@ -608,6 +609,22 @@ async function sendAnalysisOutput(message, input, config) {
     '',
     'Validation diagnostics:',
     ...validationIssueText(validation).split('\n'),
+    '',
+    'Validation detail samples:',
+    ...(validation.details && validation.details.length
+      ? validation.details.slice(0, 24).map((line) => '- ' + line)
+      : ['- No source-level diagnostic samples were found.']),
+    '',
+    'Other engine diagnostics:',
+    ...(otherEngineLog.split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('[!]') || /devirt round|devirtualizing \\(round|loadstring.d .*VM chunk|anti-tamper/i.test(line))
+      .slice(-12).length
+      ? otherEngineLog.split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line.startsWith('[!]') || /devirt round|devirtualizing \\(round|loadstring.d .*VM chunk|anti-tamper/i.test(line))
+          .slice(-12)
+      : ['No additional diagnostics from the comparison engine.']),
     '',
     'Important:',
     hasLiftedSource
@@ -875,7 +892,8 @@ async function processLuraph151(message, prompt, input) {
   const inputBytes = Buffer.byteLength(input.source, 'utf8');
   const progress = createAnalysisProgress(prompt, input.filename, inputBytes, 'Luraph 15.1');
   const startedAt = Date.now();
-  let combinedLogs = '';
+  let dedicatedLogs = '';
+  let compatibilityLogs = '';
   let dedicatedError = null;
   let compatibilityError = null;
   let chosen = dedicated;
@@ -925,10 +943,10 @@ async function processLuraph151(message, prompt, input) {
           onProgress: progress.onLine,
         },
       );
-      combinedLogs += result.stderr || '';
+      dedicatedLogs += result.stderr || '';
     } catch (error) {
       dedicatedError = error;
-      combinedLogs += '\n[!] dedicated 15.1 engine: ' + String(error.message || error) + '\n';
+      dedicatedLogs += '\n[!] dedicated 15.1 engine: ' + String(error.message || error) + '\n';
     }
 
     await progress.setPhase(
@@ -985,10 +1003,10 @@ async function processLuraph151(message, prompt, input) {
             onProgress: progress.onLine,
           },
         );
-        combinedLogs += result.stderr || '';
+        compatibilityLogs += result.stderr || '';
       } catch (error) {
         compatibilityError = error;
-        combinedLogs += '\n[!] v15 compatibility pass: ' + String(error.message || error) + '\n';
+        compatibilityLogs += '\n[!] v15 compatibility pass: ' + String(error.message || error) + '\n';
       }
 
       await progress.setPhase(
@@ -1039,7 +1057,8 @@ async function processLuraph151(message, prompt, input) {
       base: chosen.base,
       outputDir: chosen.outputDir,
       elapsedMs: Date.now() - startedAt,
-      stderr: combinedLogs,
+      stderr: chosen === dedicated ? dedicatedLogs : compatibilityLogs,
+      otherEngineStderr: chosen === dedicated ? compatibilityLogs : dedicatedLogs,
       maxRuns: 16,
       devirtRounds: 200,
       loaderAnalysis: true,

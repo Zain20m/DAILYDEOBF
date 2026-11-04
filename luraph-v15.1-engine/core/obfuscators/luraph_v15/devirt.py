@@ -3504,15 +3504,16 @@ class Stepper:
                 self.cs.vars[wd] = LTable()
 
     def _detect_regfile(self):
-        """Identify a VM register array from its use in the dispatch handlers.
+        """Identify a VM register array from its use in dispatch handlers.
 
-        Older builds leave a TempVal when the prologue calls a register-array
-        factory. Some v15.1 builds instead evaluate that call to None because
-        the factory is an opaque VM helper. In that case the AST still gives
-        strong evidence: a call-initialized local is indexed as a callable
-        slot and is also written/copied in the dispatch loop. Accept that
-        local only when the structural match is unique.
+        A v15.1 dispatcher may be nested in an if-body. Statements immediately
+        before that loop are executed from first_init rather than the function
+        prologue. Register allocators declared there were invisible to this
+        analysis because cs does not own those locals. Inspect both initialization
+        regions and restore the RegFile marker after first_init executes.
         """
+        self.first_init_regfiles = set()
+
         def ungroup(node):
             while isinstance(node, dict) and node.get("type") == "AstExprGroup":
                 node = node.get("expr")
@@ -3524,24 +3525,40 @@ class Stepper:
                 return node.get("local", {}).get("location")
             return None
 
+        prologue = list(self.vm.inner_body[:self.first_inner])
+        first_init = list(getattr(self, "first_init", ()) or ())
+        first_init_decls = {
+            var.get("location")
+            for st in first_init if st.get("type") == "AstStatLocal"
+            for var in st.get("vars", ())
+            if var.get("location")
+        }
+        visible = set(self.cs.vars) | first_init_decls
         call_initialized = set()
-        for st in self.vm.inner_body[:self.first_inner]:
+
+        def unresolved_or_temporary(loc):
+            if loc in first_init_decls:
+                return True
+            current = self.cs.vars.get(loc, _NOT_FOUND)
+            return current is None or isinstance(current, TempVal)
+
+        for st in prologue + first_init:
             typ = st.get("type")
             if typ == "AstStatLocal":
                 for var, val in zip(st.get("vars", ()), st.get("values", ())):
-                    val = ungroup(val)
                     loc = var.get("location")
-                    if (loc in self.cs.vars and isinstance(val, dict)
+                    val = ungroup(val)
+                    if (loc in visible and isinstance(val, dict)
                             and val.get("type") == "AstExprCall"
-                            and (self.cs.vars[loc] is None or isinstance(self.cs.vars[loc], TempVal))):
+                            and unresolved_or_temporary(loc)):
                         call_initialized.add(loc)
             elif typ == "AstStatAssign":
                 for var, val in zip(st.get("vars", ()), st.get("values", ())):
                     loc = local_location(var)
                     val = ungroup(val)
-                    if (loc in self.cs.vars and isinstance(val, dict)
+                    if (loc in visible and isinstance(val, dict)
                             and val.get("type") == "AstExprCall"
-                            and (self.cs.vars[loc] is None or isinstance(self.cs.vars[loc], TempVal))):
+                            and unresolved_or_temporary(loc)):
                         call_initialized.add(loc)
 
         cands = {k for k, v in self.cs.vars.items() if isinstance(v, TempVal)}
@@ -3577,14 +3594,33 @@ class Stepper:
         hits = [k for k in cands if k in calluse and (k in storeuse or k in copysrc)]
         if os.environ.get("DEVIRT_TB"):
             pid = self.lf.dump.pid_of_table.get(getattr(self.lf.proto, "tid", None))
-            print("[regfile] proto=%s temps=%s call_init=%s call=%s store=%s copy=%s hits=%s" %
+            def compact(values):
+                ordered = sorted(str(value) for value in values)
+                return "%d:%r" % (len(ordered), ordered[:16])
+            print("[regfile] proto=%s vm=%s first_init=%d temps=%s call_init=%s call=%s store=%s copy=%s hits=%s" %
                   (pid if pid is not None else getattr(self.lf.proto, "tid", None),
-                   sorted(k for k, v in self.cs.vars.items() if isinstance(v, TempVal)),
-                   sorted(call_initialized), sorted(calluse), sorted(storeuse),
-                   sorted(copysrc), sorted(hits)), file=sys.stderr)
+                   getattr(self.vm, "tag", "?"), len(first_init),
+                   compact(k for k, v in self.cs.vars.items() if isinstance(v, TempVal)),
+                   compact(call_initialized), compact(calluse), compact(storeuse),
+                   compact(copysrc), compact(hits)), file=sys.stderr)
         if len(hits) != 1:
             return
-        self.cs.vars[hits[0]] = RegFile()
+        loc = hits[0]
+        if loc in self.cs.vars:
+            self.cs.vars[loc] = RegFile()
+        elif loc in first_init_decls:
+            self.first_init_regfiles.add(loc)
+
+    def _apply_first_init_regfiles(self, inner):
+        """Restore detected register-array identity after first_init execution."""
+        for loc in self.first_init_regfiles:
+            owner = inner.lookup(loc)
+            if owner is None:
+                if os.environ.get("DEVIRT_TB"):
+                    print("[regfile-bind] local=%s was not in the first-init scope" % loc,
+                          file=sys.stderr)
+                continue
+            owner.vars[loc] = RegFile()
 
     def _stack_pointer_candidates(self):
         """Prologue locals the handlers use directly as a register index
@@ -3790,6 +3826,7 @@ class Stepper:
         it.exec_block(self.vm.inner_body[:self.first_inner], inner)
         if self.first_init:
             it.exec_block(self.first_init, inner)
+        self._apply_first_init_regfiles(inner)
         self.lf.in_prologue = False
         for k, v in cs.vars.items():
             if k not in inner.vars:

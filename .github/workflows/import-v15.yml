@@ -15,46 +15,92 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-      - name: Inspect archive only (no project code is executed)
+      - name: Unwrap ZIP and inspect nested RAR without executing it
         shell: bash
         run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y 7zip
+          SEVEN="$(command -v 7zz || command -v 7z)"
+          export SEVEN
           python3 - <<'PY'
-          from pathlib import Path
-          from zipfile import ZipFile, BadZipFile
+          from pathlib import Path, PurePosixPath
+          from zipfile import ZipFile
+          import os, subprocess, tempfile
 
-          archive = Path("upload/Luraph_v15_1_Deobfuscator_Newest.zip")
-          if not archive.is_file():
-              raise SystemExit(f"Missing archive: {archive}")
-          print(f"ARCHIVE {archive} {archive.stat().st_size} bytes")
-          try:
-              with ZipFile(archive) as z:
-                  bad = z.testzip()
-                  if bad:
-                      raise SystemExit(f"ZIP CRC failed: {bad}")
-                  infos = [i for i in z.infolist() if not i.is_dir()]
-                  print(f"ZIP_OK files={len(infos)} uncompressed={sum(i.file_size for i in infos)} bytes")
-                  for i in infos:
-                      print(f"FILE {i.file_size:>10} {i.filename}")
-                  print("\n--- README and dependency manifests ---")
-                  selected = 0
-                  for i in infos:
-                      base = i.filename.replace("\\", "/").rsplit("/", 1)[-1].lower()
-                      if base.startswith("readme") or base in {
-                          "requirements.txt", "pyproject.toml", "package.json",
-                          "setup.py", "setup.cfg", "cmakelists.txt", "makefile"
-                      }:
-                          if i.file_size > 40000:
-                              print(f"SKIP {i.filename}: {i.file_size} bytes")
-                              continue
-                          try:
-                              doc = z.read(i).decode("utf-8", "replace")
-                          except Exception as exc:
-                              print(f"READ_ERROR {i.filename}: {exc}")
-                              continue
-                          print(f"\n### {i.filename}\n{doc[:7000]}")
-                          selected += 1
-                          if selected >= 10:
-                              break
-          except BadZipFile as exc:
-              raise SystemExit(f"Invalid ZIP: {exc}")
+          wrapper = Path("upload/Luraph_v15_1_Deobfuscator_Newest.zip")
+          if not wrapper.is_file():
+              raise SystemExit(f"Missing ZIP: {wrapper}")
+          with ZipFile(wrapper) as z:
+              files = [i for i in z.infolist() if not i.is_dir()]
+              if len(files) != 1 or not files[0].filename.lower().endswith(".rar"):
+                  raise SystemExit("Expected the uploaded ZIP to contain exactly one .rar file.")
+              nested = z.read(files[0])
+          print(f"WRAPPER_OK: {wrapper.stat().st_size} bytes; nested RAR={files[0].filename} ({len(nested)} bytes)")
+
+          with tempfile.TemporaryDirectory(prefix="luraph151-inspect-") as tmp:
+              root = Path(tmp)
+              rar = root / "payload.rar"
+              out = root / "extracted"
+              out.mkdir()
+              rar.write_bytes(nested)
+              seven = os.environ["SEVEN"]
+              subprocess.run([seven, "t", str(rar)], check=True, capture_output=True, text=True)
+
+              listing = subprocess.run(
+                  [seven, "l", "-slt", str(rar)],
+                  check=True, capture_output=True, text=True
+              ).stdout
+              blocks = listing.split("----------", 1)[-1].splitlines()
+              records, current = [], {}
+              for line in blocks:
+                  if not line.strip():
+                      if current:
+                          records.append(current)
+                          current = {}
+                      continue
+                  if " = " in line:
+                      key, value = line.split(" = ", 1)
+                      current[key] = value
+              if current:
+                  records.append(current)
+
+              entries = []
+              for rec in records:
+                  name = rec.get("Path", "")
+                  if not name or name == str(rar):
+                      continue
+                  p = PurePosixPath(name.replace("\\", "/"))
+                  if p.is_absolute() or ".." in p.parts:
+                      raise SystemExit(f"Unsafe archive path: {name}")
+                  if "Symbolic Link" in rec.get("Attributes", ""):
+                      raise SystemExit(f"Symlink entry is not allowed: {name}")
+                  size = int(rec.get("Size", "0") or 0)
+                  entries.append((name, size, rec.get("Folder") == "+"))
+              total = sum(size for _, size, is_dir in entries if not is_dir)
+              if len(entries) > 5000 or total > 256 * 1024 * 1024:
+                  raise SystemExit(f"Archive too large: {len(entries)} entries, {total} uncompressed bytes")
+
+              print(f"RAR_OK: {len(entries)} entries; uncompressed={total} bytes")
+              for name, size, is_dir in entries:
+                  print(f"ENTRY {size:>10} {'DIR ' if is_dir else 'FILE'} {name}")
+
+              subprocess.run([seven, "x", "-y", f"-o{out}", str(rar)], check=True, capture_output=True, text=True)
+              print("\n--- README / dependency manifests (text only) ---")
+              candidates = []
+              for path in out.rglob("*"):
+                  if not path.is_file():
+                      continue
+                  base = path.name.lower()
+                  if base.startswith("readme") or base in {
+                      "requirements.txt", "pyproject.toml", "package.json",
+                      "setup.py", "setup.cfg", "cmakelists.txt", "makefile"
+                  }:
+                      candidates.append(path)
+              for path in candidates[:10]:
+                  data = path.read_bytes()
+                  if len(data) > 40000:
+                      print(f"SKIP_DOC {path.relative_to(out)}: {len(data)} bytes")
+                      continue
+                  print(f"\n### {path.relative_to(out)}\n{data.decode('utf-8', 'replace')[:7000]}")
           PY

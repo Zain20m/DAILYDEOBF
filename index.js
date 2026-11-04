@@ -599,76 +599,161 @@ async function processLuraphV15(message, prompt, input) {
 
 async function processLuraph151(message, prompt, input) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-151-'));
-  const inputPath = path.join(tempRoot, 'input.lua');
-  const outputDir = path.join(tempRoot, 'output');
-  const outputPath = path.join(outputDir, 'deobfuscated.luau');
-  const base = path.join(outputDir, 'deobfuscated');
-  await fs.mkdir(outputDir, { recursive: true });
-  await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
+  const primaryRoot = path.join(tempRoot, 'v15-compatible');
+  const fallbackRoot = path.join(tempRoot, 'beta-fallback');
 
+  async function prepare(root) {
+    const inputPath = path.join(root, 'input.lua');
+    const outputDir = path.join(root, 'output');
+    const outputPath = path.join(outputDir, 'deobfuscated.luau');
+    await fs.mkdir(outputDir, { recursive: true });
+    await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
+    return { inputPath, outputDir, outputPath, base: path.join(outputDir, 'deobfuscated') };
+  }
+
+  async function hasLift(base) {
+    try {
+      const text = await fs.readFile(base + '.devirt.luau', 'utf8');
+      return text.split('\n').some((line) => line.trim() && !line.trim().startsWith('--'));
+    } catch {
+      return false;
+    }
+  }
+
+  async function artifactScore(base) {
+    let score = 0;
+    for (const suffix of ['.protos.json', '.strings.txt', '.luau', '.devirt.luau']) {
+      try { score += (await fs.stat(base + suffix)).size; } catch {}
+    }
+    return score;
+  }
+
+  const primary = await prepare(primaryRoot);
   const inputBytes = Buffer.byteLength(input.source, 'utf8');
   const progress = createAnalysisProgress(prompt, input.filename, inputBytes, 'Luraph 15.1');
   const startedAt = Date.now();
+  let primaryResult = null;
+  let primaryError = null;
+  let chosen = primary;
+  let combinedLogs = '';
 
   try {
     await progress.setPhase(
       'Preparing the v15-compatible beta pipeline',
-      '15.1 is being processed with the uploaded Luraph v15 devirtualizer, including full VM capture and lifting.'
+      '15.1 is being analyzed with the uploaded Luraph v15 engine first, with full VM capture and lifting enabled.'
     );
 
-    const result = await runPythonEngine(
-      ENGINE_V15_DIR,
-      ENGINE_V15_CLI,
-      inputPath,
-      outputPath,
-      ENGINE_TIMEOUT_MS,
-      [
-        '--obfuscator', 'luraph_v15',
-        '--debug',
-        '--strings',
-        '--max-runs', '16',
-        '--devirt-rounds', '200',
-        '--budget', '60',
-        '--timeout', '180',
-        '--no-pypy',
-      ],
-      {
-        env: {
-          DEVIRT_FULL_ROUNDS: '1',
-          DEVIRT_LOADERS: '1',
-          DEVIRT_TIMING: '1',
-          DEVIRT_ERRS: '1',
-          DEVIRT_TB: '1',
-          DEVIRT_WALK_LIMIT: '750000',
+    try {
+      primaryResult = await runPythonEngine(
+        ENGINE_V15_DIR,
+        ENGINE_V15_CLI,
+        primary.inputPath,
+        primary.outputPath,
+        ENGINE_TIMEOUT_MS,
+        [
+          '--obfuscator', 'luraph_v15',
+          '--debug',
+          '--strings',
+          '--max-runs', '16',
+          '--devirt-rounds', '200',
+          '--budget', '60',
+          '--timeout', '180',
+          '--no-pypy',
+        ],
+        {
+          env: {
+            DEVIRT_FULL_ROUNDS: '1',
+            DEVIRT_LOADERS: '1',
+            DEVIRT_TIMING: '1',
+            DEVIRT_ERRS: '1',
+            DEVIRT_TB: '1',
+            DEVIRT_WALK_LIMIT: '750000',
+          },
+          onProgress: progress.onLine,
         },
-        onProgress: progress.onLine,
-      },
-    );
+      );
+      combinedLogs += primaryResult.stderr || '';
+    } catch (error) {
+      primaryError = error;
+      combinedLogs += '\n[!] v15-compatible pass: ' + String(error.message || error) + '\n';
+    }
+
+    if (!(await hasLift(primary.base))) {
+      await progress.setPhase(
+        'Trying the 15.1 beta compatibility pass',
+        'The v15 lifter did not produce reconstructed source on its first pass. Trying the bundled beta runner and comparing the VM artifacts.'
+      );
+
+      const fallback = await prepare(fallbackRoot);
+      try {
+        const fallbackResult = await runEngine(
+          ENGINE_151_DIR,
+          ENGINE_151_CLI,
+          fallback.inputPath,
+          fallback.outputPath,
+          ENGINE_TIMEOUT_MS,
+          false,
+          [
+            '--plugin', 'luraph_v15',
+            '--debug',
+            '--strings',
+            '--max-runs', '16',
+            '--devirt-rounds', '200',
+            '--budget', '60',
+            '--timeout', '180',
+          ],
+          {
+            env: {
+              DEVIRT_FULL_ROUNDS: '1',
+              DEVIRT_LOADERS: '1',
+              DEVIRT_TIMING: '1',
+              DEVIRT_ERRS: '1',
+              DEVIRT_TB: '1',
+              DEVIRT_WALK_LIMIT: '750000',
+            },
+            onProgress: progress.onLine,
+          },
+        );
+        combinedLogs += fallbackResult.stderr || '';
+      } catch (error) {
+        combinedLogs += '\n[!] beta compatibility pass: ' + String(error.message || error) + '\n';
+      }
+
+      if (await hasLift(fallback.base)) {
+        chosen = fallback;
+      } else if (await artifactScore(fallback.base) > await artifactScore(primary.base)) {
+        chosen = fallback;
+      }
+    }
+
+    if (primaryError && chosen === primary && !(await artifactScore(primary.base))) {
+      throw primaryError;
+    }
 
     await progress.setPhase(
       'Checking reconstructed Luau and VM artifacts',
-      'Verifying the full lift, captured prototypes, dynamically loaded chunks and trace separately.'
+      'Comparing the source lift with the behaviour trace, captured prototypes, strings and dynamic VM chunks.'
     );
 
     const summary = await sendAnalysisOutput(message, input, {
-      label: 'Luraph 15.1 · v15-compatible beta pipeline',
-      base,
-      outputDir,
+      label: 'Luraph 15.1 · v15-compatible beta analysis',
+      base: chosen.base,
+      outputDir: chosen.outputDir,
       elapsedMs: Date.now() - startedAt,
-      stderr: result.stderr,
+      stderr: combinedLogs,
       maxRuns: 16,
       devirtRounds: 200,
       loaderAnalysis: true,
     });
 
     await progress.complete(summary.hasLiftedSource
-      ? 'Full reconstructed Luau generated. Supporting trace and VM artifacts were attached separately.'
-      : 'The engine completed its analysis but could only produce a behaviour trace. The report explains which VM artifacts were captured and why a full lift was not available.');
+      ? 'Full reconstructed Luau generated. The behaviour trace and VM artifacts are attached separately.'
+      : 'Both compatible passes were attempted. Only a behaviour trace could be reconstructed, so it is clearly labelled and not presented as original source.');
 
     await prompt.edit({
       content: summary.hasLiftedSource
-        ? '✅ Luraph 15.1 full analysis finished. The reconstructed Luau and supporting analysis files are attached.'
-        : '⚠️ Luraph 15.1 analysis finished, but the VM could not be fully lifted. The trace is labelled separately from source. Check the analysis report.',
+        ? '✅ Luraph 15.1 full analysis finished. Reconstructed Luau and supporting VM artifacts are attached.'
+        : '⚠️ Luraph 15.1 analysis finished, but neither pass completed a full VM lift. The trace is labelled separately from source. Check the analysis report for captured prototypes, strings and engine diagnostics.',
       components: [],
     });
   } catch (error) {

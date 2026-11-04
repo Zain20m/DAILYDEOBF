@@ -1,0 +1,127 @@
+name: Verify DAILY DEOBF analysis engines
+
+on:
+  push:
+    paths:
+      - "index.js"
+      - "package.json"
+      - "scripts/setup-engines.js"
+      - "luraph-v15-engine/**"
+      - "luraph-v15.1-engine/**"
+      - ".github/workflows/verify-full-analysis.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify Node and Python source
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          python3 --version
+          npm run check
+          node scripts/setup-engines.js
+          python3 - <<'PY'
+          from pathlib import Path
+          for engine in (Path("luraph-v15-engine"), Path("luraph-v15.1-engine")):
+              files = list(engine.rglob("*.py"))
+              for path in files:
+                  if "__pycache__" not in path.parts:
+                      compile(path.read_text(encoding="utf-8"), str(path), "exec")
+              print(f"PYTHON_SYNTAX_OK: {engine} ({len(files)} source files)")
+          PY
+
+      - name: Run full-analysis smoke test on bundled 15.1 sample
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y 7zip
+          SEVEN="$(command -v 7zz || command -v 7z)"
+          export SEVEN
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          import os
+          import subprocess
+          import tempfile
+
+          wrapper = Path("upload/Luraph_v15_1_Deobfuscator_Newest.zip")
+          if not wrapper.is_file():
+              raise SystemExit("Missing uploaded Luraph 15.1 archive")
+          with ZipFile(wrapper) as z:
+              entries = [x for x in z.infolist() if not x.is_dir()]
+              rar_entries = [x for x in entries if x.filename.lower().endswith(".rar")]
+              if len(rar_entries) != 1:
+                  raise SystemExit("Expected one nested RAR inside the uploaded ZIP")
+              rar_data = z.read(rar_entries[0])
+
+          with tempfile.TemporaryDirectory(prefix="daily-deobf-151-smoke-") as temp:
+              tmp = Path(temp)
+              rar = tmp / "payload.rar"
+              extracted = tmp / "rar"
+              outdir = tmp / "output"
+              extracted.mkdir()
+              outdir.mkdir()
+              rar.write_bytes(rar_data)
+              subprocess.run([os.environ["SEVEN"], "x", "-y", f"-o{extracted}", str(rar)], check=True)
+
+              source = extracted / "v15_tool_attempt_source"
+              sample = source / "samples_v15.1_deobfuscated" / "2153b779fa7a87f2_obfuscated.lua"
+              if not sample.is_file():
+                  raise SystemExit("Bundled 15.1 regression input is missing")
+
+              output = outdir / "deobfuscated.luau"
+              env = os.environ.copy()
+              env.update({
+                  "DEVIRT_FULL_ROUNDS": "1",
+                  "DEVIRT_LOADERS": "1",
+                  "DEVIRT_TIMING": "1",
+                  "DEVIRT_ERRS": "1",
+                  "DEVIRT_TB": "1",
+                  "DEVIRT_WALK_LIMIT": "750000",
+              })
+              result = subprocess.run(
+                  [
+                      "node", str(Path("luraph-v15.1-engine/deob.js").resolve()),
+                      str(sample), "-o", str(output),
+                      "--plugin", "luraph_v15",
+                      "--debug", "--strings",
+                      "--max-runs", "20",
+                      "--devirt-rounds", "200",
+                      "--budget", "90",
+                      "--timeout", "180",
+                  ],
+                  cwd="luraph-v15.1-engine",
+                  env=env,
+                  capture_output=True,
+                  text=True,
+                  timeout=1200,
+              )
+              print("15.1 STDOUT:\n" + result.stdout[-6000:])
+              print("15.1 STDERR:\n" + result.stderr[-16000:])
+
+              base = outdir / "deobfuscated"
+              lifted = Path(str(base) + ".devirt.luau")
+              trace = Path(str(base) + ".trace.luau")
+              protos = Path(str(base) + ".protos.json")
+              print("FULL_LIFT=" + str(lifted.is_file() and lifted.stat().st_size > 0))
+              print("TRACE=" + str(trace.is_file() and trace.stat().st_size > 0))
+              print("PROTOS=" + str(protos.is_file() and protos.stat().st_size > 0))
+              print("FINAL_OUTPUT=" + str(output.is_file() and output.stat().st_size > 0))
+              if result.returncode != 0 or not output.is_file() or output.stat().st_size == 0:
+                  raise SystemExit("15.1 full-analysis smoke test did not produce an output file")
+              if trace.is_file() and not lifted.is_file():
+                  print("RESULT_CLASS=TRACE_ONLY")
+              elif lifted.is_file():
+                  print("RESULT_CLASS=VM_LIFT")
+              else:
+                  print("RESULT_CLASS=OUTPUT_PRESENT_WITHOUT_LIFT_SIDECAR")
+          PY

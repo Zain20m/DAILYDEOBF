@@ -84,8 +84,8 @@ jobs:
                                  check=True, stdout=subprocess.DEVNULL)
                   synthetic = Path(temp) / "luraph-15.1-detect.lua"
                   synthetic.write_text(
-                      "-- This file was protected using Luraph Obfuscator v15.1 [https://lura.ph/]\\n"
-                      "return function() end\\n",
+                      "-- This file was protected using Luraph Obfuscator v15.1 [https://lura.ph/]\n"
+                      "return function() end\n",
                       encoding="utf-8"
                   )
                   detection = subprocess.run(
@@ -95,7 +95,7 @@ jobs:
                   if "luraph_v15" not in detection.stdout:
                       raise SystemExit("Original v15 engine did not detect the 15.1 beta header: " + detection.stdout)
                   runtime_test = Path(temp) / "runtime-test.luau"
-                  runtime_test.write_text('print("Luau runtime OK")\\n', encoding="utf-8")
+                  runtime_test.write_text('print("Luau runtime OK")\n', encoding="utf-8")
                   subprocess.run([str(binary_dest / "luau"), str(runtime_test)],
                                  check=True, stdout=subprocess.DEVNULL)
                   sample = destination / "deobf" / "samples" / "001_vm_like_dispatch.lua"

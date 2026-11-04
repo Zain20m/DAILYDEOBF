@@ -1452,7 +1452,11 @@ class ProtoLifter:
             if isinstance(k, (int, float)) and k < 1 and self.stack_base is not None:
                 raise Unsupported("read below the stack VM's frame (register %s)" % k)
             if isinstance(k, (int, float)) and (k < 0 or (1024 < k < 800000)) and self.stack_base is None:
-                raise Unsupported("corrupt/encrypted register index %s" % k)
+                raise Unsupported(
+                    "corrupt/encrypted register index %s (stack_base=%r, stack_pointer_candidates=%d, proto=%r)"
+                    % (k, self.stack_base, len(getattr(self.vm, "_sp_cands", {}).get(None, ())),
+                       getattr(self.proto, "tid", None))
+                )
             if self.jvals.get(k) is FRAME:
                 return obj
             if k in self.jvals:
@@ -1657,7 +1661,11 @@ class ProtoLifter:
             if isinstance(key, (int, float)) and key < 1 and self.stack_base is not None:
                 raise Unsupported("store below the stack VM's frame (register %s)" % key)
             if isinstance(key, (int, float)) and (key < 0 or (1024 < key < 800000)) and self.stack_base is None:
-                raise Unsupported("corrupt/encrypted register store %s" % key)
+                raise Unsupported(
+                    "corrupt/encrypted register store %s (stack_base=%r, stack_pointer_candidates=%d, proto=%r)"
+                    % (key, self.stack_base, len(getattr(self.vm, "_sp_cands", {}).get(None, ())),
+                       getattr(self.proto, "tid", None))
+                )
             self.emit(Assign(Reg(S.norm_key(key)), self.value_of(v)))
             return
         if isinstance(obj, FrameProxy):
@@ -1719,7 +1727,11 @@ class ProtoLifter:
             if id(obj) in self.proto_arrays:
                 if is_sym(v):
                     self.out.clear()
-                    raise Unsupported("symbolic value store into proto array")
+                    raise Unsupported(
+                        "symbolic value store into proto array (key=%s, value=%s, stack_base=%r, pending_jump_regs=%s, proto=%r)"
+                        % (fmt_expr(key), fmt_expr(v), self.stack_base,
+                           sorted(self.need_jump_regs)[:16], getattr(self.proto, "tid", None))
+                    )
                 self.mutated = True
             if self.ov_base is not None and obj.tid is not None:
 
@@ -3439,13 +3451,25 @@ class Stepper:
 
         cache = self.vm.__dict__.setdefault("_sp_cands", {})
         if None not in cache:
+            def ungroup(node):
+                # Luau's AST may wrap a local in one or more parentheses.
+                # The old exact-type check missed R[(M)] and grouped register
+                # array expressions, leaving stack_base unset. High stack
+                # register indexes were then misclassified as encrypted keys.
+                while isinstance(node, dict) and node.get("type") == "AstExprGroup":
+                    node = node.get("expr")
+                return node
 
             pairs = set()
             for _, _, w in self.loops:
                 for n in iter_nodes(w):
-                    if n.get("type") == "AstExprIndexExpr" and n["expr"].get("type") == "AstExprLocal" \
-                            and n["index"].get("type") == "AstExprLocal":
-                        pairs.add((n["expr"]["local"]["location"], n["index"]["local"]["location"]))
+                    if n.get("type") != "AstExprIndexExpr":
+                        continue
+                    obj = ungroup(n.get("expr"))
+                    idx = ungroup(n.get("index"))
+                    if (isinstance(obj, dict) and obj.get("type") == "AstExprLocal"
+                            and isinstance(idx, dict) and idx.get("type") == "AstExprLocal"):
+                        pairs.add((obj["local"]["location"], idx["local"]["location"]))
             cache[None] = pairs
         _, inner = self._fresh_scopes(None, S.Interp(self.lf))
         self.lf.out = []

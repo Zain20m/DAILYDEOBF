@@ -47,19 +47,14 @@ jobs:
               seven = os.environ["SEVEN"]
               subprocess.run([seven, "t", str(rar)], check=True, capture_output=True, text=True)
 
-              listing = subprocess.run(
-                  [seven, "l", "-slt", str(rar)],
-                  check=True, capture_output=True, text=True
-              ).stdout
-              blocks = listing.split("----------", 1)[-1].splitlines()
+              listing = subprocess.run([seven, "l", "-slt", str(rar)], check=True, capture_output=True, text=True).stdout
               records, current = [], {}
-              for line in blocks:
+              for line in listing.split("----------", 1)[-1].splitlines():
                   if not line.strip():
                       if current:
                           records.append(current)
                           current = {}
-                      continue
-                  if " = " in line:
+                  elif " = " in line:
                       key, value = line.split(" = ", 1)
                       current[key] = value
               if current:
@@ -79,28 +74,31 @@ jobs:
                   entries.append((name, size, rec.get("Folder") == "+"))
               total = sum(size for _, size, is_dir in entries if not is_dir)
               if len(entries) > 5000 or total > 256 * 1024 * 1024:
-                  raise SystemExit(f"Archive too large: {len(entries)} entries, {total} uncompressed bytes")
-
+                  raise SystemExit(f"Archive too large: {len(entries)} entries, {total} bytes")
               print(f"RAR_OK: {len(entries)} entries; uncompressed={total} bytes")
               for name, size, is_dir in entries:
                   print(f"ENTRY {size:>10} {'DIR ' if is_dir else 'FILE'} {name}")
 
               subprocess.run([seven, "x", "-y", f"-o{out}", str(rar)], check=True, capture_output=True, text=True)
-              print("\n--- README / dependency manifests (text only) ---")
-              candidates = []
-              for path in out.rglob("*"):
+              src = out / "v15_tool_attempt_source"
+              print("\n--- KEY ENGINE FILES (read only) ---")
+              for relative in (
+                  "deob.js",
+                  "src/detect.js",
+                  "src/driver.js",
+                  "protocol.json",
+                  "core/obfuscators/luraph_v15/__init__.py",
+              ):
+                  path = src / relative
                   if not path.is_file():
+                      print(f"MISSING {relative}")
                       continue
-                  base = path.name.lower()
-                  if base.startswith("readme") or base in {
-                      "requirements.txt", "pyproject.toml", "package.json",
-                      "setup.py", "setup.cfg", "cmakelists.txt", "makefile"
-                  }:
-                      candidates.append(path)
-              for path in candidates[:10]:
-                  data = path.read_bytes()
-                  if len(data) > 40000:
-                      print(f"SKIP_DOC {path.relative_to(out)}: {len(data)} bytes")
-                      continue
-                  print(f"\n### {path.relative_to(out)}\n{data.decode('utf-8', 'replace')[:7000]}")
+                  text = path.read_text(encoding="utf-8", errors="replace")
+                  print(f"\n### {relative} ({len(text)} chars)\n{text[:14000]}")
+              print("\n--- sample filenames ---")
+              samples = src / "samples_v15.1_deobfuscated"
+              if samples.is_dir():
+                  for path in sorted(samples.iterdir()):
+                      if path.is_file():
+                          print(f"SAMPLE {path.stat().st_size} {path.name}")
           PY

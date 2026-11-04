@@ -1350,7 +1350,7 @@ async function startIdxWorkflow(message, inlineSource = null) {
   const omittedNames = [];
   for (const capture of resolution.captures) {
     const data = Buffer.from(capture.source, 'utf8');
-    if (totalBytes + data.length > MAX_OUTPUT_BYTES - 4096) {
+    if (totalBytes + data.length > MAX_OUTPUT_BYTES - (32 * 1024)) {
       omittedNames.push(capture.name);
       continue;
     }
@@ -1368,7 +1368,7 @@ async function startIdxWorkflow(message, inlineSource = null) {
     'Remote source files recovered: ' + resolution.captures.filter((capture) => !capture.inline).length,
     'Fetch failures: ' + resolution.failures.length,
     'Safety cap reached: ' + (resolution.truncated ? 'yes' : 'no'),
-    'Maximum URL fetches: ' + resolution.maxFiles,
+    'Maximum recovered chunks / URL fetches: ' + resolution.maxFiles,
     'Maximum nested depth: ' + resolution.maxDepth,
     '',
     'Recovered chunks:',
@@ -1406,12 +1406,29 @@ async function startIdxWorkflow(message, inlineSource = null) {
   }
 
   const batchSize = 9;
-  const totalBatches = Math.max(1, Math.ceil(outputFiles.length / batchSize));
+  const batchByteLimit = 8 * 1024 * 1024;
+  const batches = [];
+  let currentBatch = [];
+  let currentBatchBytes = 0;
+  for (const file of outputFiles) {
+    if (
+      currentBatch.length &&
+      (currentBatch.length >= batchSize || currentBatchBytes + file.data.length > batchByteLimit)
+    ) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentBatchBytes = 0;
+    }
+    currentBatch.push(file);
+    currentBatchBytes += file.data.length;
+  }
+  if (currentBatch.length) batches.push(currentBatch);
+  const totalBatches = batches.length;
   const summary = '✅ **.idx collection finished.** Recovered ' +
     resolution.captures.length + ' chunk(s) from ' + resolution.discovered +
     ' static URL(s).' +
     (resolution.failures.length ? ' ' + resolution.failures.length + ' URL(s) failed.' : '') +
-    (resolution.truncated ? ' The 50-fetch safety cap was reached.' : '') +
+    (resolution.truncated ? ' The 50-source safety cap was reached.' : '') +
     (omittedNames.length ? ' Some files exceeded the combined size limit; see the report.' : '');
 
   if (!outputFiles.length) {
@@ -1420,17 +1437,17 @@ async function startIdxWorkflow(message, inlineSource = null) {
       allowedMentions: { repliedUser: false },
     });
   } else {
-    for (let offset = 0; offset < outputFiles.length; offset += batchSize) {
-      const batch = outputFiles.slice(offset, offset + batchSize);
-      const batchNumber = Math.floor(offset / batchSize) + 1;
+    let sentFiles = 0;
+    for (let index = 0; index < batches.length; index++) {
+      const batch = batches[index];
       const files = batch.map((file) => new AttachmentBuilder(file.data, { name: file.name }));
       await message.reply({
-        content: summary + '\nFiles ' + (offset + 1) + '-' +
-          (offset + batch.length) + ' of ' + outputFiles.length +
-          ' · batch ' + batchNumber + '/' + totalBatches,
+        content: summary + '\nBatch ' + (index + 1) + '/' + totalBatches +
+          ' · ' + batch.length + ' file(s)',
         files,
         allowedMentions: { repliedUser: false },
       });
+      sentFiles += batch.length;
     }
   }
 

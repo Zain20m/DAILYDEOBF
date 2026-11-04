@@ -39,6 +39,6 @@ jobs:
           node --check luraph-v15-engine/deob.js
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A index.js package.json README.md luraph-v15-engine engine vendor scripts/setup-engine.js upload
+          git add -A
           git commit -m "Replace legacy 15.1 engine with newest Luraph v15"
           git push

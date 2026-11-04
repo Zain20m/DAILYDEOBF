@@ -1376,13 +1376,13 @@ async function startIdxWorkflow(message, inlineSource = null) {
 
   // Compression can expand random-looking text slightly. Drop trailing files until
   // the archive is guaranteed to fit, while recording every omitted filename.
-  while (bundle.buffer.length > MAX_OUTPUT_BYTES && outputCaptures.length) {
+  while (bundle.buffer.length + bundle.reportBuffer.length > MAX_OUTPUT_BYTES && outputCaptures.length) {
     const removed = outputCaptures.pop();
     omittedNames.push(removed.name);
     bundle = buildIdxBundle(outputCaptures, { ...bundleDetails, omittedNames });
   }
 
-  if (bundle.buffer.length > MAX_OUTPUT_BYTES) {
+  if (bundle.buffer.length + bundle.reportBuffer.length > MAX_OUTPUT_BYTES) {
     throw new Error('The IDX report bundle exceeded the output size limit. Please try a smaller input file.');
   }
 

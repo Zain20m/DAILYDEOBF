@@ -438,8 +438,11 @@ async function sendAnalysisOutput(message, input, config) {
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith('--'));
   const hasLiftedSource = meaningfulLiftLines.length > 0;
-  const preferredTracePath = (await fileSize(preservedTracePath)) > 0 ? preservedTracePath : defaultTracePath;
-  const traceBytes = await fileSize(preferredTracePath);
+  const preservedTraceBytes = await fileSize(preservedTracePath);
+  const preferredTracePath = preservedTraceBytes > 0
+    ? preservedTracePath
+    : (hasLiftedSource ? null : defaultTracePath);
+  const traceBytes = preferredTracePath ? await fileSize(preferredTracePath) : 0;
   const protoBytes = await fileSize(protoPath);
   const stringBytes = await fileSize(stringsPath);
   const directoryEntries = await fs.readdir(outputDir);

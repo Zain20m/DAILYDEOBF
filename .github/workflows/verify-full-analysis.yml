@@ -5,6 +5,9 @@ on:
     paths:
       - "index.js"
       - "package.json"
+      - "pureluau.js"
+      - "scripts/test-pureluau.js"
+      - "scripts/deep-reconstruction-prompt.txt"
       - "scripts/setup-engines.js"
       - "scripts/test-151-loadstring-capture.py"
       - "luraph-v14-engine/**"
@@ -28,6 +31,7 @@ jobs:
           set -euo pipefail
           node --version
           python3 --version
+          npm install --no-audit --no-fund
           npm run check
           node scripts/setup-engines.js
           python3 - <<'PY'

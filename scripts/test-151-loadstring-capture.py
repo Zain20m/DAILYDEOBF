@@ -151,9 +151,9 @@ def main():
     runtime = (ROOT / "luraph-v15.1-engine" / "runtime" / "envlog.luau").read_text(
         encoding="utf-8"
     )
-    assert 'E.__LSRC = R.setmetatable({}, {__mode = "k"})' in runtime
-    assert "E.__LSRC[f] = src" in runtime
-    assert 'R.rawget(E.__LSRC, v)' in runtime
+    assert 'CHAIN.__LSRC = R.setmetatable({}, {__mode = "k"})' in runtime
+    assert "CHAIN.__LSRC[f] = src" in runtime
+    assert 'R.rawget(CHAIN.__LSRC, v)' in runtime
 
     print("LURAPH_151_LOADSTRING_CAPTURE_OK")
 

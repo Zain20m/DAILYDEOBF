@@ -6,7 +6,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node scripts/setup-engines.js && node index.js",
-    "check": "node --check index.js && node --check luraph-v15.1-engine/deob.js && node --check luraph-v15.1-engine/src/driver.js && node --check scripts/lift-validation.js && node --check scripts/test-lift-validation.js && node --check scripts/setup-engines.js && node scripts/test-lift-validation.js"
+    "check": "node --check index.js && node --check luraph-v15.1-engine/deob.js && node --check luraph-v15.1-engine/src/driver.js && node --check scripts/luau-cleaner.js && node --check scripts/lift-validation.js && node --check scripts/test-lift-validation.js && node --check scripts/setup-engines.js && node scripts/test-lift-validation.js"
   },
   "engines": {
     "node": ">=20.11.0"

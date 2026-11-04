@@ -602,15 +602,28 @@ def ctor_assignments(root):
         return None
 
     nodes = []
-    def collect(n):
-        if isinstance(n, dict):
-            nodes.append(n)
-            for value in n.values():
-                collect(value)
-        elif isinstance(n, list):
-            for value in n:
-                collect(value)
-    collect(root)
+    pending_nodes = [root]
+    while pending_nodes:
+        current = pending_nodes.pop()
+        if isinstance(current, dict):
+            nodes.append(current)
+            pending_nodes.extend(current.values())
+        elif isinstance(current, list):
+            pending_nodes.extend(current)
+
+    local_names = {}
+    for candidate in nodes:
+        if candidate.get("type") == "AstStatLocal":
+            for var in candidate.get("vars", ()):
+                loc = var.get("location")
+                name = var.get("name")
+                if loc and name:
+                    local_names.setdefault(loc, set()).add(name.encode("latin-1"))
+        elif candidate.get("type") == "AstStatAssign":
+            for var in candidate.get("vars", ()):
+                loc, name = local_ref(var)
+                if loc and name:
+                    local_names.setdefault(loc, set()).add(name.encode("latin-1"))
 
     # First resolve simple local function definitions and table aliases.
     for n in nodes:
@@ -654,16 +667,7 @@ def ctor_assignments(root):
             for alias, target in table_aliases.items():
                 if target == current:
                     pending.append(alias)
-                    for candidate in nodes:
-                        if candidate.get("type") == "AstStatLocal":
-                            for var in candidate.get("vars", ()):
-                                if var.get("location") == alias and var.get("name"):
-                                    names.add(var["name"].encode("latin-1"))
-                        elif candidate.get("type") == "AstStatAssign":
-                            for var in candidate.get("vars", ()):
-                                vloc, vname = local_ref(var)
-                                if vloc == alias and vname:
-                                    names.add(vname.encode("latin-1"))
+                    names.update(local_names.get(alias, ()))
         return names
 
     def add(var, value):

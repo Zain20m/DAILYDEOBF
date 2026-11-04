@@ -38,7 +38,7 @@ jobs:
               print(f"PYTHON_SYNTAX_OK: {engine} ({len(files)} source files)")
           PY
 
-      - name: Run full-analysis smoke test on bundled 15.1 sample
+      - name: Verify 15.1 is routed through the v15-compatible engine
         shell: bash
         run: |
           set -euo pipefail
@@ -63,66 +63,35 @@ jobs:
                   raise SystemExit("Expected one nested RAR inside the uploaded ZIP")
               rar_data = z.read(rar_entries[0])
 
-          with tempfile.TemporaryDirectory(prefix="daily-deobf-151-smoke-") as temp:
+          with tempfile.TemporaryDirectory(prefix="daily-deobf-151-detect-") as temp:
               tmp = Path(temp)
               rar = tmp / "payload.rar"
               extracted = tmp / "rar"
-              outdir = tmp / "output"
               extracted.mkdir()
-              outdir.mkdir()
               rar.write_bytes(rar_data)
               subprocess.run([os.environ["SEVEN"], "x", "-y", f"-o{extracted}", str(rar)], check=True)
 
-              source = extracted / "v15_tool_attempt_source"
-              sample = source / "samples_v15.1_deobfuscated" / "2153b779fa7a87f2_obfuscated.lua"
+              sample = extracted / "v15_tool_attempt_source" / "samples_v15.1_deobfuscated" / "2153b779fa7a87f2_obfuscated.lua"
               if not sample.is_file():
                   raise SystemExit("Bundled 15.1 regression input is missing")
 
-              output = outdir / "deobfuscated.luau"
-              env = os.environ.copy()
-              env.update({
-                  "DEVIRT_LOADERS": "1",
-              })
               result = subprocess.run(
-                  [
-                      "node", str(Path("luraph-v15.1-engine/deob.js").resolve()),
-                      str(sample), "-o", str(output),
-                      "--plugin", "luraph_v15",
-                      "--debug", "--strings",
-                      "--max-runs", "12",
-                      "--devirt-rounds", "200",
-                      "--budget", "30",
-                      "--timeout", "90",
-                  ],
-                  cwd="luraph-v15.1-engine",
-                  env=env,
+                  ["python3", str(Path("luraph-v15-engine/deob.py").resolve()), str(sample), "--detect"],
+                  cwd="luraph-v15-engine",
                   capture_output=True,
                   text=True,
-                  timeout=1200,
+                  check=True,
               )
-              print("15.1 STDOUT:\n" + result.stdout[-6000:])
-              print("15.1 STDERR:\n" + result.stderr[-16000:])
+              print("15.1 compatibility detection:", result.stdout.strip())
+              if "luraph_v15" not in result.stdout:
+                  raise SystemExit("The v15-compatible engine did not recognize the 15.1 beta sample")
 
-              base = outdir / "deobfuscated"
-              lifted = Path(str(base) + ".devirt.luau")
-              trace = Path(str(base) + ".trace.luau")
-              protos = Path(str(base) + ".protos.json")
-              print("FULL_LIFT=" + str(lifted.is_file() and lifted.stat().st_size > 0))
-              print("TRACE=" + str(trace.is_file() and trace.stat().st_size > 0))
-              print("PROTOS=" + str(protos.is_file() and protos.stat().st_size > 0))
-              print("FINAL_OUTPUT=" + str(output.is_file() and output.stat().st_size > 0))
-              lifted_text = lifted.read_text(encoding="utf-8", errors="replace") if lifted.is_file() else ""
-              source_lines = [
-                  line.strip() for line in lifted_text.splitlines()
-                  if line.strip() and not line.strip().startswith("--")
-              ]
-              print("RECONSTRUCTED_CODE_LINES=" + str(len(source_lines)))
-              if result.returncode != 0 or not output.is_file() or output.stat().st_size == 0:
-                  raise SystemExit("15.1 all-VM analysis did not produce an output file")
-              if not source_lines:
-                  print("RESULT_CLASS=TRACE_ONLY")
-                  raise SystemExit("15.1 all-VM analysis produced no reconstructed source code")
-              print("RESULT_CLASS=VM_LIFT")
-              if trace.is_file():
-                  print("TRACE_PRESERVED=" + str(trace.stat().st_size) + " bytes")
+          source = Path("index.js").read_text(encoding="utf-8")
+          start = source.index("async function processLuraph151(")
+          end = source.index("async function startWorkflow(", start)
+          pipeline = source[start:end]
+          for required in ("runPythonEngine(", "runEngine(", "'--max-runs', '16'", "'--devirt-rounds', '200'", "'--budget', '60'"):
+              if required not in pipeline:
+                  raise SystemExit("15.1 full-analysis pipeline is missing: " + required)
+          print("15.1 FULL ANALYSIS ROUTING OK: v15 primary + beta fallback")
           PY

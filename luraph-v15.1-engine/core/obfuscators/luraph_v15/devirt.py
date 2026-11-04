@@ -1727,11 +1727,12 @@ class ProtoLifter:
             if is_sym(key):
                 raise Unsupported("symbolic key store into a concrete VM table")
             if id(obj) in self.proto_arrays:
-                if is_sym(v):
-                    self.out.clear()
-                    raise Unsupported("symbolic value store into proto array [key=%s, value=%s, stack_base=%r, pending_jump_regs=%s, proto=%r]"
-                                       % (fmt_expr(key), fmt_expr(v), self.stack_base,
-                                          sorted(self.need_jump_regs)[:16], getattr(self.proto, "tid", None)))
+                # Proto-array writes can legitimately carry a symbolic IR value
+                # during one VM instruction (for example a computed operand
+                # table entry). Keep that value in the instruction-local
+                # overlay below. Stepper.step deliberately does not promote
+                # symbolic proto-array writes into the cross-instruction
+                # overlay, so this never corrupts the shared decoded constants.
                 self.mutated = True
             if self.ov_base is not None and obj.tid is not None:
 

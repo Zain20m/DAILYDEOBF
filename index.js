@@ -5,6 +5,7 @@
 const {
   ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle,
   Client, Events, GatewayIntentBits, Partials,
+  REST, Routes, SlashCommandBuilder,
 } = require('discord.js');
 const { spawn } = require('node:child_process');
 const dns = require('node:dns').promises;
@@ -13,11 +14,14 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { inspectLiftText } = require('./scripts/lift-validation');
+const { convertToPureLuau } = require('./pureluau');
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const PREFIX = '.deobf';
 const MAX_INPUT_BYTES = 2 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 18 * 1024 * 1024;
+const MAX_PURELUA_CHARS = 1_500_000;
+const MAX_IDX_CAPTURE_FILES = 10;
 const INPUT_WAIT_MS = 180_000;
 const PICKER_WAIT_MS = 120_000;
 const ENGINE_TIMEOUT_MS = 25 * 60_000;
@@ -28,6 +32,21 @@ const ENGINE_V15_CLI = path.join(ENGINE_V15_DIR, 'deob.py');
 const ENGINE_151_DIR = path.join(__dirname, 'luraph-v15.1-engine');
 const ENGINE_151_CLI = path.join(ENGINE_151_DIR, 'deob.js');
 const activeUsers = new Set();
+const commandGuildId = process.env.GUILD_ID || '';
+
+const slashCommands = ['purelua', 'pureluau'].map((name) => new SlashCommandBuilder()
+  .setName(name)
+  .setDescription('Convert Lua/Luau source with the static PureLuau readability pass')
+  .addAttachmentOption((option) => option
+    .setName('file')
+    .setDescription('Upload a .lua, .luau, or .txt source file')
+    .setRequired(false))
+  .addStringOption((option) => option
+    .setName('source')
+    .setDescription('Paste Lua/Luau source text (up to 6000 characters)')
+    .setMaxLength(6000)
+    .setRequired(false))
+  .toJSON());
 
 if (!TOKEN) {
   console.error('Missing DISCORD_TOKEN environment variable.');
@@ -658,6 +677,9 @@ async function sendAnalysisOutput(message, input, config) {
     'Engine diagnostics:',
     ...(notableLogs.length ? notableLogs : ['No additional engine warnings were reported.']),
   ];
+  if (Array.isArray(config.extraReportLines) && config.extraReportLines.length) {
+    reportLines.push('', 'Additional reconstruction evidence:', ...config.extraReportLines.map((line) => '- ' + line));
+  }
   await fs.writeFile(reportPath, reportLines.join('\n'), 'utf8');
 
   const attachments = [];
@@ -680,6 +702,12 @@ async function sendAnalysisOutput(message, input, config) {
   if (traceBytes) await addArtifact(preferredTracePath, 'analysis_trace.luau');
   if (protoBytes) await addArtifact(protoPath, 'captured_prototypes.json');
   if (stringBytes) await addArtifact(stringsPath, 'extracted_strings.txt');
+  for (const artifact of config.extraArtifacts || []) {
+    await addArtifact(
+      path.join(outputDir, artifact.path),
+      artifact.name || path.basename(artifact.path)
+    );
+  }
   for (const chunkName of chunkFiles.slice(0, 3)) {
     await addArtifact(path.join(outputDir, chunkName), chunkName.replace(path.basename(base) + '.', ''));
   }
@@ -1065,6 +1093,39 @@ async function processLuraph151(message, prompt, input) {
       throw new Error(errors.join('\n') || 'Neither 15.1 analysis engine produced any diagnostic artifacts.');
     }
 
+    const deepPrompt = await fs.readFile(
+      path.join(__dirname, 'scripts', 'deep-reconstruction-prompt.txt'),
+      'utf8'
+    );
+    await fs.writeFile(
+      path.join(chosen.outputDir, 'analysis_input_original.lua'),
+      input.source,
+      { encoding: 'utf8', mode: 0o600 }
+    );
+    const extraArtifacts = [
+      { path: 'analysis_input_original.lua', name: 'analysis_input_original.lua' },
+    ];
+    if (normalized.removedBytes > 0) {
+      await fs.writeFile(
+        path.join(chosen.outputDir, 'engine_input_normalized.lua'),
+        source,
+        { encoding: 'utf8', mode: 0o600 }
+      );
+      extraArtifacts.push({
+        path: 'engine_input_normalized.lua',
+        name: 'engine_input_normalized.lua',
+      });
+    }
+    await fs.writeFile(
+      path.join(chosen.outputDir, 'deep_reconstruction_instructions.txt'),
+      deepPrompt,
+      { encoding: 'utf8', mode: 0o600 }
+    );
+    extraArtifacts.push({
+      path: 'deep_reconstruction_instructions.txt',
+      name: 'deep_reconstruction_instructions.txt',
+    });
+
     await progress.setPhase(
       'Validating and packaging the best candidate',
       'Comparing structural errors, placeholder functions, unresolved nil values and Luau AST validity.'
@@ -1084,6 +1145,16 @@ async function processLuraph151(message, prompt, input) {
       maxRuns: 16,
       devirtRounds: 200,
       loaderAnalysis: true,
+      extraArtifacts,
+      extraReportLines: [
+        'analysis_input_original.lua is the unmodified source supplied to the bot.',
+        ...(normalized.removedBytes > 0
+          ? ['engine_input_normalized.lua is the exact source used by the engine; ' +
+             normalized.removedBytes + ' malformed trailing bytes were removed.']
+          : []),
+        'deep_reconstruction_instructions.txt contains the requested behavior-preserving follow-up checklist.',
+        'The checklist is an instruction for a separate reconstruction pass, not proof that every item was automatically completed.',
+      ],
     });
 
     await progress.complete(summary.hasLiftedSource
@@ -1110,6 +1181,288 @@ async function processLuraph151(message, prompt, input) {
 }
 
 
+
+function buildIdxCaptureRunner(source) {
+  const prelude = [
+    '-- DAILY DEOBF .idx capture runner',
+    '-- Captures string chunks passed to loadstring and saves them locally.',
+    '-- The original source is appended below without being rewritten.',
+    '',
+    'local idx = 0',
+    'local old = loadstring',
+    'local environment = getgenv()',
+    '',
+    'assert(type(old) == "function", "loadstring is not available in this environment")',
+    'assert(type(environment) == "table", "getgenv() did not return an environment table")',
+    '',
+    'environment.loadstring = newcclosure(function(chunk, ...)',
+    '    if typeof(chunk) == "string" then',
+    '        idx += 1',
+    '        local filename = "loadstring" .. tostring(idx) .. ".txt"',
+    '        local ok, err = pcall(writefile, filename, chunk)',
+    '        if not ok then',
+    '            warn("[DAILY DEOBF .idx] Could not save " .. filename .. ": " .. tostring(err))',
+    '        end',
+    '    end',
+    '    return old(chunk, ...)',
+    'end)',
+    '',
+    '-- Original input starts here.',
+    '',
+  ].join('\n');
+  return prelude + source + (source.endsWith('\n') ? '' : '\n');
+}
+
+async function collectIdxFiles(message) {
+  let attachments = [...message.attachments.values()];
+  if (!attachments.length) {
+    const prompt = await message.reply({
+      content: 'Upload the generated loadstring1.txt, loadstring2.txt, and any other loadstringN.txt files in one message. I will return them as downloadable attachments.',
+      allowedMentions: { repliedUser: false },
+    });
+    const collector = message.channel.createMessageCollector({
+      filter: (reply) => reply.author.id === message.author.id && reply.channelId === message.channelId,
+      time: INPUT_WAIT_MS,
+      max: 1,
+    });
+    attachments = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        collector.stop('timeout');
+        reject(new Error('Capture upload timed out. Run .idx files again.'));
+      }, INPUT_WAIT_MS + 1000);
+      collector.once('collect', (reply) => {
+        clearTimeout(timer);
+        collector.stop('received');
+        const received = [...reply.attachments.values()];
+        if (!received.length) reject(new Error('No capture files were attached.'));
+        else resolve(received);
+      });
+      collector.once('end', (_collected, reason) => {
+        if (reason === 'time' && collector.collected.size === 0) {
+          clearTimeout(timer);
+          reject(new Error('Capture upload timed out. Run .idx files again.'));
+        }
+      });
+    });
+    await prompt.edit({ content: 'Capture files received. Validating the filenames and contents...' }).catch(() => {});
+  }
+
+  if (attachments.length > MAX_IDX_CAPTURE_FILES) {
+    throw new Error('Upload up to ' + MAX_IDX_CAPTURE_FILES + ' capture files per .idx files request.');
+  }
+
+  const names = new Set();
+  const captures = [];
+  let totalBytes = 0;
+  for (const attachment of attachments) {
+    const name = path.basename(String(attachment.name || ''));
+    const match = /^loadstring(\d+)\.txt$/i.exec(name);
+    if (!match) {
+      throw new Error('Unexpected filename: ' + (name || '(unnamed)') +
+        '. Capture files must be named loadstringN.txt.');
+    }
+    if (names.has(name.toLowerCase())) throw new Error('Duplicate capture filename: ' + name);
+    names.add(name.toLowerCase());
+    if (Number(attachment.size || 0) > MAX_INPUT_BYTES) {
+      throw new Error(name + ' is larger than the 2 MB per-file limit.');
+    }
+
+    const response = await fetch(attachment.url, {
+      redirect: 'error',
+      signal: AbortSignal.timeout(15_000),
+      headers: { 'user-agent': 'DAILY-DEOBF/1.0' },
+    });
+    if (!response.ok) throw new Error('Could not download ' + name + ' (HTTP ' + response.status + ').');
+    const data = await readResponseLimited(response, MAX_INPUT_BYTES);
+    decodeSource(data);
+    totalBytes += data.length;
+    if (totalBytes > MAX_OUTPUT_BYTES) {
+      throw new Error('The combined capture files exceed the 18 MB response limit.');
+    }
+    captures.push({ name, data, index: Number(match[1]) });
+  }
+
+  captures.sort((a, b) => a.index - b.index || a.name.localeCompare(b.name));
+  return captures;
+}
+
+async function handleIdxFiles(message) {
+  const captures = await collectIdxFiles(message);
+  const files = captures.map((capture) =>
+    new AttachmentBuilder(capture.data, { name: capture.name })
+  );
+  await message.reply({
+    content: '✅ Returned ' + captures.length + ' capture file(s): ' +
+      captures.map((capture) => capture.name).join(', '),
+    files,
+    allowedMentions: { repliedUser: false },
+  });
+}
+
+async function startIdxWorkflow(message) {
+  const prompt = await message.reply({
+    content: '📄 DAILY DEOBF · .idx\nAttach the .lua, .luau, or .txt script whose loadstring calls you want to capture, or paste a direct script URL. I will return a runner file with the hook inserted.',
+    allowedMentions: { repliedUser: false },
+  });
+  const firstAttachment = message.attachments.first();
+  const input = firstAttachment
+    ? await inputFromAttachment(firstAttachment)
+    : await collectInput(message, prompt);
+
+  const runner = buildIdxCaptureRunner(input.source);
+  const data = Buffer.from(runner, 'utf8');
+  if (data.length > MAX_OUTPUT_BYTES) {
+    throw new Error('The generated capture runner exceeds the 18 MB file limit.');
+  }
+  const baseName = path.basename(input.filename || 'script.lua', path.extname(input.filename || 'script.lua'))
+    .replace(/[^A-Za-z0-9._-]/g, '_') || 'script';
+  const outputName = 'idx_capture_' + baseName + '.lua';
+  await message.reply({
+    content: [
+      '✅ Capture runner generated.',
+      'Run the attached file in an executor environment you are authorized to use.',
+      'It saves each captured chunk as loadstring1.txt, loadstring2.txt, and so on.',
+      'When those files are on your device, use .idx files and attach them to receive the files back from the bot.',
+      'The bot does not execute executor APIs or run the script on Railway.',
+    ].join('\n'),
+    files: [new AttachmentBuilder(data, { name: outputName })],
+    allowedMentions: { repliedUser: false },
+  });
+  await prompt.edit({ content: '✅ .idx runner attached as ' + outputName + '.' }).catch(() => {});
+}
+
+async function handlePureLuauCommand(interaction) {
+  const attachment = interaction.options.getAttachment('file');
+  const pastedSource = interaction.options.getString('source');
+  if (!attachment && !pastedSource) {
+    await interaction.reply({
+      content: 'Upload a .lua/.luau file or paste source text in the source option.',
+      ephemeral: true,
+    });
+    return;
+  }
+  if (attachment && pastedSource) {
+    await interaction.reply({
+      content: 'Provide either a file or pasted source, not both.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    let source;
+    let originalName = 'pasted-source.lua';
+    if (attachment) {
+      originalName = path.basename(String(attachment.name || 'uploaded.lua').replace(/\\/g, '/'));
+      if (!/\.(?:lua|luau|txt)$/i.test(originalName)) {
+        await interaction.editReply('Only .lua, .luau, or .txt files are supported.');
+        return;
+      }
+      if (Number(attachment.size || 0) > MAX_INPUT_BYTES) {
+        await interaction.editReply('The file exceeds the 2 MB input limit. Nothing was processed.');
+        return;
+      }
+      const response = await fetch(attachment.url, {
+        redirect: 'error',
+        signal: AbortSignal.timeout(15_000),
+        headers: { 'user-agent': 'DAILY-DEOBF/1.0' },
+      });
+      if (!response.ok) throw new Error('Discord file download returned HTTP ' + response.status + '.');
+      const buffer = await readResponseLimited(response, MAX_INPUT_BYTES);
+      source = decodeSource(buffer);
+    } else {
+      source = pastedSource;
+    }
+
+    if (source.length > MAX_PURELUA_CHARS) {
+      await interaction.editReply(
+        'This source contains ' + source.length.toLocaleString() +
+        ' characters, above the complete-processing limit of ' + MAX_PURELUA_CHARS.toLocaleString() +
+        '. I did not truncate or partially convert it.'
+      );
+      return;
+    }
+
+    const result = convertToPureLuau(source);
+    const convertedBuffer = Buffer.from(result.output, 'utf8');
+    if (convertedBuffer.length > MAX_OUTPUT_BYTES) {
+      await interaction.editReply('The converted file exceeds the 18 MB output limit. The original was left unchanged.');
+      return;
+    }
+
+    const extension = path.extname(originalName);
+    const baseName = path.basename(originalName, extension).replace(/[^A-Za-z0-9._-]/g, '_') || 'converted';
+    const convertedName = 'pureluau-' + baseName + '.lua';
+    const reportLines = [
+      'DAILY DEOBF · PureLuau static conversion report',
+      'Original: ' + originalName,
+      'Converted: ' + convertedName,
+      'Lines processed: ' + result.linesProcessed.toLocaleString(),
+      'Identifiers renamed: ' + result.identifiersRenamed,
+      'Context-based readability names: ' + result.readabilityRenamedIdentifiers,
+      'Lines reformatted: ' + result.formattedLines,
+      'Formatting engine: ' + result.formatterUsed,
+      'Formatter parse check: ' + (result.formatterSyntaxValidated ? 'PASS' : 'NOT VALIDATED'),
+      ...(result.formatterError ? ['Formatter note: ' + result.formatterError.slice(0, 300)] : []),
+      'Executor API occurrences found: ' + result.executorApisFound,
+      'Executor API calls removed: ' + result.executorApisReplaced,
+      'Unsupported dependencies remaining: ' + result.unsupportedDependenciesRemaining,
+      'Remaining API names: ' + (result.unsupportedNames.length ? result.unsupportedNames.join(', ') : 'None detected'),
+      'Legacy calls modernized: ' + result.legacyCallsReplaced,
+      'Escaped strings decoded: ' + result.decodedEscapedStrings,
+      'Numeric expressions folded: ' + result.foldedNumericExpressions,
+      'Static string calls folded: ' + result.foldedStringCharCalls + result.foldedStringCalls,
+      'Static table/bit32/base64 calls folded: ' +
+        (result.foldedTableConcatCalls + result.foldedBit32Calls + result.foldedBase64Calls),
+      'Static decoder loops simplified: ' + result.decodedStateMachines,
+      'Recovered static strings: ' + (result.decodedStaticStrings.length
+        ? result.decodedStaticStrings.map((value) => JSON.stringify(value.slice(0, 120))).join(' | ')
+        : 'None'),
+      'Lexical validation: ' + (result.lexicalValidationPassed ? 'PASS' : 'CHECK FAILED'),
+      'Structural validation: ' + (result.structuralValidationPassed ? 'PASS' : 'REVIEW REQUIRED'),
+      'Structural findings: ' + (result.structuralDiagnostics.length
+        ? result.structuralDiagnostics.slice(0, 6).join(' | ').slice(0, 900)
+        : 'None'),
+      'Recognized VM markers: ' + (result.coverage.vmIndicators.join(', ') || 'None'),
+      'Detected syntax markers: ' + (result.coverage.luauSyntax.join(', ') || 'None'),
+      'Full syntax status: ' + result.syntaxValidation,
+      '',
+      'Static conversion only. No source was executed. Executor-only APIs were preserved, not silently deleted.',
+      'This readability pass does not establish full VM/control-flow reconstruction or prove behavioral equivalence.',
+    ];
+    await interaction.editReply({
+      content: '✅ PureLuau conversion complete.\nConverted file: ' + convertedName +
+        '\nThe full static analysis report is attached separately.',
+      files: [
+        new AttachmentBuilder(convertedBuffer, { name: convertedName }),
+        new AttachmentBuilder(Buffer.from(reportLines.join('\n'), 'utf8'), {
+          name: 'pureluau-report-' + baseName + '.txt',
+        }),
+      ],
+    });
+  } catch (error) {
+    console.error('PureLuau conversion failed:', error);
+    await interaction.editReply(
+      'I could not complete this conversion: ' + String(error.message || error).slice(0, 700) +
+      '. The original file was not modified.'
+    ).catch(() => {});
+  }
+}
+
+function helpText() {
+  return [
+    'DAILY DEOBF commands',
+    '',
+    '.deobf - upload a script or paste a direct URL, then choose a Luraph engine.',
+    '.idx - generate a runner that captures dynamic loadstring chunks as numbered text files.',
+    '.idx files - upload loadstringN.txt files and receive them back as attachments.',
+    '.help - show this command list.',
+    '/purelua or /pureluau - run the static PureLuau readability/conversion pass and return the source plus a report.',
+    '',
+    'The .idx runner must be run in an environment you are authorized to inspect. The bot does not execute Roblox executor APIs.',
+  ].join('\n');
+}
 
 async function startWorkflow(message) {
   const prompt = await message.reply({
@@ -1213,19 +1566,84 @@ async function startWorkflow(message) {
   });
 }
 
-client.once(Events.ClientReady, (readyClient) => {
+client.once(Events.ClientReady, async (readyClient) => {
   console.log(`DAILY DEOBF is online as ${readyClient.user.tag}`);
-  console.log('Command: .deobf');
+  console.log('Prefix commands: .deobf, .idx, .idx files, .help');
+  const rest = new REST({ version: '10' }).setToken(TOKEN);
+  try {
+    const route = commandGuildId
+      ? Routes.applicationGuildCommands(readyClient.user.id, commandGuildId)
+      : Routes.applicationCommands(readyClient.user.id);
+    await rest.put(route, { body: slashCommands });
+    console.log('Registered /purelua and /pureluau slash commands.');
+  } catch (error) {
+    console.error('Slash-command registration failed:', error.message);
+  }
+});
+
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  if (interaction.commandName === 'purelua' || interaction.commandName === 'pureluau') {
+    await handlePureLuauCommand(interaction);
+  }
 });
 
 client.on(Events.MessageCreate, async (message) => {
-  if (message.author.bot || !message.content.trim().toLowerCase().startsWith(PREFIX)) return;
-  if (message.content.trim().toLowerCase() !== PREFIX) {
-    await message.reply('Use `.deobf` by itself, then upload a `.lua`, `.luau`, or `.txt` file or send a direct URL.');
+  if (message.author.bot) return;
+  const content = message.content.trim();
+  if (!content) return;
+  const parts = content.split(/\s+/);
+  const command = parts[0].toLowerCase();
+  const subcommand = (parts[1] || '').toLowerCase();
+
+  if (command === '.help') {
+    if (parts.length > 1) {
+      await message.reply('Use .help by itself.');
+      return;
+    }
+    await message.reply({ content: helpText(), allowedMentions: { repliedUser: false } });
+    return;
+  }
+
+  if (command === '.idx') {
+    if (subcommand === 'files') {
+      if (parts.length > 2) {
+        await message.reply('Use .idx files and attach up to 10 loadstringN.txt files.');
+        return;
+      }
+      try {
+        await handleIdxFiles(message);
+      } catch (error) {
+        await message.reply('❌ ' + String(error.message || error).slice(0, 1200)).catch(() => {});
+      }
+      return;
+    }
+    if (parts.length > 1) {
+      await message.reply('Use .idx by itself to create a capture runner, or .idx files to return captured text files.');
+      return;
+    }
+    if (activeUsers.has(message.author.id)) {
+      await message.reply('You already have an active .deobf or .idx job. Finish it or wait for it to expire.');
+      return;
+    }
+    activeUsers.add(message.author.id);
+    try {
+      await startIdxWorkflow(message);
+    } catch (error) {
+      await message.reply('❌ ' + String(error.message || error).slice(0, 1500)).catch(() => {});
+    } finally {
+      activeUsers.delete(message.author.id);
+    }
+    return;
+  }
+
+  if (command !== PREFIX) return;
+  if (parts.length > 1) {
+    await message.reply('Use .deobf by itself, then upload a .lua, .luau, or .txt file or send a direct URL.');
     return;
   }
   if (activeUsers.has(message.author.id)) {
-    await message.reply('You already have a `.deobf` job open. Finish it or wait for it to expire.');
+    await message.reply('You already have an active .deobf or .idx job. Finish it or wait for it to expire.');
     return;
   }
   activeUsers.add(message.author.id);

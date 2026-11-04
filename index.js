@@ -16,6 +16,7 @@ const path = require('node:path');
 const { inspectLiftText } = require('./scripts/lift-validation');
 const { convertToPureLuau } = require('./pureluau');
 const { resolveLoadstringSources, resolveStaticSources } = require('./scripts/idx-resolver');
+const { runLuauTask } = require('./scripts/roblox-execution');
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const PREFIX = '.deobf';
@@ -1585,6 +1586,191 @@ async function startGetWorkflow(message, inlineSource = null) {
   }).catch(() => {});
 }
 
+
+
+function getExecAllowedUsers() {
+  return new Set(
+    String(process.env.ROBLOX_EXEC_ALLOWED_USERS || '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+}
+
+function cleanLuauInput(source) {
+  return String(source || '').trim();
+}
+
+async function collectExecInput(message, prompt) {
+  const collector = message.channel.createMessageCollector({
+    filter: (reply) => reply.author.id === message.author.id && reply.channelId === message.channelId,
+    time: INPUT_WAIT_MS,
+    max: 1,
+  });
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      collector.stop('timeout');
+      reject(new Error('Input timed out. Run .exec again.'));
+    }, INPUT_WAIT_MS + 1000);
+
+    collector.once('collect', async (reply) => {
+      clearTimeout(timer);
+      collector.stop('received');
+      try {
+        if (reply.content.trim().toLowerCase() === '.cancel') {
+          throw new Error('Cancelled.');
+        }
+        const attachment = reply.attachments.first();
+        if (attachment) {
+          const input = await inputFromAttachment(attachment);
+          resolve(input.source);
+          return;
+        }
+        const source = cleanLuauInput(reply.content);
+        if (!source) throw new Error('Send Luau source or attach a .lua/.luau/.txt file.');
+        resolve(source);
+      } catch (error) {
+        reject(error);
+      }
+    });
+
+    collector.once('end', (_collected, reason) => {
+      if (reason === 'time' && collector.collected.size === 0) {
+        clearTimeout(timer);
+        reject(new Error('Input timed out. Run .exec again.'));
+      }
+    });
+
+    prompt.edit({
+      content: 'Send Luau source as a message or attach a .lua, .luau, or .txt file. Type .cancel to stop.',
+    }).catch(() => {});
+  });
+}
+
+function formatExecResult(result) {
+  const task = result.task || {};
+  const lines = [
+    'DAILY DEOBF · Roblox Open Cloud Luau execution',
+    'State: ' + String(task.state || 'UNKNOWN'),
+    'Elapsed: ' + formatDuration(result.elapsedMs || 0),
+    'Polls: ' + String(result.polls || 0),
+    'Task: ' + String(result.taskPath || 'not supplied'),
+    '',
+  ];
+
+  if (task.error) {
+    lines.push(
+      'Execution error:',
+      typeof task.error === 'string' ? task.error : JSON.stringify(task.error, null, 2),
+      ''
+    );
+  }
+
+  const returnValues = task.output && task.output.results;
+  if (returnValues !== undefined) {
+    lines.push('Return values:', JSON.stringify(returnValues, null, 2), '');
+  }
+
+  lines.push(
+    'Logs:',
+    ...(result.logs && result.logs.length ? result.logs.map((line) => String(line)) : ['(No log messages returned.)'])
+  );
+
+  return lines.join('\n');
+}
+
+async function startExecWorkflow(message, inlineSource = null) {
+  const allowedUsers = getExecAllowedUsers();
+  if (!allowedUsers.has(message.author.id)) {
+    throw new Error(
+      allowedUsers.size
+        ? 'You are not on the .exec allowlist.'
+        : '.exec is disabled. Configure ROBLOX_EXEC_ALLOWED_USERS in Railway first.'
+    );
+  }
+
+  const apiKey = process.env.ROBLOX_OPEN_CLOUD_API_KEY;
+  const universeId = process.env.ROBLOX_EXEC_UNIVERSE_ID;
+  const placeId = process.env.ROBLOX_EXEC_PLACE_ID;
+  if (!apiKey || !universeId || !placeId) {
+    throw new Error(
+      'Missing Railway variables. Set ROBLOX_OPEN_CLOUD_API_KEY, ROBLOX_EXEC_UNIVERSE_ID, and ROBLOX_EXEC_PLACE_ID.'
+    );
+  }
+
+  const prompt = await message.reply({
+    content: '🧪 DAILY DEOBF · .exec\nPreparing an Open Cloud Luau task for your configured Roblox test place...',
+    allowedMentions: { repliedUser: false },
+  });
+
+  const attachment = message.attachments.first();
+  if (inlineSource && attachment) {
+    throw new Error('Use inline Luau or an attached file, not both.');
+  }
+
+  let source = inlineSource;
+  if (!source && attachment) {
+    const input = await inputFromAttachment(attachment);
+    source = input.source;
+  } else if (!source) {
+    source = await collectExecInput(message, prompt);
+  }
+
+  source = cleanLuauInput(source);
+  if (!source) throw new Error('The Luau source is empty.');
+  if (Buffer.byteLength(source, 'utf8') > MAX_INPUT_BYTES) {
+    throw new Error('The Luau source exceeds the 2 MB input limit.');
+  }
+
+  const configuredTimeout = Number(process.env.ROBLOX_EXEC_TIMEOUT_SECONDS || 30);
+  const timeoutSeconds = Number.isInteger(configuredTimeout)
+    ? Math.max(1, Math.min(300, configuredTimeout))
+    : 30;
+
+  await prompt.edit({
+    content: '🚀 DAILY DEOBF · .exec\nSubmitting Luau to Roblox Open Cloud...\nTarget: configured Roblox test place\nTimeout: ' + timeoutSeconds + ' seconds',
+    components: [],
+  });
+
+  const result = await runLuauTask({
+    apiKey,
+    universeId,
+    placeId,
+    script: source,
+    timeoutSeconds,
+    onStatus: (status) => {
+      if (status.polls === 1 || status.polls % 5 === 0) {
+        prompt.edit({
+          content: '⏳ DAILY DEOBF · .exec\nRoblox task state: ' + status.state +
+            '\nElapsed: ' + formatDuration(status.elapsedMs) +
+            '\nWaiting for the Roblox runtime to finish...',
+          components: [],
+        }).catch(() => {});
+      }
+    },
+  });
+
+  const output = formatExecResult(result);
+  const outputBuffer = Buffer.from(output, 'utf8');
+  const state = String(result.task.state || 'UNKNOWN').toUpperCase();
+  const succeeded = !result.task.error && ['COMPLETE', 'COMPLETED', 'SUCCESS', 'SUCCEEDED'].includes(state);
+
+  await message.reply({
+    content: (succeeded ? '✅' : '⚠️') + ' Roblox execution ' +
+      (succeeded ? 'finished.' : 'returned ' + state + '.') +
+      '\nElapsed: ' + formatDuration(result.elapsedMs) +
+      '\nFull result and logs are attached.',
+    files: [new AttachmentBuilder(outputBuffer, { name: 'roblox-execution-result.txt' })],
+    allowedMentions: { repliedUser: false },
+  });
+
+  await prompt.edit({
+    content: (succeeded ? '✅' : '⚠️') + ' .exec finished. Roblox task state: ' + state + '.',
+    components: [],
+  }).catch(() => {});
+}
+
 async function handlePureLuauCommand(interaction) {
   const attachment = interaction.options.getAttachment('file');
   const pastedSource = interaction.options.getString('source');
@@ -1713,6 +1899,7 @@ function helpText() {
     '.idx - attach a script or paste a direct URL to collect statically recoverable loadstrings and nested remote sources.',
     '.idx files - upload loadstringN.txt files and receive them back as attachments.',
     '.get <URL or script/expression> - fetch remote scripts using HttpGet, GetAsync and request({Url=...}) patterns, following nested static links.',
+    '.exec <Luau source> - execute Luau through Roblox Open Cloud in your configured test place (allowlist only).',
     '.help - show this command list.',
     '/purelua or /pureluau - run the static PureLuau readability/conversion pass and return the source plus a report.',
     '',
@@ -1824,7 +2011,7 @@ async function startWorkflow(message) {
 
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`DAILY DEOBF is online as ${readyClient.user.tag}`);
-  console.log('Prefix commands: .deobf, .idx, .idx files, .get, .help');
+  console.log('Prefix commands: .deobf, .idx, .idx files, .get, .exec, .help');
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
     const route = commandGuildId
@@ -1858,6 +2045,27 @@ client.on(Events.MessageCreate, async (message) => {
       return;
     }
     await message.reply({ content: helpText(), allowedMentions: { repliedUser: false } });
+    return;
+  }
+
+  if (command === '.exec') {
+    const inlineSource = content.slice(command.length).trim();
+    if (inlineSource.length > MAX_INPUT_BYTES) {
+      await message.reply('❌ The .exec source exceeds the 2 MB input limit.');
+      return;
+    }
+    if (activeUsers.has(message.author.id)) {
+      await message.reply('You already have an active .deobf, .idx, .get or .exec job.');
+      return;
+    }
+    activeUsers.add(message.author.id);
+    try {
+      await startExecWorkflow(message, inlineSource || null);
+    } catch (error) {
+      await message.reply('❌ .exec failed: ' + String(error.message || error).slice(0, 1500)).catch(() => {});
+    } finally {
+      activeUsers.delete(message.author.id);
+    }
     return;
   }
 

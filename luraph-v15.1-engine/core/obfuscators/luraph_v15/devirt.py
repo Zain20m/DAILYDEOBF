@@ -1343,6 +1343,7 @@ class ProtoLifter:
             self.dump.shared_meta.setdefault(n, {
                 "lfid": v.lfid, "proto": v.pf_tid,
                 "source_captured": bool(v.source), "constructor_matched": v.node is not None,
+                "refs": v.refs[:4], "binding": v.binding,
             })
             return SharedFn(v, n)
         if isinstance(v, Buf):
@@ -5242,9 +5243,10 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
     shared = []
     for n in sorted(prog.dump.shared.values()):
         meta = prog.dump.shared_meta.get(n, {})
-        detail = "-- unresolved function id=%s proto=%s source_captured=%s constructor_matched=%s" % (
+        detail = "-- unresolved function id=%s proto=%s source_captured=%s constructor_matched=%s refs=%r" % (
             meta.get("lfid", "unknown"), meta.get("proto", "none"),
             bool(meta.get("source_captured")), bool(meta.get("constructor_matched")),
+            meta.get("refs", ())[:3],
         )
         shared += [detail,
                    "-- LPH_ENCFUNC can compile a decrypted function through loadstring; source capture is attempted.",

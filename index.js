@@ -1,5 +1,7 @@
 'use strict';
 
+// Separate Python v15 and beta 15.1 pipelines with live analysis progress.
+
 const {
   ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle,
   Client, Events, GatewayIntentBits, Partials,
@@ -20,7 +22,7 @@ const PICKER_WAIT_MS = 120_000;
 const ENGINE_TIMEOUT_MS = 25 * 60_000;
 const ENGINE_V15_DIR = path.join(__dirname, 'luraph-v15-engine', 'deobf');
 const ENGINE_V15_CLI = path.join(ENGINE_V15_DIR, 'deob.py');
-// Luraph 15.1 is the beta branch of the v15 VM and uses the same full lifter.
+// Luraph 15.1 is the beta branch of the v15 VM, so both use the same lifter.
 const ENGINE_151_DIR = ENGINE_V15_DIR;
 const ENGINE_151_CLI = ENGINE_V15_CLI;
 const activeUsers = new Set();
@@ -269,6 +271,9 @@ function createAnalysisProgress(prompt, filename, inputBytes, label) {
     } else if ((match = line.match(/tracing .*?\(run\s+(\d+)\)/i))) {
       phase = 'Tracing VM execution · pass ' + match[1];
       detail = 'Capturing function entries, VM metadata, constants and runtime-created chunks.';
+    } else if ((match = line.match(/([\d,]+) Path2D answers computed by the offline engine model/i))) {
+      phase = 'Resolving Roblox Path2D calls';
+      detail = match[1] + ' Path2D results were computed by the offline model.';
     } else if ((match = line.match(/script loadstring.d\s+(\d+)\s+new VM chunk/i))) {
       phase = 'Inspecting dynamically loaded VM chunks';
       detail = 'Captured ' + match[1] + ' new VM chunk(s). Instrumenting them and tracing again.';
@@ -424,7 +429,16 @@ async function sendAnalysisOutput(message, input, config) {
   }
 
   const liftedBytes = await fileSize(liftedPath);
-  const hasLiftedSource = liftedBytes > 0;
+  let liftedContent = '';
+  if (liftedBytes > 0) {
+    try {
+      liftedContent = await fs.readFile(liftedPath, 'utf8');
+    } catch {}
+  }
+  const meaningfulLiftLines = liftedContent.split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('--'));
+  const hasLiftedSource = meaningfulLiftLines.length > 0;
   const preferredTracePath = (await fileSize(preservedTracePath)) > 0 ? preservedTracePath : defaultTracePath;
   const traceBytes = await fileSize(preferredTracePath);
   const protoBytes = await fileSize(protoPath);
@@ -438,16 +452,24 @@ async function sendAnalysisOutput(message, input, config) {
   if (protoBytes > 0 && protoBytes <= 12 * 1024 * 1024) {
     try {
       const parsed = JSON.parse(await fs.readFile(protoPath, 'utf8'));
-      if (Array.isArray(parsed)) prototypeCount = parsed.length;
-      else if (parsed && Array.isArray(parsed.protos)) prototypeCount = parsed.protos.length;
-      else if (parsed && typeof parsed === 'object') prototypeCount = Object.keys(parsed).length;
+      const collection = parsed && parsed.protos && typeof parsed.protos === 'object'
+        ? parsed.protos
+        : parsed;
+      if (Array.isArray(collection)) prototypeCount = collection.length;
+      else if (collection && typeof collection === 'object') prototypeCount = Object.keys(collection).length;
     } catch {}
   }
 
-  const notableLogs = String(config.stderr || '').split('\n')
+  const engineLog = String(config.stderr || '');
+  const notableLogs = engineLog.split('\n')
     .map((line) => line.trim())
     .filter((line) => line.startsWith('[!]') || /devirt round|devirtualizing \(round|loadstring.d .*VM chunk|anti-tamper/i.test(line))
     .slice(-18);
+  const liftMatches = [...engineLog.matchAll(/([\d,]+) functions,\s*([\d,]+) unlifted blocks,\s*([\d,]+) unstructured jumps/g)];
+  const liftStats = liftMatches.length ? liftMatches[liftMatches.length - 1] : null;
+  const liftedFunctions = liftStats ? Number(liftStats[1].replaceAll(',', '')) : null;
+  const unliftedBlocks = liftStats ? Number(liftStats[2].replaceAll(',', '')) : null;
+  const unstructuredJumps = liftStats ? Number(liftStats[3].replaceAll(',', '')) : null;
 
   const resultLabel = hasLiftedSource ? 'FULL VM LIFT GENERATED' : 'BEHAVIOUR TRACE ONLY · VM LIFT NOT COMPLETED';
   const reportLines = [
@@ -456,11 +478,13 @@ async function sendAnalysisOutput(message, input, config) {
     'Input: ' + String(input.filename || 'script.lua'),
     'Input size: ' + formatBytes(Buffer.byteLength(input.source, 'utf8')),
     'Elapsed: ' + formatDuration(config.elapsedMs || 0),
-    'Analysis mode: full devirtualization, debug artifacts retained',
+    'Analysis mode: full VM capture with debug artifacts retained',
     'Maximum VM execution passes: ' + config.maxRuns,
     'Maximum devirtualization rounds: ' + config.devirtRounds,
-    'Loader VM analysis: enabled',
-    'Full constant-resolution rounds: enabled',
+    'Loader VM analysis: ' + (config.loaderAnalysis ? 'enabled' : 'disabled'),
+    'Full lifted functions: ' + (liftedFunctions === null ? 'not reported' : liftedFunctions),
+    'Unlifted blocks: ' + (unliftedBlocks === null ? 'not reported' : unliftedBlocks),
+    'Unstructured jumps: ' + (unstructuredJumps === null ? 'not reported' : unstructuredJumps),
     'Captured prototypes: ' + (prototypeCount || (protoBytes ? 'present, count unavailable' : 'not captured')),
     'Dynamic VM chunks: ' + chunkFiles.length,
     'String dump: ' + (stringBytes ? formatBytes(stringBytes) : 'not produced'),
@@ -507,6 +531,8 @@ async function sendAnalysisOutput(message, input, config) {
   const safeName = String(input.filename || 'script.lua').replaceAll(String.fromCharCode(96), '');
   const summary = hasLiftedSource
     ? '**DAILY DEOBF · ' + config.label + '**\n✅ Full VM lift generated.\nProcessed: ' + safeName +
+      '\nFunctions lifted: ' + (liftedFunctions === null ? 'see report' : liftedFunctions) +
+      ' · Unlifted blocks: ' + (unliftedBlocks === null ? 'see report' : unliftedBlocks) +
       '\nCaptured prototypes: ' + (prototypeCount || 'see report') + ' · Dynamic VM chunks: ' + chunkFiles.length +
       '\nAttached: reconstructed Luau, trace, and available analysis artifacts.'
     : '**DAILY DEOBF · ' + config.label + '**\n⚠️ Trace-only result. The full VM lift did not complete.\nProcessed: ' + safeName +
@@ -542,7 +568,7 @@ async function processLuraphV15(message, prompt, input) {
       ],
       {
         env: {
-          DEVIRT_LOADERS: '1',
+          DEVIRT_FULL_ROUNDS: '1', DEVIRT_LOADERS: '1',
           DEVIRT_TIMING: '1', DEVIRT_ERRS: '1', DEVIRT_TB: '1',
           DEVIRT_WALK_LIMIT: '750000',
         },
@@ -554,7 +580,7 @@ async function processLuraphV15(message, prompt, input) {
     const summary = await sendAnalysisOutput(message, input, {
       label: 'Luraph v15', base, outputDir,
       elapsedMs: Date.now() - startedAt, stderr: result.stderr,
-      maxRuns: 16, devirtRounds: 200,
+      maxRuns: 16, devirtRounds: 200, loaderAnalysis: true,
     });
     await progress.complete(summary.hasLiftedSource
       ? 'A reconstructed Luau file and supporting analysis artifacts were attached.'
@@ -605,7 +631,7 @@ async function processLuraph151(message, prompt, input) {
     const summary = await sendAnalysisOutput(message, input, {
       label: 'Luraph 15.1', base, outputDir,
       elapsedMs: Date.now() - startedAt, stderr: result.stderr,
-      maxRuns: 20, devirtRounds: 200,
+      maxRuns: 20, devirtRounds: 200, loaderAnalysis: true,
     });
     await progress.complete(summary.hasLiftedSource
       ? 'A reconstructed Luau file and supporting analysis artifacts were attached.'

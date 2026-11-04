@@ -144,6 +144,18 @@ function extractStaticFetchUrls(source) {
       continue;
     }
 
+    // game.HttpGet(game, "https://...") passes the receiver explicitly.
+    const apiBeforeExplicitReceiver = tokens[i - 4];
+    if (
+      previous && previous.value === ',' &&
+      tokens[i - 3] && tokens[i - 3].value === '(' &&
+      apiBeforeExplicitReceiver && apiBeforeExplicitReceiver.type === 'identifier' &&
+      REQUEST_FUNCTIONS.has(apiBeforeExplicitReceiver.value.toLowerCase())
+    ) {
+      urls.push(token.value);
+      continue;
+    }
+
     // request({ Url = "https://..." }) and similar options-table forms.
     if (
       previous && previous.value === '=' &&

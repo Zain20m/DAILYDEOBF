@@ -1,0 +1,61 @@
+name: Inspect uploaded Luraph 15.1 archive
+
+on:
+  push:
+    paths:
+      - ".github/workflows/inspect-luraph151.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-archive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Inspect ZIP safely (do not execute archive contents)
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, BadZipFile
+          import sys
+
+          archive = Path("upload/Luraph_v15_1_Deobfuscator_Newest.zip")
+          if not archive.is_file():
+              raise SystemExit(f"Archive not found: {archive}")
+          print(f"ARCHIVE: {archive} ({archive.stat().st_size} bytes)")
+          try:
+              with ZipFile(archive) as z:
+                  bad = z.testzip()
+                  if bad:
+                      raise SystemExit(f"ZIP CRC check failed at: {bad}")
+                  infos = [i for i in z.infolist() if not i.is_dir()]
+                  print(f"ZIP_OK: {len(infos)} files; uncompressed={sum(i.file_size for i in infos)} bytes")
+                  for i in infos:
+                      print(f"FILE {i.file_size:>10} bytes  {i.filename}")
+                  print("\n--- README / dependency manifests (text only) ---")
+                  wanted = ("readme", "requirements.txt", "pyproject.toml", "package.json", "setup.py", "setup.cfg", "cmakelists.txt", "makefile")
+                  shown = 0
+                  for i in infos:
+                      name = i.filename.lower().replace("\\", "/")
+                      base = name.rsplit("/", 1)[-1]
+                      if any(base == w or base.startswith("readme") for w in wanted):
+                          if i.file_size > 40000:
+                              print(f"SKIP_DOC {i.filename}: {i.file_size} bytes")
+                              continue
+                          try:
+                              data = z.read(i)
+                              text = data.decode("utf-8", "replace")
+                          except Exception as e:
+                              print(f"DOC_READ_ERROR {i.filename}: {e}")
+                              continue
+                          print(f"\n### {i.filename} ({i.file_size} bytes)\n{text[:7000]}")
+                          shown += 1
+                          if shown >= 8:
+                              break
+          except BadZipFile as e:
+              raise SystemExit(f"Invalid ZIP: {e}")
+          PY

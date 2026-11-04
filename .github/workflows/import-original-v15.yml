@@ -69,21 +69,18 @@ jobs:
                       ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".git", "node_modules")
                   )
 
-                  # Reuse the bundled Linux Luau tools for the original Python lifter.
-                  binary_source = Path("luraph-v15.1-engine/bin")
+                  # The original archive already includes its patched Linux runtime tools.
                   binary_dest = destination / "deobf" / "bin"
-                  binary_dest.mkdir(parents=True, exist_ok=True)
                   for name in ("luau", "luau-ast"):
-                      src = binary_source / name
-                      if not src.is_file():
-                          raise SystemExit("Missing prebuilt Luau runtime: " + str(src))
                       target = binary_dest / name
-                      shutil.copy2(src, target)
+                      if not target.is_file():
+                          raise SystemExit("Original archive is missing " + str(target))
                       target.chmod(0o755)
 
-                  # Validate the CLI, 15.1 detection and the Luau AST tool.
+                  # Validate the CLI, beta-version detection, Luau runtime and AST parser.
                   import subprocess
-                  subprocess.run(["python3", str(destination / "deobf" / "deob.py"), "--help"],
+                  engine_cli = destination / "deobf" / "deob.py"
+                  subprocess.run(["python3", str(engine_cli), "--help"],
                                  check=True, stdout=subprocess.DEVNULL)
                   synthetic = Path(temp) / "luraph-15.1-detect.lua"
                   synthetic.write_text(
@@ -92,17 +89,22 @@ jobs:
                       encoding="utf-8"
                   )
                   detection = subprocess.run(
-                      ["python3", str(destination / "deobf" / "deob.py"), str(synthetic), "--detect"],
+                      ["python3", str(engine_cli), str(synthetic), "--detect"],
                       check=True, capture_output=True, text=True
                   )
                   if "luraph_v15" not in detection.stdout:
                       raise SystemExit("Original v15 engine did not detect the 15.1 beta header: " + detection.stdout)
+                  runtime_test = Path(temp) / "runtime-test.luau"
+                  runtime_test.write_text('print("Luau runtime OK")\\n', encoding="utf-8")
+                  subprocess.run([str(binary_dest / "luau"), str(runtime_test)],
+                                 check=True, stdout=subprocess.DEVNULL)
                   sample = destination / "deobf" / "samples" / "001_vm_like_dispatch.lua"
                   if sample.is_file():
-                      subprocess.run([str(binary_dest / "luau-ast"), str(sample)],
-                                     check=True, stdout=subprocess.DEVNULL)
-                  print("Original v15 engine CLI, v15.1 header detection and Luau runtime tools passed.")
-
+                      ast = subprocess.run([str(binary_dest / "luau-ast"), str(sample)],
+                                           check=True, capture_output=True)
+                      import json
+                      json.loads(ast.stdout.decode("latin-1"))
+                  print("Original v15 engine CLI, 15.1 header detection and both Luau binaries passed.")
                   report = [
                       "# Original Luraph v15 archive inspection",
                       "",
@@ -136,7 +138,7 @@ jobs:
                           if len(lines) > 260:
                               report.append(f"... [{len(lines) - 260} more lines omitted]")
                           report.append("```")
-                  Path("V15_ENGINE_IMPORT_REPORT.md").write_text("\\n".join(report) + "\\n", encoding="utf-8")
+                  Path("V15_ENGINE_IMPORT_REPORT.md").write_text("\n".join(report) + "\n", encoding="utf-8")
 
                   print(f"Imported source root: {source.relative_to(temp_root)}")
                   print(f"Files copied: {sum(1 for p in destination.rglob('*') if p.is_file())}")

@@ -107,3 +107,17 @@ test('validates identifiers, script and timeout before making a request', async 
   );
   assert.equal(called, false);
 });
+
+
+test('rejects a task path for a different universe or place', async () => {
+  await assert.rejects(
+    runLuauTask({
+      ...baseOptions,
+      fetchImpl: async () => response(200, {
+        path: 'universes/999/places/456/versions/7/luau-execution-sessions/s1/tasks/t1',
+        state: 'PROCESSING',
+      }),
+    }),
+    /valid task path for the configured place/
+  );
+});

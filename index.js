@@ -245,7 +245,7 @@ function createAnalysisProgress(prompt, filename, inputBytes, label) {
   }
 
   function advance(nextPercent, nextPhase, nextDetail, activityText) {
-    if (Number.isFinite(nextPercent)) percent = Math.max(percent, Math.min(99, Math.floor(nextPercent)));
+    if (Number.isFinite(nextPercent)) percent = Math.max(percent, Math.min(100, Math.floor(nextPercent)));
     if (nextPhase) phase = nextPhase;
     if (nextDetail) detail = nextDetail;
     if (activityText) recordActivity(activityText);
@@ -859,9 +859,21 @@ async function processLuraph151(message, prompt, input) {
       combinedLogs += '\n[!] dedicated 15.1 engine: ' + String(error.message || error) + '\n';
     }
 
+    await progress.setPhase(
+      'Checking the dedicated 15.1 candidate',
+      'The dedicated pass returned. Inspecting its actual output for unresolved VM values, placeholder functions and Luau syntax before deciding whether to run the compatibility engine.'
+    );
+
     dedicatedValidation = await inspectLiftFile(
       dedicated.base + '.devirt.luau',
       ENGINE_151_DIR
+    );
+
+    await progress.setPhase(
+      dedicatedValidation.complete ? 'Dedicated candidate passed validation' : 'Dedicated candidate has unresolved output',
+      dedicatedValidation.complete
+        ? 'Structural checks and Luau AST validation passed for the dedicated candidate.'
+        : 'Validation found: ' + (dedicatedValidation.issues || []).slice(0, 3).join('; ')
     );
 
     if (!dedicatedValidation.complete) {
@@ -905,9 +917,20 @@ async function processLuraph151(message, prompt, input) {
         combinedLogs += '\n[!] v15 compatibility pass: ' + String(error.message || error) + '\n';
       }
 
+      await progress.setPhase(
+        'Checking the v15 compatibility candidate',
+        'The compatibility pass returned. Measuring its reconstruction quality and syntax independently from the dedicated 15.1 result.'
+      );
+
       compatibilityValidation = await inspectLiftFile(
         compatible.base + '.devirt.luau',
         ENGINE_V15_DIR
+      );
+
+      await progress.setPhase(
+        'Comparing both reconstruction candidates',
+        'Dedicated candidate: ' + (dedicatedValidation.complete ? 'validated' : 'partial / failed validation') +
+        '. Compatibility candidate: ' + (compatibilityValidation.complete ? 'validated' : 'partial / failed validation') + '.'
       );
 
       const dedicatedScore = dedicatedValidation.score ?? -1;

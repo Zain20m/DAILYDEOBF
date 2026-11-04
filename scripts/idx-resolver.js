@@ -100,17 +100,20 @@ async function resolveLoadstringSources(source, options = {}) {
 
   const maxFiles = Number.isInteger(options.maxFiles) ? Math.max(1, options.maxFiles) : 10;
   const maxDepth = Number.isInteger(options.maxDepth) ? Math.max(0, options.maxDepth) : 4;
-  const queue = extractLoadstringHttpGetUrls(source).map((url) => ({ url, depth: 0 }));
+  const initialUrls = extractLoadstringHttpGetUrls(source);
+  const queue = initialUrls.slice(0, maxFiles).map((url) => ({ url, depth: 0 }));
   const queued = new Set(queue.map((item) => item.url));
   const visited = new Set();
   const captures = [];
   const failures = [];
-  let discovered = queue.length;
+  let discovered = initialUrls.length;
+  let attempts = 0;
 
-  while (queue.length && captures.length < maxFiles) {
+  while (queue.length && captures.length < maxFiles && attempts < maxFiles) {
     const item = queue.shift();
     if (visited.has(item.url)) continue;
     visited.add(item.url);
+    attempts++;
 
     try {
       const fetched = await fetchText(item.url);
@@ -149,7 +152,8 @@ async function resolveLoadstringSources(source, options = {}) {
     failures,
     discovered,
     visited: visited.size,
-    truncated: queue.length > 0,
+    truncated: queue.length > 0 || discovered > visited.size,
+    attempts,
     maxFiles,
     maxDepth,
   };

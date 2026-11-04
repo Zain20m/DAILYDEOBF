@@ -81,12 +81,7 @@ jobs:
               output = outdir / "deobfuscated.luau"
               env = os.environ.copy()
               env.update({
-                  "DEVIRT_FULL_ROUNDS": "1",
                   "DEVIRT_LOADERS": "1",
-                  "DEVIRT_TIMING": "1",
-                  "DEVIRT_ERRS": "1",
-                  "DEVIRT_TB": "1",
-                  "DEVIRT_WALK_LIMIT": "750000",
               })
               result = subprocess.run(
                   [
@@ -94,10 +89,10 @@ jobs:
                       str(sample), "-o", str(output),
                       "--plugin", "luraph_v15",
                       "--debug", "--strings",
-                      "--max-runs", "20",
+                      "--max-runs", "12",
                       "--devirt-rounds", "200",
-                      "--budget", "90",
-                      "--timeout", "180",
+                      "--budget", "30",
+                      "--timeout", "90",
                   ],
                   cwd="luraph-v15.1-engine",
                   env=env,
@@ -116,12 +111,18 @@ jobs:
               print("TRACE=" + str(trace.is_file() and trace.stat().st_size > 0))
               print("PROTOS=" + str(protos.is_file() and protos.stat().st_size > 0))
               print("FINAL_OUTPUT=" + str(output.is_file() and output.stat().st_size > 0))
+              lifted_text = lifted.read_text(encoding="utf-8", errors="replace") if lifted.is_file() else ""
+              source_lines = [
+                  line.strip() for line in lifted_text.splitlines()
+                  if line.strip() and not line.strip().startswith("--")
+              ]
+              print("RECONSTRUCTED_CODE_LINES=" + str(len(source_lines)))
               if result.returncode != 0 or not output.is_file() or output.stat().st_size == 0:
-                  raise SystemExit("15.1 full-analysis smoke test did not produce an output file")
-              if trace.is_file() and not lifted.is_file():
+                  raise SystemExit("15.1 all-VM analysis did not produce an output file")
+              if not source_lines:
                   print("RESULT_CLASS=TRACE_ONLY")
-              elif lifted.is_file():
-                  print("RESULT_CLASS=VM_LIFT")
-              else:
-                  print("RESULT_CLASS=OUTPUT_PRESENT_WITHOUT_LIFT_SIDECAR")
+                  raise SystemExit("15.1 all-VM analysis produced no reconstructed source code")
+              print("RESULT_CLASS=VM_LIFT")
+              if trace.is_file():
+                  print("TRACE_PRESERVED=" + str(trace.stat().st_size) + " bytes")
           PY

@@ -133,7 +133,9 @@ async function run(job) {
     job.write(job.tracePath, tidy.tidy(text, { preamble: !args.keepPreamble }));
   }
 
-  if (!devirtOn && !job.debug) {
+  if (!devirtOn || job.debug) {
+    // Keep the runtime behaviour trace even when a full lift succeeds.
+    // The CLI copies it to <name>.trace.luau before replacing the main output.
     writeTrace();
   }
 

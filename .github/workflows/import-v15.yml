@@ -3,7 +3,7 @@ name: Import newest Luraph v15 engine
 on:
   push:
     paths:
-      - "upload/DAILY-DEOBF-LURAPH-V15-NEWEST*.zip"
+      - "upload/**"
 
 permissions:
   contents: write

@@ -1,5 +1,7 @@
 'use strict';
 
+// Separate Python v15 and beta 15.1 pipelines with live analysis progress.
+
 const {
   ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle,
   Client, Events, GatewayIntentBits, Partials,

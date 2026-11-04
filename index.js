@@ -18,10 +18,11 @@ const MAX_OUTPUT_BYTES = 18 * 1024 * 1024;
 const INPUT_WAIT_MS = 180_000;
 const PICKER_WAIT_MS = 120_000;
 const ENGINE_TIMEOUT_MS = 25 * 60_000;
-const ENGINE_V15_DIR = path.join(__dirname, 'luraph-v15-engine');
+const ENGINE_V15_DIR = path.join(__dirname, 'luraph-v15-engine', 'deobf');
 const ENGINE_V15_CLI = path.join(ENGINE_V15_DIR, 'deob.py');
-const ENGINE_151_DIR = path.join(__dirname, 'luraph-v15.1-engine');
-const ENGINE_151_CLI = path.join(ENGINE_151_DIR, 'deob.js');
+// Luraph 15.1 is the beta branch of the v15 VM and uses the same full lifter.
+const ENGINE_151_DIR = ENGINE_V15_DIR;
+const ENGINE_151_CLI = ENGINE_V15_CLI;
 const activeUsers = new Set();
 
 if (!TOKEN) {
@@ -541,7 +542,7 @@ async function processLuraphV15(message, prompt, input) {
       ],
       {
         env: {
-          DEVIRT_FULL_ROUNDS: '1', DEVIRT_LOADERS: '1',
+          DEVIRT_LOADERS: '1',
           DEVIRT_TIMING: '1', DEVIRT_ERRS: '1', DEVIRT_TB: '1',
           DEVIRT_WALK_LIMIT: '750000',
         },
@@ -581,24 +582,26 @@ async function processLuraph151(message, prompt, input) {
 
   try {
     await progress.start();
-    const result = await runEngine(
-      ENGINE_151_DIR, ENGINE_151_CLI, inputPath, outputPath, ENGINE_TIMEOUT_MS, false,
+    const result = await runPythonEngine(
+      ENGINE_151_DIR, ENGINE_151_CLI, inputPath, outputPath, ENGINE_TIMEOUT_MS,
       [
-        '--plugin', 'luraph_v15', '--debug', '--strings',
+        '--obfuscator', 'luraph_v15', '--debug', '--strings',
         '--max-runs', '20', '--devirt-rounds', '200',
-        '--budget', '90', '--timeout', '180',
+        '--budget', '90', '--timeout', '180', '--no-pypy',
       ],
       {
         env: {
-          DEVIRT_FULL_ROUNDS: '1', DEVIRT_LOADERS: '1',
-          DEVIRT_TIMING: '1', DEVIRT_ERRS: '1', DEVIRT_TB: '1',
+          DEVIRT_LOADERS: '1',
+          DEVIRT_TIMING: '1',
+          DEVIRT_ERRS: '1',
+          DEVIRT_TB: '1',
           DEVIRT_WALK_LIMIT: '750000',
         },
         onProgress: progress.onLine,
       },
     );
 
-    await progress.setPhase('Packaging Luraph 15.1 analysis artifacts', 'Collecting reconstructed Luau, the trace, strings and VM metadata.');
+    await progress.setPhase('Packaging Luraph 15.1 analysis artifacts', 'Collecting reconstructed Luau, the behaviour trace, strings and VM metadata.');
     const summary = await sendAnalysisOutput(message, input, {
       label: 'Luraph 15.1', base, outputDir,
       elapsedMs: Date.now() - startedAt, stderr: result.stderr,
@@ -606,7 +609,7 @@ async function processLuraph151(message, prompt, input) {
     });
     await progress.complete(summary.hasLiftedSource
       ? 'A reconstructed Luau file and supporting analysis artifacts were attached.'
-      : 'The trace and diagnostic artifacts were attached; the engine did not finish a full lift.');
+      : 'The behaviour trace and diagnostic artifacts were attached; the engine could not complete the full VM lift.');
     await prompt.edit({ content: '✅ Luraph 15.1 analysis finished. Check the attached result and analysis report.', components: [] });
   } catch (error) {
     await progress.fail(error);
@@ -616,7 +619,6 @@ async function processLuraph151(message, prompt, input) {
     await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
   }
 }
-
 
 async function startWorkflow(message) {
   const prompt = await message.reply({

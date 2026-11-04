@@ -7,6 +7,8 @@ on:
       - "package.json"
       - "scripts/idx-resolver.js"
       - "scripts/test-idx-resolver.js"
+      - "scripts/roblox-execution.js"
+      - "scripts/test-roblox-execution.js"
       - "pureluau.js"
       - "scripts/test-pureluau.js"
       - "scripts/deep-reconstruction-prompt.txt"

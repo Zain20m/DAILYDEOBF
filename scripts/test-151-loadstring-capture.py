@@ -10,6 +10,7 @@ sys.path.insert(0, str(CORE))
 
 from ir import Opaque
 from obfuscators.luraph_v15.devirt import Dump, OpaqueFn, ProtoLifter, SharedFn
+from obfuscators.luraph_v15.vmmap import ctor_assignments
 
 
 def make_dump():
@@ -52,6 +53,79 @@ def main():
     unresolved_expr = lifter.as_expr(unresolved)
     assert isinstance(unresolved_expr, SharedFn)
     assert dump.shared_meta[2]["lfid"] == 9
+
+    # Dotted table writes, named-function statements, and local function
+    # aliases must all bind back to their source AST function.
+    fn_node = {"type": "AstExprFunction", "args": [], "body": {"body": []}}
+    root = {
+        "type": "AstStatBlock",
+        "body": [
+            {
+                "type": "AstStatLocal",
+                "vars": [{"name": "helpers", "location": "helpers@1"}],
+                "values": [],
+            },
+            {
+                "type": "AstStatLocal",
+                "vars": [{"name": "build", "location": "build@1"}],
+                "values": [fn_node],
+            },
+            {
+                "type": "AstStatLocal",
+                "vars": [{"name": "helperAlias", "location": "alias@1"}],
+                "values": [{
+                    "type": "AstExprLocal",
+                    "local": {"name": "build", "location": "build@1"},
+                }],
+            },
+            {
+                "type": "AstStatAssign",
+                "vars": [{
+                    "type": "AstExprIndexName",
+                    "expr": {
+                        "type": "AstExprLocal",
+                        "local": {"name": "helpers", "location": "helpers@1"},
+                    },
+                    "index": {"name": "create"},
+                }],
+                "values": [{
+                    "type": "AstExprLocal",
+                    "local": {"name": "build", "location": "build@1"},
+                }],
+            },
+            {
+                "type": "AstStatAssign",
+                "vars": [{
+                    "type": "AstExprIndexExpr",
+                    "expr": {
+                        "type": "AstExprLocal",
+                        "local": {"name": "helpers", "location": "helpers@1"},
+                    },
+                    "index": {"type": "AstExprConstantNumber", "value": 17},
+                }],
+                "values": [{
+                    "type": "AstExprLocal",
+                    "local": {"name": "helperAlias", "location": "alias@1"},
+                }],
+            },
+            {
+                "type": "AstStatFunction",
+                "name": {
+                    "type": "AstExprIndexName",
+                    "expr": {
+                        "type": "AstExprLocal",
+                        "local": {"name": "helpers", "location": "helpers@1"},
+                    },
+                    "index": {"name": "run"},
+                },
+                "func": fn_node,
+            },
+        ],
+    }
+    ctor_map = ctor_assignments(root)
+    assert ctor_map[(b"helpers", b"create")] is fn_node
+    assert ctor_map[(b"helpers", 17)] is fn_node
+    assert ctor_map[(b"helpers", b"run")] is fn_node
 
     runtime = (ROOT / "luraph-v15.1-engine" / "runtime" / "envlog.luau").read_text(
         encoding="utf-8"

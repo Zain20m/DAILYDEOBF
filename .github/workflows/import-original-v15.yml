@@ -1,0 +1,120 @@
+name: Import original Luraph v15 engine for analysis
+
+on:
+  push:
+    paths:
+      - ".github/workflows/import-original-v15.yml"
+      - "upload/Deobfuscator.zip"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  inspect-and-import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Extract archive safely and stage the original engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path, PurePosixPath
+          from zipfile import ZipFile
+          import shutil
+          import tempfile
+
+          archive = Path("upload/Deobfuscator.zip")
+          if not archive.is_file():
+              raise SystemExit("upload/Deobfuscator.zip is missing")
+
+          with ZipFile(archive) as z:
+              bad = z.testzip()
+              if bad:
+                  raise SystemExit("ZIP integrity failure at " + bad)
+              infos = [i for i in z.infolist() if not i.is_dir()]
+              if len(infos) > 10000:
+                  raise SystemExit("Archive contains too many entries")
+              total = sum(i.file_size for i in infos)
+              if total > 256 * 1024 * 1024:
+                  raise SystemExit("Archive exceeds 256 MiB extraction limit")
+              for info in infos:
+                  p = PurePosixPath(info.filename.replace("\\\\", "/"))
+                  if p.is_absolute() or ".." in p.parts:
+                      raise SystemExit("Unsafe ZIP path: " + info.filename)
+
+              with tempfile.TemporaryDirectory(prefix="original-v15-") as temp:
+                  temp_root = Path(temp)
+                  z.extractall(temp_root)
+
+                  candidates = []
+                  for item in temp_root.rglob("deob.py"):
+                      if item.parent.name == "deobf":
+                          candidates.append(item.parent.parent)
+                  if not candidates:
+                      raise SystemExit("Could not find a package containing deobf/deob.py")
+                  source = next((p for p in candidates if (p / "LURAPH.md").is_file()), candidates[0])
+
+                  destination = Path("luraph-v15-engine")
+                  if destination.exists():
+                      shutil.rmtree(destination)
+                  shutil.copytree(
+                      source,
+                      destination,
+                      ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".git", "node_modules")
+                  )
+
+                  report = [
+                      "# Original Luraph v15 archive inspection",
+                      "",
+                      f"- Archive: {archive}",
+                      f"- ZIP entries: {len(infos)}",
+                      f"- Uncompressed bytes: {total}",
+                      f"- Selected source root: {source.relative_to(temp_root)}",
+                      "",
+                      "## Extracted files",
+                  ]
+                  for p in sorted(destination.rglob("*")):
+                      if p.is_file():
+                          report.append(f"- `{p.relative_to(destination).as_posix()}` ({p.stat().st_size} bytes)")
+
+                  targets = [
+                      "LURAPH.md",
+                      "README.md",
+                      "deobf/deob.py",
+                      "deobf/obfuscators/luraph_v15/__init__.py",
+                      "deobf/obfuscators/luraph_v15/driver.py",
+                      "deobf/obfuscators/base.py",
+                      "deobf/build_luau.py",
+                  ]
+                  report.extend(["", "## Entry-point source excerpts"])
+                  for name in targets:
+                      p = destination / name
+                      if p.is_file():
+                          lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+                          report.extend(["", f"### {name} ({len(lines)} lines)", "```"])
+                          report.extend(lines[:260])
+                          if len(lines) > 260:
+                              report.append(f"... [{len(lines) - 260} more lines omitted]")
+                          report.append("```")
+                  Path("V15_ENGINE_IMPORT_REPORT.md").write_text("\\n".join(report) + "\\n", encoding="utf-8")
+
+                  print(f"Imported source root: {source.relative_to(temp_root)}")
+                  print(f"Files copied: {sum(1 for p in destination.rglob('*') if p.is_file())}")
+                  print(f"Uncompressed bytes: {total}")
+          PY
+
+      - name: Commit staged original engine for inspection
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add luraph-v15-engine V15_ENGINE_IMPORT_REPORT.md
+          git commit -m "Import original v15 engine for full analysis"
+          git push origin "HEAD:$GITHUB_REF_NAME"

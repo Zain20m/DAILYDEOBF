@@ -31,7 +31,7 @@ function format(source) {
     if (v === ';') { flush(); previous = token; continue; }
     if (v === 'end' || v === 'until' || v === 'else' || v === 'elseif') {
       if (line.trim()) flush(); indent = Math.max(0, indent - 1); append(v, false);
-      if (v !== 'until') flush(); previous = token; continue;
+      if (v !== 'until') flush(); if (v === 'else') indent++; previous = token; continue;
     }
     if (token.lineBreak && line.trim()) flush();
     if ([',', '.', ':', '[', '(', ')', ']', '}'].includes(v)) append(v, false);

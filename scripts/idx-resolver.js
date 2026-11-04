@@ -234,11 +234,13 @@ async function resolveWithExtractor(source, options, extractor) {
   const failures = [];
   const inlineSeen = new Set();
   const inlineExtractor = typeof options.inlineExtractor === 'function' ? options.inlineExtractor : null;
+  let inlineTruncated = false;
   const addInlineChunks = (text, depth, sourceUrl) => {
     if (!inlineExtractor) return;
     for (const chunk of inlineExtractor(text)) {
       const key = chunk;
-      if (inlineSeen.has(key) || captures.length >= maxFiles) continue;
+      if (inlineSeen.has(key)) continue;
+      if (captures.length >= maxFiles) { inlineTruncated = true; continue; }
       inlineSeen.add(key);
       captures.push({
         name: namePrefix + (captures.length + 1) + '.' + extension,
@@ -297,7 +299,7 @@ async function resolveWithExtractor(source, options, extractor) {
     failures,
     discovered,
     visited: visited.size,
-    truncated: queue.length > 0 || discovered > visited.size,
+    truncated: inlineTruncated || queue.length > 0 || discovered > visited.size,
     attempts,
     maxFiles,
     maxDepth,

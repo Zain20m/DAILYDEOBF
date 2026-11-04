@@ -576,6 +576,7 @@ async function processLuraphV14(message, prompt, input, version) {
         '--engine', version,
         '--debug',
         '--strings',
+        '--trace-fallback',
         '--max-runs', '12',
         '--devirt-rounds', '200',
         '--timeout', '600',

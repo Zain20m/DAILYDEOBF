@@ -16,6 +16,7 @@ const path = require('node:path');
 const { inspectLiftText } = require('./scripts/lift-validation');
 const { convertToPureLuau } = require('./pureluau');
 const { resolveLoadstringSources, resolveStaticSources } = require('./scripts/idx-resolver');
+const { buildIdxBundle } = require('./scripts/idx-output');
 const { runLuauTask } = require('./scripts/roblox-execution');
 
 const TOKEN = process.env.DISCORD_TOKEN;
@@ -1305,8 +1306,8 @@ async function handleIdxFiles(message) {
 async function startIdxWorkflow(message, inlineSource = null) {
   const prompt = await message.reply({
     content: inlineSource
-      ? '⚙️ DAILY DEOBF · .idx\nFinding every statically recoverable loadstring source...'
-      : '📄 DAILY DEOBF · .idx\nAttach a script or send a direct URL. I will collect inline loadstrings and follow nested HTTP source links automatically.',
+      ? '⚙️ DAILY DEOBF · .idx\nScanning for recoverable loadstring sources...'
+      : '📄 DAILY DEOBF · .idx\nAttach a script or send a direct URL. Recovered sources will be packaged into one organized ZIP.',
     allowedMentions: { repliedUser: false },
   });
   const firstAttachment = message.attachments.first();
@@ -1346,115 +1347,78 @@ async function startIdxWorkflow(message, inlineSource = null) {
     );
   }
 
-  const outputFiles = [];
-  let totalBytes = 0;
+  // Reserve space for the ZIP directory, report and manifest so the final attachment
+  // stays under the bot's response limit even when the source files are incompressible.
+  const outputCaptures = [];
+  let sourceBytes = 0;
   const omittedNames = [];
+  const sourceByteLimit = MAX_OUTPUT_BYTES - (256 * 1024);
   for (const capture of resolution.captures) {
-    const data = Buffer.from(capture.source, 'utf8');
-    if (totalBytes + data.length > MAX_OUTPUT_BYTES - (32 * 1024)) {
+    const bytes = Buffer.byteLength(capture.source, 'utf8');
+    if (sourceBytes + bytes > sourceByteLimit) {
       omittedNames.push(capture.name);
       continue;
     }
-    outputFiles.push({ data, name: capture.name });
-    totalBytes += data.length;
+    outputCaptures.push(capture);
+    sourceBytes += bytes;
   }
 
-  const reportLines = [
-    'DAILY DEOBF · .idx complete loadstring collection report',
-    'Input: ' + String(input.filename || 'inline-loadstring.lua'),
-    'Static URLs discovered: ' + resolution.discovered,
-    'HTTP fetch attempts: ' + resolution.attempts,
-    'Loadstring/source chunks recovered: ' + resolution.captures.length,
-    'Inline literal loadstrings recovered: ' + resolution.captures.filter((capture) => capture.inline).length,
-    'Remote source files recovered: ' + resolution.captures.filter((capture) => !capture.inline).length,
-    'Fetch failures: ' + resolution.failures.length,
-    'Safety cap reached: ' + (resolution.truncated ? 'yes' : 'no'),
-    'Maximum recovered chunks / URL fetches: ' + resolution.maxFiles,
-    'Maximum nested depth: ' + resolution.maxDepth,
+  const bundleDetails = {
+    input: {
+      filename: input.filename || 'inline-loadstring.lua',
+      bytes: Buffer.byteLength(input.source, 'utf8'),
+      url: input.url || null,
+    },
+    resolution,
+    omittedNames,
+  };
+  let bundle = buildIdxBundle(outputCaptures, bundleDetails);
+
+  // Compression can expand random-looking text slightly. Drop trailing files until
+  // the archive is guaranteed to fit, while recording every omitted filename.
+  while (bundle.buffer.length > MAX_OUTPUT_BYTES && outputCaptures.length) {
+    const removed = outputCaptures.pop();
+    omittedNames.push(removed.name);
+    bundle = buildIdxBundle(outputCaptures, { ...bundleDetails, omittedNames });
+  }
+
+  if (bundle.buffer.length > MAX_OUTPUT_BYTES) {
+    throw new Error('The IDX report bundle exceeded the output size limit. Please try a smaller input file.');
+  }
+
+  const remoteRecovered = bundle.remoteCount;
+  const summary = [
+    '✅ **.idx collection finished**',
     '',
-    'Recovered chunks:',
-    ...(resolution.captures.length
-      ? resolution.captures.map((capture) => {
-          let origin = 'inline input';
-          if (!capture.inline && capture.url) {
-            try { origin = new URL(capture.url).host; } catch { origin = 'remote URL'; }
-          }
-          return '- ' + capture.name + ' · ' + (capture.inline ? 'inline loadstring' : 'downloaded source') +
-            ' · depth ' + capture.depth + ' · ' + origin +
-            ' · ' + formatBytes(Buffer.byteLength(capture.source, 'utf8'));
-        })
-      : ['- None recovered.']),
+    '**Recovered:** ' + bundle.recovered + ' source(s)  ·  ' +
+      bundle.inlineCount + ' inline  ·  ' + remoteRecovered + ' downloaded',
+    '**URL scan:** ' + resolution.discovered + ' discovered  ·  ' +
+      resolution.attempts + ' attempted  ·  ' + resolution.failures.length + ' failed',
+    '**Nested depth:** ' + bundle.maxDepthFound + '  ·  **Source data:** ' + formatBytes(bundle.totalBytes),
     '',
-    'Fetch failures:',
-    ...(resolution.failures.length
-      ? resolution.failures.map((failure) => {
-          let host = 'URL';
-          try { host = new URL(failure.url).host; } catch {}
-          return '- ' + host + ': ' + failure.message;
-        })
-      : ['- None.']),
+    '📦 idx_bundle.zip contains every included loadstringN.txt separately, plus a readable report, manifest, SHA-256 hashes and file previews.',
+    '📄 idx_report.txt is attached separately for a quick overview. Extract the ZIP to access the source files.',
     ...(omittedNames.length
-      ? ['', 'Not attached because the combined 18 MB response limit was reached:', ...omittedNames.map((name) => '- ' + name)]
+      ? ['', '⚠️ ' + omittedNames.length + ' file(s) were left out to stay under the output size limit. Their names are listed in the report.']
+      : []),
+    ...(resolution.truncated
+      ? ['', '⚠️ The configured ' + resolution.maxFiles + '-source / ' + resolution.maxDepth + '-depth scan limit was reached.']
       : []),
     '',
-    'Discovery covers literal HTTP URLs, common Roblox HTTP APIs, request URL fields, and inline literal loadstring arguments.',
-    'No downloaded Luau was executed. Dynamic code, encrypted/computed URLs, and chunks created only at runtime require a runtime capture and are not claimed as recovered.',
-  ];
+    'Downloaded source is not executed. URL query strings are redacted in the report and manifest.',
+  ].join('\n');
 
-  const reportBuffer = Buffer.from(reportLines.join('\n'), 'utf8');
-  if (totalBytes + reportBuffer.length <= MAX_OUTPUT_BYTES) {
-    outputFiles.push({ data: reportBuffer, name: 'idx_report.txt' });
-  }
-
-  const batchSize = 9;
-  const batchByteLimit = 8 * 1024 * 1024;
-  const batches = [];
-  let currentBatch = [];
-  let currentBatchBytes = 0;
-  for (const file of outputFiles) {
-    if (
-      currentBatch.length &&
-      (currentBatch.length >= batchSize || currentBatchBytes + file.data.length > batchByteLimit)
-    ) {
-      batches.push(currentBatch);
-      currentBatch = [];
-      currentBatchBytes = 0;
-    }
-    currentBatch.push(file);
-    currentBatchBytes += file.data.length;
-  }
-  if (currentBatch.length) batches.push(currentBatch);
-  const totalBatches = batches.length;
-  const summary = '✅ **.idx collection finished.** Recovered ' +
-    resolution.captures.length + ' chunk(s) from ' + resolution.discovered +
-    ' static URL(s).' +
-    (resolution.failures.length ? ' ' + resolution.failures.length + ' URL(s) failed.' : '') +
-    (resolution.truncated ? ' The 50-source safety cap was reached.' : '') +
-    (omittedNames.length ? ' Some files exceeded the combined size limit; see the report.' : '');
-
-  if (!outputFiles.length) {
-    await message.reply({
-      content: summary + '\nNo files fit within the response size limit.',
-      allowedMentions: { repliedUser: false },
-    });
-  } else {
-    let sentFiles = 0;
-    for (let index = 0; index < batches.length; index++) {
-      const batch = batches[index];
-      const files = batch.map((file) => new AttachmentBuilder(file.data, { name: file.name }));
-      await message.reply({
-        content: summary + '\nBatch ' + (index + 1) + '/' + totalBatches +
-          ' · ' + batch.length + ' file(s)',
-        files,
-        allowedMentions: { repliedUser: false },
-      });
-      sentFiles += batch.length;
-    }
-  }
+  await message.reply({
+    content: summary,
+    files: [
+      new AttachmentBuilder(bundle.buffer, { name: 'idx_bundle.zip' }),
+      new AttachmentBuilder(bundle.reportBuffer, { name: 'idx_report.txt' }),
+    ],
+    allowedMentions: { repliedUser: false },
+  });
 
   await prompt.edit({
-    content: '✅ .idx finished. Recovered ' + resolution.captures.length +
-      ' loadstring/source chunk(s). ' + totalBatches + ' attachment batch(es) sent.',
+    content: '✅ .idx finished. Packaged ' + bundle.recovered + ' recovered source(s) into idx_bundle.zip.',
     components: [],
   }).catch(() => {});
 }
@@ -1911,9 +1875,9 @@ function helpText() {
     'DAILY DEOBF commands',
     '',
     '.deobf - upload a script or paste a direct URL, then choose a Luraph engine.',
-    '.idx <loadstring expression> - recover inline literal loadstrings plus nested HTTP-loaded chunks, return them all in batches (up to 50 fetches).',
-    '.idx - attach a script or paste a direct URL to collect statically recoverable loadstrings and nested remote sources.',
-    '.idx files - upload loadstringN.txt files and receive them back as attachments.',
+    '.idx <loadstring expression> - recover inline and nested sources into one ZIP with numbered files, a readable report, manifest, previews and SHA-256 hashes (up to 50 sources).',
+    '.idx - attach a script or paste a direct URL; results arrive as idx_bundle.zip plus idx_report.txt.',
+    '.idx files - re-send up to 10 extracted loadstringN.txt files as individual attachments.',
     '.get <URL or script/expression> - fetch remote scripts using HttpGet, GetAsync and request({Url=...}) patterns, following nested static links.',
     '.exec <Luau source> - execute Luau through Roblox Open Cloud in your configured test place (allowlist only).',
     '.help - show this command list.',

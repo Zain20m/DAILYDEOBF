@@ -1363,6 +1363,8 @@ async function startIdxWorkflow(message, inlineSource = null) {
     'Discovered static URLs: ' + resolution.discovered,
     'Fetched chunks: ' + resolution.captures.length,
     'Failed URLs: ' + resolution.failures.length,
+    'Fetch attempts: ' + resolution.attempts,
+    'Resolution truncated by safety limits: ' + (resolution.truncated ? 'yes' : 'no'),
     'Maximum chain depth: ' + resolution.maxDepth,
     'Maximum returned chunks: ' + resolution.maxFiles,
     '',

@@ -1,0 +1,44 @@
+name: Import Deobfuscator v15
+
+on:
+  push:
+    paths:
+      - "upload/DAILY-DEOBF-v15-engine-patched.zip"
+
+permissions:
+  contents: write
+
+jobs:
+  import-engine:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Extract engine files
+        shell: bash
+        run: |
+          ARCHIVE="upload/DAILY-DEOBF-v15-engine-patched.zip"
+          if [ ! -f "$ARCHIVE" ]; then
+            echo "Archive is not present; nothing to import."
+            exit 0
+          fi
+
+          rm -rf /tmp/deobf-v15-import
+          mkdir -p /tmp/deobf-v15-import
+          unzip -q "$ARCHIVE" -d /tmp/deobf-v15-import
+          test -d /tmp/deobf-v15-import/Deobfuscator
+
+          rm -rf Deobfuscator
+          cp -R /tmp/deobf-v15-import/Deobfuscator ./Deobfuscator
+          rm -f "$ARCHIVE"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A Deobfuscator upload
+          if git diff --cached --quiet; then
+            echo "No extracted changes to commit."
+            exit 0
+          fi
+          git commit -m "Import extracted Deobfuscator v15 engine"
+          git push

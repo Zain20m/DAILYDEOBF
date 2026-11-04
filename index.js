@@ -244,8 +244,8 @@ function runEngine(inputPath, outDir) {
         // Keep the actual parser error as well as the useful tail of the stack.
         // Previously only the last five lines were shown, hiding the syntax
         // error and its line/column information.
-        const detail = lines.length > 9
-          ? [...lines.slice(0, 3), '…', ...lines.slice(-6)].join('\n')
+        const detail = lines.length > 14
+          ? [...lines.slice(0, 9), '…', ...lines.slice(-5)].join('\n')
           : lines.join('\n');
         const parserHint = /luaparse|parseSubExpression|parseExpectedExpression/i.test(raw)
           ? '\n\nThe engine parser rejected this input. This commonly happens when a Luau-only construct reaches its Lua parser; the exact line/column above is needed to add a safe compatibility fix.'

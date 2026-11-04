@@ -40,6 +40,10 @@ assert.ok(broken.metrics.nilIndexes > 0);
 assert.ok(broken.metrics.nilArithmetic > 0);
 assert.ok(broken.metrics.nilBit32Calls > 0);
 assert.ok(broken.metrics.unresolvedRuntimeCalls > 0);
+assert.ok(broken.details.some((line) => line.startsWith('devirt stub line ')));
+assert.ok(broken.details.some((line) => line.startsWith('nil bit32 input line ')));
+assert.ok(broken.details.some((line) => line.startsWith('runtime placeholder line ')));
+assert.equal(literalNoise.details.length, 0);
 
 const inertStub = inspectLiftText([
   'local function luraph_runtime1(...)',

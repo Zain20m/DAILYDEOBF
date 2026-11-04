@@ -12,6 +12,7 @@ const net = require('node:net');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const { inspectLiftText } = require('./scripts/lift-validation');
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const PREFIX = '.deobf';
@@ -411,6 +412,57 @@ function runPythonEngine(engineDir, engineCli, inputPath, outputPath, timeoutMs,
   return runCommand(python, [engineCli, inputPath, '-o', outputPath, ...extraArgs], engineDir, timeoutMs, options);
 }
 
+
+async function inspectLiftFile(filePath, engineDir) {
+  let content = '';
+  try {
+    content = await fs.readFile(filePath, 'utf8');
+  } catch {
+    return {
+      candidate: false,
+      complete: false,
+      issues: ['The VM lifter did not produce a source candidate.'],
+      metrics: {},
+      score: -1,
+      bytes: 0,
+      syntaxChecked: false,
+      syntaxValid: false,
+    };
+  }
+
+  const assessment = inspectLiftText(content);
+  assessment.bytes = Buffer.byteLength(content, 'utf8');
+  assessment.syntaxChecked = false;
+  assessment.syntaxValid = null;
+
+  if (assessment.complete) {
+    const parser = path.join(engineDir, 'bin', 'luau-ast');
+    try {
+      await runCommand(parser, [filePath], engineDir, 120_000);
+      assessment.syntaxChecked = true;
+      assessment.syntaxValid = true;
+      assessment.score += 10_000;
+    } catch (error) {
+      assessment.syntaxChecked = true;
+      assessment.syntaxValid = false;
+      assessment.complete = false;
+      assessment.score -= 50_000;
+      assessment.issues.push(
+        'Luau AST syntax validation failed: ' + String(error.message || error).slice(0, 260)
+      );
+    }
+  }
+
+  return assessment;
+}
+
+function validationIssueText(assessment) {
+  if (!assessment || assessment.complete) return 'No structural or syntax issues were detected.';
+  return assessment.issues.length
+    ? assessment.issues.map((issue) => '- ' + issue).join('\n')
+    : '- No complete source candidate was produced.';
+}
+
 async function sendAnalysisOutput(message, input, config) {
   const base = config.base;
   const outputDir = config.outputDir;
@@ -430,20 +482,16 @@ async function sendAnalysisOutput(message, input, config) {
   }
 
   const liftedBytes = await fileSize(liftedPath);
-  let liftedContent = '';
-  if (liftedBytes > 0) {
-    try {
-      liftedContent = await fs.readFile(liftedPath, 'utf8');
-    } catch {}
-  }
-  const meaningfulLiftLines = liftedContent.split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith('--'));
-  const hasLiftedSource = meaningfulLiftLines.length > 0;
+  const validation = await inspectLiftFile(
+    liftedPath,
+    config.engineDir || ENGINE_V15_DIR
+  );
+  const hasLiftCandidate = validation.candidate && liftedBytes > 0;
+  const hasLiftedSource = validation.complete && hasLiftCandidate;
   const preservedTraceBytes = await fileSize(preservedTracePath);
   const preferredTracePath = preservedTraceBytes > 0
     ? preservedTracePath
-    : (hasLiftedSource ? null : defaultTracePath);
+    : (!hasLiftedSource ? defaultTracePath : null);
   const traceBytes = preferredTracePath ? await fileSize(preferredTracePath) : 0;
   const protoBytes = await fileSize(protoPath);
   const stringBytes = await fileSize(stringsPath);
@@ -475,13 +523,17 @@ async function sendAnalysisOutput(message, input, config) {
   const unliftedBlocks = liftStats ? Number(liftStats[2].replaceAll(',', '')) : null;
   const unstructuredJumps = liftStats ? Number(liftStats[3].replaceAll(',', '')) : null;
 
-  const resultLabel = hasLiftedSource ? 'FULL VM LIFT GENERATED' : 'BEHAVIOUR TRACE ONLY · VM LIFT NOT COMPLETED';
+  const resultLabel = hasLiftedSource
+    ? 'FULL VM LIFT VERIFIED'
+    : (hasLiftCandidate ? 'PARTIAL VM LIFT · VALIDATION FAILED' : 'BEHAVIOUR TRACE ONLY · VM LIFT NOT COMPLETED');
+
   const reportLines = [
     'DAILY DEOBF · ' + config.label + ' analysis report',
     'Result: ' + resultLabel,
     'Input: ' + String(input.filename || 'script.lua'),
     'Input size: ' + formatBytes(Buffer.byteLength(input.source, 'utf8')),
     'Elapsed: ' + formatDuration(config.elapsedMs || 0),
+    'Engine: ' + String(config.engineName || 'Luraph analysis engine'),
     'Analysis mode: full VM capture with debug artifacts retained',
     'Maximum VM execution passes: ' + config.maxRuns,
     'Maximum devirtualization rounds: ' + config.devirtRounds,
@@ -492,13 +544,20 @@ async function sendAnalysisOutput(message, input, config) {
     'Captured prototypes: ' + (prototypeCount || (protoBytes ? 'present, count unavailable' : 'not captured')),
     'Dynamic VM chunks: ' + chunkFiles.length,
     'String dump: ' + (stringBytes ? formatBytes(stringBytes) : 'not produced'),
-    'Lifted source: ' + (hasLiftedSource ? formatBytes(liftedBytes) : 'not produced'),
+    'Source candidate: ' + (hasLiftCandidate ? formatBytes(liftedBytes) : 'not produced'),
+    'Lift validation: ' + (hasLiftedSource ? 'passed' : 'failed'),
+    'Luau syntax check: ' + (validation.syntaxChecked ? (validation.syntaxValid ? 'passed' : 'failed') : 'not run because structural checks failed'),
     'Behaviour trace: ' + (traceBytes ? formatBytes(traceBytes) : 'not produced'),
+    '',
+    'Validation diagnostics:',
+    ...validationIssueText(validation).split('\n'),
     '',
     'Important:',
     hasLiftedSource
-      ? 'The lifted Luau file is the reconstructed source. The behaviour trace and proto map are supporting analysis artifacts.'
-      : 'The attached trace records observed runtime behaviour. It is not the original source or a complete devirtualization.',
+      ? 'The Luau source candidate passed structural checks and the Luau AST syntax parser. This verifies output integrity, not perfect equivalence to the original source.'
+      : (hasLiftCandidate
+        ? 'The source candidate is incomplete and is attached only for inspection. Do not treat it as recovered source. The separate behaviour trace records observed runtime behaviour.'
+        : 'The attached trace records observed runtime behaviour. It is not the original source or a complete devirtualization.'),
     '',
     'Engine diagnostics:',
     ...(notableLogs.length ? notableLogs : ['No additional engine warnings were reported.']),
@@ -519,10 +578,10 @@ async function sendAnalysisOutput(message, input, config) {
 
   if (hasLiftedSource) {
     await addArtifact(liftedPath, 'deobfuscated.luau');
-    if (traceBytes) await addArtifact(preferredTracePath, 'analysis_trace.luau');
-  } else if (traceBytes) {
-    await addArtifact(preferredTracePath, 'analysis_trace.luau');
+  } else if (hasLiftCandidate) {
+    await addArtifact(liftedPath, 'partial_vm_lift_candidate.luau');
   }
+  if (traceBytes) await addArtifact(preferredTracePath, 'analysis_trace.luau');
   if (protoBytes) await addArtifact(protoPath, 'captured_prototypes.json');
   if (stringBytes) await addArtifact(stringsPath, 'extracted_strings.txt');
   for (const chunkName of chunkFiles.slice(0, 3)) {
@@ -533,22 +592,29 @@ async function sendAnalysisOutput(message, input, config) {
   if (!attachments.length) throw new Error('The engine finished without producing an attachable result or analysis report.');
 
   const safeName = String(input.filename || 'script.lua').replaceAll(String.fromCharCode(96), '');
-  const summary = hasLiftedSource
-    ? '**DAILY DEOBF · ' + config.label + '**\n✅ Full VM lift generated.\nProcessed: ' + safeName +
+  let summary;
+  if (hasLiftedSource) {
+    summary = '**DAILY DEOBF · ' + config.label + '**\n✅ Luau candidate passed structural checks and syntax validation.\nProcessed: ' + safeName +
       '\nFunctions lifted: ' + (liftedFunctions === null ? 'see report' : liftedFunctions) +
       ' · Unlifted blocks: ' + (unliftedBlocks === null ? 'see report' : unliftedBlocks) +
       '\nCaptured prototypes: ' + (prototypeCount || 'see report') + ' · Dynamic VM chunks: ' + chunkFiles.length +
-      '\nAttached: reconstructed Luau, trace, and available analysis artifacts.'
-    : '**DAILY DEOBF · ' + config.label + '**\n⚠️ Trace-only result. The full VM lift did not complete.\nProcessed: ' + safeName +
+      '\nAttached: reconstructed Luau and supporting analysis artifacts.';
+  } else if (hasLiftCandidate) {
+    summary = '**DAILY DEOBF · ' + config.label + '**\n⚠️ Partial VM lift only. Validation found unresolved VM output, so it is not labelled as recovered source.\nProcessed: ' + safeName +
+      '\nAttached: partial candidate, behaviour trace and analysis report.';
+  } else {
+    summary = '**DAILY DEOBF · ' + config.label + '**\n⚠️ Trace-only result. The full VM lift did not complete.\nProcessed: ' + safeName +
       '\nThe trace is labelled separately so it is not mistaken for reconstructed source. See the attached report and prototype data for diagnostics.';
+  }
 
   await message.reply({
     content: summary,
     files: attachments,
     allowedMentions: { repliedUser: false },
   });
-  return { hasLiftedSource, prototypeCount, chunks: chunkFiles.length };
+  return { hasLiftedSource, hasLiftCandidate, prototypeCount, chunks: chunkFiles.length, validation };
 }
+
 
 
 async function processLuraphV14(message, prompt, input, version) {
@@ -671,7 +737,7 @@ async function processLuraphV15(message, prompt, input) {
 
     await progress.setPhase('Packaging v15 analysis artifacts', 'Collecting reconstructed Luau, the trace, strings and VM metadata.');
     const summary = await sendAnalysisOutput(message, input, {
-      label: 'Luraph v15', base, outputDir,
+      label: 'Luraph v15', engineName: 'Luraph v15 Python engine', engineDir: ENGINE_V15_DIR, base, outputDir,
       elapsedMs: Date.now() - startedAt, stderr: result.stderr,
       maxRuns: 16, devirtRounds: 200, loaderAnalysis: true,
     });
@@ -690,25 +756,15 @@ async function processLuraphV15(message, prompt, input) {
 
 async function processLuraph151(message, prompt, input) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-151-'));
-  const primaryRoot = path.join(tempRoot, 'v15-compatible');
-  const fallbackRoot = path.join(tempRoot, 'beta-fallback');
 
-  async function prepare(root) {
+  async function prepare(name) {
+    const root = path.join(tempRoot, name);
     const inputPath = path.join(root, 'input.lua');
     const outputDir = path.join(root, 'output');
     const outputPath = path.join(outputDir, 'deobfuscated.luau');
     await fs.mkdir(outputDir, { recursive: true });
     await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
-    return { inputPath, outputDir, outputPath, base: path.join(outputDir, 'deobfuscated') };
-  }
-
-  async function hasLift(base) {
-    try {
-      const text = await fs.readFile(base + '.devirt.luau', 'utf8');
-      return text.split('\n').some((line) => line.trim() && !line.trim().startsWith('--'));
-    } catch {
-      return false;
-    }
+    return { root, inputPath, outputDir, outputPath, base: path.join(outputDir, 'deobfuscated') };
   }
 
   async function hasArtifacts(base) {
@@ -720,52 +776,49 @@ async function processLuraph151(message, prompt, input) {
     return false;
   }
 
-  async function artifactScore(base) {
-    let score = 0;
-    for (const suffix of ['.protos.json', '.strings.txt', '.trace.luau', '.luau', '.devirt.luau']) {
-      try { score += (await fs.stat(base + suffix)).size; } catch {}
-    }
-    return score;
-  }
-
-  const primary = await prepare(primaryRoot);
+  const dedicated = await prepare('dedicated-15.1');
+  const compatible = await prepare('v15-compatibility');
   const inputBytes = Buffer.byteLength(input.source, 'utf8');
   const progress = createAnalysisProgress(prompt, input.filename, inputBytes, 'Luraph 15.1');
   const startedAt = Date.now();
-  let primaryError = null;
-  let chosen = primary;
   let combinedLogs = '';
+  let dedicatedError = null;
+  let compatibilityError = null;
+  let chosen = dedicated;
+  let chosenEngineDir = ENGINE_151_DIR;
+  let dedicatedValidation = null;
+  let compatibilityValidation = null;
 
   try {
     await progress.setPhase(
-      'Preparing the v15-compatible beta pipeline',
-      'Running the full VM-lifting pass with extended tracing, constants and reconstruction rounds.'
+      'Running the dedicated 15.1 engine',
+      'The 15.1 engine gets the first full reconstruction pass. Its output is checked for unresolved VM values and Luau syntax.'
     );
 
     try {
-      const result = await runPythonEngine(
-        ENGINE_V15_DIR,
-        ENGINE_V15_CLI,
-        primary.inputPath,
-        primary.outputPath,
+      const result = await runEngine(
+        ENGINE_151_DIR,
+        ENGINE_151_CLI,
+        dedicated.inputPath,
+        dedicated.outputPath,
         ENGINE_TIMEOUT_MS,
+        false,
         [
-          '--obfuscator', 'luraph_v15',
+          '--plugin', 'luraph_v15',
           '--debug',
           '--strings',
           '--max-runs', '16',
           '--devirt-rounds', '200',
           '--budget', '60',
           '--timeout', '180',
-          '--no-pypy',
         ],
         {
           env: {
-            DEVIRT_FULL_ROUNDS: '1',
             DEVIRT_LOADERS: '1',
             DEVIRT_TIMING: '1',
             DEVIRT_ERRS: '1',
             DEVIRT_TB: '1',
+            DEVIRT_FULL_ROUNDS: '1',
             DEVIRT_WALK_LIMIT: '750000',
           },
           onProgress: progress.onLine,
@@ -773,43 +826,45 @@ async function processLuraph151(message, prompt, input) {
       );
       combinedLogs += result.stderr || '';
     } catch (error) {
-      primaryError = error;
-      combinedLogs += '\n[!] v15-compatible pass: ' + String(error.message || error) + '\n';
+      dedicatedError = error;
+      combinedLogs += '\n[!] dedicated 15.1 engine: ' + String(error.message || error) + '\n';
     }
 
-    // A trace or prototype dump is useful output. Do not spend another full
-    // engine pass merely because the source lift is incomplete.
-    if (!(await hasLift(primary.base))) {
+    dedicatedValidation = await inspectLiftFile(
+      dedicated.base + '.devirt.luau',
+      ENGINE_151_DIR
+    );
+
+    if (!dedicatedValidation.complete) {
       await progress.setPhase(
-        'Trying the 15.1 beta fallback',
-        'The primary engine did not produce a source lift, so the separate beta runner is getting a full reconstruction pass too.'
+        'Running the v15 compatibility pass',
+        'The dedicated 15.1 output did not pass validation. Running the independent v15 compatibility engine and comparing both candidates.'
       );
 
-      const fallback = await prepare(fallbackRoot);
       try {
-        const result = await runEngine(
-          ENGINE_151_DIR,
-          ENGINE_151_CLI,
-          fallback.inputPath,
-          fallback.outputPath,
+        const result = await runPythonEngine(
+          ENGINE_V15_DIR,
+          ENGINE_V15_CLI,
+          compatible.inputPath,
+          compatible.outputPath,
           ENGINE_TIMEOUT_MS,
-          false,
           [
-            '--plugin', 'luraph_v15',
+            '--obfuscator', 'luraph_v15',
             '--debug',
             '--strings',
             '--max-runs', '16',
             '--devirt-rounds', '200',
             '--budget', '60',
             '--timeout', '180',
+            '--no-pypy',
           ],
           {
             env: {
+              DEVIRT_FULL_ROUNDS: '1',
               DEVIRT_LOADERS: '1',
               DEVIRT_TIMING: '1',
               DEVIRT_ERRS: '1',
               DEVIRT_TB: '1',
-              DEVIRT_FULL_ROUNDS: '1',
               DEVIRT_WALK_LIMIT: '750000',
             },
             onProgress: progress.onLine,
@@ -817,27 +872,42 @@ async function processLuraph151(message, prompt, input) {
         );
         combinedLogs += result.stderr || '';
       } catch (error) {
-        combinedLogs += '\n[!] beta compatibility pass: ' + String(error.message || error) + '\n';
+        compatibilityError = error;
+        combinedLogs += '\n[!] v15 compatibility pass: ' + String(error.message || error) + '\n';
       }
 
-      if (await hasLift(fallback.base)) {
-        chosen = fallback;
-      } else if (await artifactScore(fallback.base) > await artifactScore(primary.base)) {
-        chosen = fallback;
+      compatibilityValidation = await inspectLiftFile(
+        compatible.base + '.devirt.luau',
+        ENGINE_V15_DIR
+      );
+
+      const dedicatedScore = dedicatedValidation.score ?? -1;
+      const compatibilityScore = compatibilityValidation.score ?? -1;
+      if (compatibilityScore > dedicatedScore || (!dedicatedValidation.candidate && compatibilityValidation.candidate)) {
+        chosen = compatible;
+        chosenEngineDir = ENGINE_V15_DIR;
       }
     }
 
-    if (primaryError && chosen === primary && !(await hasArtifacts(primary.base))) {
-      throw primaryError;
+    if (!(await hasArtifacts(chosen.base))) {
+      const errors = [
+        dedicatedError && ('Dedicated 15.1: ' + String(dedicatedError.message || dedicatedError)),
+        compatibilityError && ('v15 compatibility: ' + String(compatibilityError.message || compatibilityError)),
+      ].filter(Boolean);
+      throw new Error(errors.join('\n') || 'Neither 15.1 analysis engine produced any diagnostic artifacts.');
     }
 
     await progress.setPhase(
-      'Checking reconstructed Luau and VM artifacts',
-      'Separating lifted source from traces, captured prototypes and extracted strings.'
+      'Validating and packaging the best candidate',
+      'Comparing structural errors, placeholder functions, unresolved nil values and Luau AST validity.'
     );
 
     const summary = await sendAnalysisOutput(message, input, {
-      label: 'Luraph 15.1 · v15-compatible beta analysis',
+      label: chosen === dedicated
+        ? 'Luraph 15.1 · dedicated engine'
+        : 'Luraph 15.1 · v15 compatibility engine',
+      engineName: chosen === dedicated ? 'Dedicated 15.1 engine' : 'v15 compatibility engine',
+      engineDir: chosenEngineDir,
       base: chosen.base,
       outputDir: chosen.outputDir,
       elapsedMs: Date.now() - startedAt,
@@ -848,13 +918,17 @@ async function processLuraph151(message, prompt, input) {
     });
 
     await progress.complete(summary.hasLiftedSource
-      ? 'Reconstructed Luau generated. Supporting VM artifacts are attached separately.'
-      : 'Analysis finished without a complete source lift. Available trace and VM artifacts are labelled separately.');
+      ? 'A Luau candidate passed structural checks and syntax validation.'
+      : (summary.hasLiftCandidate
+        ? 'Both engines were checked. The best source candidate remains partial and is labelled as such.'
+        : 'Neither engine completed the VM lift. Trace and diagnostic artifacts are attached.'));
 
     await prompt.edit({
       content: summary.hasLiftedSource
-        ? '✅ Luraph 15.1 analysis finished. Reconstructed Luau and supporting VM artifacts are attached.'
-        : '⚠️ Luraph 15.1 analysis finished without a full VM lift. Check the separately labelled trace and analysis report.',
+        ? '✅ Luraph 15.1 finished. The best Luau candidate passed validation.'
+        : (summary.hasLiftCandidate
+          ? '⚠️ Luraph 15.1 finished with a partial VM lift. It is not marked as recovered source.'
+          : '⚠️ Luraph 15.1 finished without a full VM lift. Check the trace and analysis report.'),
       components: [],
     });
   } catch (error) {
@@ -865,6 +939,8 @@ async function processLuraph151(message, prompt, input) {
     await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
   }
 }
+
+
 
 async function startWorkflow(message) {
   const prompt = await message.reply({

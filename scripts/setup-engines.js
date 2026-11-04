@@ -35,6 +35,16 @@ const engines = [
       'datatypes.luau',
       'backend.py',
       'ir.py',
+      'luasym.py',
+      'localfuncs.py',
+      'idioms.py',
+      'names.py',
+      'spacing.py',
+      'lexer.py',
+      'luauast.py',
+      'gen_roblox.py',
+      'gen_unicode.py',
+      'build_luau.py',
       'codegen.py',
       'structure.py',
       'variables.py',
@@ -45,10 +55,16 @@ const engines = [
       'obfuscators/base.py',
       'obfuscators/luraph_v14_7/__init__.py',
       'obfuscators/luraph_v14_7/driver.py',
+      'obfuscators/luraph_v14_7/devirt.py',
+      'obfuscators/luraph_v14_7/vmmap.py',
       'obfuscators/luraph_v14_8/__init__.py',
       'obfuscators/luraph_v14_8/driver.py',
+      'obfuscators/luraph_v14_8/devirt.py',
+      'obfuscators/luraph_v14_8/vmmap.py',
       'obfuscators/luraph_v14_9/__init__.py',
       'obfuscators/luraph_v14_9/driver.py',
+      'obfuscators/luraph_v14_9/devirt.py',
+      'obfuscators/luraph_v14_9/vmmap.py',
       'bin/luau',
       'bin/luau-ast',
     ],
@@ -121,4 +137,4 @@ for (const engine of engines) {
   }
 }
 
-console.log('Validated independent Luraph v15 and Luraph 15.1 engines.');
+console.log('Validated separate Luraph v14.7/v14.8/v14.9, v15 and 15.1 engines.');

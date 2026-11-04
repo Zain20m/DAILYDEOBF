@@ -1,15 +1,15 @@
 # DAILY DEOBF
 
-Discord bot for analyzing Luau scripts protected by Luraph v15.
+Discord bot for analyzing Luau scripts with two independent Luraph engines.
 
-- Prefix command: .deobf
-- Inputs: .lua, .luau, .txt, or a direct HTTP/HTTPS script URL
-- Output: reconstructed deobfuscated.luau
+- Prefix command: `.deobf`
+- Inputs: `.lua`, `.luau`, `.txt`, or a direct HTTP/HTTPS script URL
+- Engine choices: **Luraph v15** (new engine) and **Luraph 15.1** (legacy engine)
+- Each engine has a separate runner, directory, timeout, and output format
 - Input limit: 2 MB
-- Processing limit: 15 minutes
 
-The bot uses the newest bundled Luraph v15 engine in luraph-v15-engine/. It includes a sandboxed Luau runtime and Python analysis backend. Some protected scripts may still contain paths the engine cannot reconstruct; the engine reports those rather than guaranteeing perfect recovery.
+The Luraph 15.1 bundle is restored from the preserved files in `vendor/` at startup. The newer v15 engine remains in `luraph-v15-engine/`.
 
 ## Railway
 
-Deploy this repository from the main branch, set DISCORD_TOKEN, and use npm start. The runtime requires Node.js 20.11+ and Python 3.10+.
+Set `DISCORD_TOKEN` and use `npm start`. The runtime requires Node.js 20.11+ and Python 3.10+.

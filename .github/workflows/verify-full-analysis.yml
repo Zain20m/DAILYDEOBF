@@ -6,6 +6,8 @@ on:
       - "index.js"
       - "package.json"
       - "scripts/idx-resolver.js"
+      - "scripts/test-idx-output.js"
+      - "scripts/idx-output.js"
       - "scripts/test-idx-resolver.js"
       - "scripts/roblox-execution.js"
       - "scripts/test-roblox-execution.js"

@@ -744,7 +744,14 @@ async function processLuraphV15(message, prompt, input) {
     await progress.complete(summary.hasLiftedSource
       ? 'A reconstructed Luau file and supporting analysis artifacts were attached.'
       : 'The trace and diagnostic artifacts were attached; the engine did not finish a full lift.');
-    await prompt.edit({ content: '✅ Luraph v15 analysis finished. Check the attached result and analysis report.', components: [] });
+    await prompt.edit({
+      content: summary.hasLiftedSource
+        ? '✅ Luraph v15 analysis finished. The Luau candidate passed validation.'
+        : (summary.hasLiftCandidate
+          ? '⚠️ Luraph v15 analysis finished with a partial VM lift. It is not marked as recovered source.'
+          : '⚠️ Luraph v15 analysis finished without a full VM lift. Check the trace and analysis report.'),
+      components: [],
+    });
   } catch (error) {
     await progress.fail(error);
     throw error;

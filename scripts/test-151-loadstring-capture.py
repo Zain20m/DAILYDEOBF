@@ -20,6 +20,7 @@ def make_dump():
     dump.lfs = {}
     dump.shared = {}
     dump.shared_meta = {}
+    dump.pid_of_table = {42: 7}
     return dump
 
 
@@ -33,6 +34,10 @@ def main():
 
     lifter = object.__new__(ProtoLifter)
     lifter.dump = dump
+    lifter.vm = SimpleNamespace(tag="test-vm")
+    lifter.proto = SimpleNamespace(tid=42)
+    lifter.current_ast = {"type": "AstExprCall", "location": "2:3"}
+    lifter.last_op = (1, 9)
     lifted = lifter.as_expr(fn)
     assert isinstance(lifted, Opaque)
     assert lifted.kind == "function"
@@ -48,6 +53,18 @@ def main():
     proto_expr = lifter.as_expr(proto_fn)
     assert isinstance(proto_expr, SharedFn)
     assert proto_expr.fn.pf_tid == 42
+    shared_meta = dump.shared_meta[1]
+    assert shared_meta["proto"] == 42
+    assert shared_meta["source_captured"] is True
+    assert shared_meta["use_sites"] == [{
+        "prototype_id": 7,
+        "prototype_table": 42,
+        "vm_tag": "test-vm",
+        "source_offset": "2:3",
+        "operation": "AstExprCall",
+        "opcode": None,
+        "dispatch_state": (1, 9),
+    }]
 
     # An open-upvalue box is a reference to a register, not a nil value.
     # If the capture cannot provide the referenced value, preserve an

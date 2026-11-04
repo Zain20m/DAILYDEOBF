@@ -1,0 +1,53 @@
+name: Inspect Luraph v15 upload
+
+on:
+  push:
+    paths:
+      - "upload/INSPECT_V15_TRIGGER.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-v15:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect Deobfuscator.zip without executing archive code
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, BadZipFile
+
+          archive = Path("upload/Deobfuscator.zip")
+          if not archive.is_file():
+              raise SystemExit(f"Missing {archive}")
+          try:
+              with ZipFile(archive) as z:
+                  bad = z.testzip()
+                  if bad:
+                      raise SystemExit(f"ZIP CRC check failed: {bad}")
+                  files = [x for x in z.infolist() if not x.is_dir()]
+                  print(f"ZIP_OK: {len(files)} files; {sum(x.file_size for x in files)} uncompressed bytes")
+                  for item in files:
+                      print(f"FILE {item.file_size:>10} {item.filename}")
+                  print("\n--- Project docs and manifests ---")
+                  count = 0
+                  for item in files:
+                      name = item.filename.replace("\\", "/").rsplit("/", 1)[-1].lower()
+                      if name.startswith("readme") or name in {
+                          "package.json", "requirements.txt", "pyproject.toml",
+                          "setup.py", "cmakelists.txt", "makefile"
+                      }:
+                          if item.file_size > 30000:
+                              continue
+                          body = z.read(item).decode("utf-8", "replace")
+                          print(f"\n### {item.filename}\n{body[:6000]}")
+                          count += 1
+                          if count >= 10:
+                              break
+          except BadZipFile as exc:
+              raise SystemExit(f"Invalid ZIP: {exc}")
+          PY

@@ -435,6 +435,25 @@ function runPythonEngine(engineDir, engineCli, inputPath, outputPath, timeoutMs,
 }
 
 
+async function cleanLuraph151Candidate(filePath) {
+  try {
+    const raw = await fs.readFile(filePath, 'utf8');
+    if (!raw.trim()) return { cleaned: false, reason: 'empty' };
+    const rawPath = filePath.replace(/\.luau$/i, '.raw.luau');
+    await fs.copyFile(filePath, rawPath);
+    const cleaner = path.join(__dirname, 'scripts', 'luau-cleaner.js');
+    await runCommand(process.execPath, [cleaner, rawPath, filePath], __dirname, 120_000);
+    const cleaned = await fs.readFile(filePath, 'utf8');
+    if (!cleaned.trim()) {
+      await fs.copyFile(rawPath, filePath);
+      return { cleaned: false, reason: 'empty cleaner output' };
+    }
+    return { cleaned: true, beforeBytes: Buffer.byteLength(raw), afterBytes: Buffer.byteLength(cleaned) };
+  } catch (error) {
+    return { cleaned: false, reason: String(error.message || error).slice(0, 180) };
+  }
+}
+
 async function inspectLiftFile(filePath, engineDir) {
   let content = '';
   try {
@@ -901,6 +920,8 @@ async function processLuraph151(message, prompt, input) {
       'The dedicated pass returned. Inspecting its actual output for unresolved VM values, placeholder functions and Luau syntax before deciding whether to run the compatibility engine.'
     );
 
+    await cleanLuraph151Candidate(dedicated.base + '.devirt.luau');
+
     dedicatedValidation = await inspectLiftFile(
       dedicated.base + '.devirt.luau',
       ENGINE_151_DIR
@@ -958,6 +979,8 @@ async function processLuraph151(message, prompt, input) {
         'Checking the v15 compatibility candidate',
         'The compatibility pass returned. Measuring its reconstruction quality and syntax independently from the dedicated 15.1 result.'
       );
+
+      await cleanLuraph151Candidate(compatible.base + '.devirt.luau');
 
       compatibilityValidation = await inspectLiftFile(
         compatible.base + '.devirt.luau',

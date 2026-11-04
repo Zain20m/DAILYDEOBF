@@ -587,7 +587,7 @@ async function sendAnalysisOutput(message, input, config) {
   const otherEngineLog = String(config.otherEngineStderr || '');
   const isNotableEngineLog = (line) =>
     line.startsWith('[!]') ||
-    /^\\[(?:fn-bind-summary|fn-stub-summary|register-summary|regfile|sp|sp-value|walk|walk-failed|proto-edges)\\]/.test(line) ||
+    /^\[(?:fn-bind-summary|fn-stub-summary|register-summary|regfile|sp|sp-value|walk|walk-failed|proto-edges)\]/.test(line) ||
     /devirt round|devirtualizing \(round|loadstring.d .*VM chunk|anti-tamper/i.test(line);
   const notableLogs = engineLog.split('\n')
     .map((line) => line.trim())

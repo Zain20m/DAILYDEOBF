@@ -11,6 +11,15 @@ const clean = inspectLiftText([
 assert.equal(clean.complete, true);
 assert.deepEqual(clean.issues, []);
 
+const literalNoise = inspectLiftText([
+  'local message = "nil + 4 bit32.band(nil, 2) data[nil]"',
+  'local longMessage = [=[(nil)(3) nil + 8]=]',
+  '-- nil + 5 and bit32.band(nil, 255)',
+  'print(message, longMessage)',
+].join('\\n'));
+assert.equal(literalNoise.complete, true);
+assert.deepEqual(literalNoise.issues, []);
+
 const broken = inspectLiftText([
   'local function luraph_runtime1(...)',
   '  error("Luraph runtime function, not devirtualized")',

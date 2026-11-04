@@ -27,7 +27,11 @@ jobs:
           test -f "$SRC/obfuscators/luraph_v14_9/driver.py"
           rm -rf "$DEST"
           mkdir -p "$DEST/obfuscators"
-          find "$SRC" -maxdepth 1 -type f \\( -name '*.py' -o -name '*.luau' \\) ! -name 'deob.py' -exec cp {} "$DEST/" \\;
+          for file in "$SRC"/*.py "$SRC"/*.luau; do
+            [ -f "$file" ] || continue
+            [ "$(basename "$file")" = "deob.py" ] && continue
+            cp "$file" "$DEST/"
+          done
           cp "$SRC/obfuscators/base.py" "$DEST/obfuscators/base.py"
           for version in 7 8 9; do
             cp -a "$SRC/obfuscators/luraph_v14_$version" "$DEST/obfuscators/"
@@ -42,7 +46,8 @@ jobs:
             fi
           done
           find "$DEST" -type d -name __pycache__ -prune -exec rm -rf {} +
-          find "$DEST" -type f \( -name '*.pyc' -o -name '*.pyo' -o -name '*.exe' \) -delete
+          find "$DEST" -type f -name '*.pyc' -delete
+          find "$DEST" -type f -name '*.pyo' -delete
           echo "Imported v14.7, v14.8 and v14.9 only."
       - name: Commit imported engines
         shell: bash

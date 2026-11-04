@@ -59,6 +59,34 @@ function maskLuaSource(source, maskStrings = true) {
   return out.join('');
 }
 
+function collectDetails(source, code, maxPerKind = 4) {
+  const lines = String(source || '').split(/\\r?\\n/);
+  const details = [];
+  const add = (label, match, start = match.index, end = start + match[0].length) => {
+    if (details.filter((item) => item.startsWith(label + ' ')).length >= maxPerKind) return;
+    const line = source.slice(0, start).split('\\n').length;
+    const rawLine = lines[line - 1] || '';
+    const from = Math.max(0, start - (rawLine.length > 220 ? 80 : 0));
+    const to = Math.min(source.length, Math.max(end, start + 120));
+    const snippet = source.slice(from, to).replace(/\\s+/g, ' ').trim().slice(0, 200);
+    details.push(label + ' line ' + line + ': ' + snippet);
+  };
+
+  const patterns = [
+    ['devirt stub', /\\berror\\s*\\(\\s*["']devirt:[^"'\\r\\n]*["']/gi],
+    ['nil call target', /\\(\\s*nil\\s*\\)\\s*\\(/g],
+    ['nil table index', /\\[\\s*nil\\s*\\]/g],
+    ['nil arithmetic', /\\bnil\\s*(?:\\+|-|\\*|\\/|\\/\\/|%)|(?:\\+|-|\\*|\\/|\\/\\/|%)\\s*nil\\b/g],
+    ['nil bit32 input', /\\bbit32\\.\\w+\\s*\\(\\s*nil\\s*(?:,|\\))/gi],
+    ['nil comparison', /\\bnil\\s*(?:==|~=|<=|>=|<|>)\\s*-?\\d|\\d\\s*(?:==|~=|<=|>=|<|>)\\s*nil\\b/g],
+    ['runtime placeholder', /\\blocal\\s+function\\s+(luraph_runtime\\d+)\\s*\\(/g],
+  ];
+  for (const [label, pattern] of patterns) {
+    for (const match of code.matchAll(pattern)) add(label, match);
+  }
+  return details;
+}
+
 function inspectLiftText(source) {
   const text = String(source || '');
   const code = maskLuaSource(text, true);
@@ -118,7 +146,8 @@ function inspectLiftText(source) {
     ? 100000 - penalty + Math.min(10000, Math.floor(Buffer.byteLength(text, 'utf8') / 100))
     : -1;
 
-  return { candidate: metrics.nonCommentLines > 0, complete, issues, metrics, score };
+  const details = collectDetails(text, code);
+  return { candidate: metrics.nonCommentLines > 0, complete, issues, metrics, score, details };
 }
 
 module.exports = { inspectLiftText };

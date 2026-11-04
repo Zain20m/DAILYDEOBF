@@ -12,7 +12,7 @@ sys.path.insert(0, str(CORE))
 from ir import Opaque
 from obfuscators.luraph_v15.devirt import Dump, OpaqueFn, ProtoLifter, SharedFn, Stepper
 from obfuscators.luraph_v15.vmmap import ctor_assignments
-from luasym import RegFile
+from luasym import RegFile, Scope
 
 
 def make_dump():
@@ -194,6 +194,7 @@ def main():
         cs=SimpleNamespace(vars={registers: None}),
         vm=SimpleNamespace(inner_body=[initializer]),
         first_inner=1,
+        first_init=[],
         loops=[(0, None, {
             "type": "AstStatWhile",
             "body": {"body": [dispatch_call, dispatch_store]},
@@ -201,6 +202,27 @@ def main():
     )
     Stepper._detect_regfile(fake_stepper)
     assert isinstance(fake_stepper.cs.vars[registers], RegFile)
+
+    # Some dispatch loops are nested inside an if-body. Their register
+    # allocator runs from first_init, in the loop's inner scope rather than
+    # the function's initial cs scope. Detection must promote that local and
+    # restore the marker after first_init has been evaluated.
+    first_init_stepper = SimpleNamespace(
+        cs=SimpleNamespace(vars={}),
+        vm=SimpleNamespace(inner_body=[]),
+        first_inner=0,
+        first_init=[initializer],
+        loops=[(0, None, {
+            "type": "AstStatWhile",
+            "body": {"body": [dispatch_call, dispatch_store]},
+        })],
+    )
+    Stepper._detect_regfile(first_init_stepper)
+    assert first_init_stepper.first_init_regfiles == {registers}
+    first_init_scope = Scope()
+    first_init_scope.vars[registers] = None
+    Stepper._apply_first_init_regfiles(first_init_stepper, first_init_scope)
+    assert isinstance(first_init_scope.vars[registers], RegFile)
 
     # A nil local without a call initializer is not promoted just because it
     # happens to be indexed and written in a loop.
@@ -213,6 +235,7 @@ def main():
         cs=SimpleNamespace(vars={"not-registers@1": None}),
         vm=SimpleNamespace(inner_body=[non_allocator]),
         first_inner=1,
+        first_init=[],
         loops=[(0, None, {
             "type": "AstStatWhile",
             "body": {"body": [
@@ -252,6 +275,7 @@ def main():
         cs=SimpleNamespace(vars={"first@1": None, "second@1": None}),
         vm=SimpleNamespace(inner_body=ambiguous["body"]),
         first_inner=1,
+        first_init=[],
         loops=[(0, None, {
             "type": "AstStatWhile",
             "body": {"body": [

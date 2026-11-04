@@ -61,101 +61,103 @@ async function runLuauTask(options) {
   if (typeof fetchImpl !== 'function') {
     throw new Error('This Node.js runtime does not provide fetch().');
   }
-
-  const basePath = '/universes/' + universeId + '/places/' + placeId;
-  const createUrl = API_ROOT + basePath + '/luau-execution-session-tasks';
-
-  const createResponse = await fetchImpl(createUrl, {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'content-type': 'application/json',
-      accept: 'application/json',
-    },
-    body: JSON.stringify({ script, timeout: timeoutSeconds + 's' }),
-    signal: AbortSignal.timeout(20_000),
-  });
-  const created = await readJsonResponse(createResponse, 'Roblox task creation');
-
-  if (
-    typeof created.path !== 'string' ||
-    !/^universes\/\d+\/places\/\d+\/(?:versions\/\d+\/)?luau-execution-sessions\/[A-Za-z0-9-]+\/tasks\/[A-Za-z0-9-]+$/.test(created.path)
-  ) {
-    throw new Error('Roblox created a task but did not return a valid task path.');
-  }
-
   if (activeLocalTasks >= MAX_LOCAL_CONCURRENT_TASKS) {
     throw new Error('The local Roblox execution queue is full. Try again after another task finishes.');
   }
+
   activeLocalTasks++;
-
   try {
-  const taskUrl = API_ROOT + '/' + created.path;
-  const startedAt = Date.now();
-  const maxWaitMs = timeoutSeconds * 1000 + 45_000;
-  let task = created;
-  let polls = 0;
-
-  while (String(task.state || '').toUpperCase() === 'PROCESSING') {
-    if (Date.now() - startedAt > maxWaitMs) {
-      throw new Error('The Roblox task is still processing after the local wait limit. Task path: ' + created.path);
-    }
-
-    await sleep(2000);
-    polls++;
-
-    const pollResponse = await fetchImpl(taskUrl, {
-      method: 'GET',
+    const basePath = '/universes/' + universeId + '/places/' + placeId;
+    const createUrl = API_ROOT + basePath + '/luau-execution-session-tasks';
+    const createResponse = await fetchImpl(createUrl, {
+      method: 'POST',
       headers: {
         'x-api-key': apiKey,
+        'content-type': 'application/json',
         accept: 'application/json',
       },
+      body: JSON.stringify({ script, timeout: timeoutSeconds + 's' }),
       signal: AbortSignal.timeout(20_000),
     });
-    task = await readJsonResponse(pollResponse, 'Roblox task status');
+    const created = await readJsonResponse(createResponse, 'Roblox task creation');
 
-    if (typeof onStatus === 'function') {
-      onStatus({
-        state: String(task.state || 'UNKNOWN'),
-        polls,
-        elapsedMs: Date.now() - startedAt,
+    const expectedPrefix = 'universes/' + universeId + '/places/' + placeId + '/';
+    if (
+      typeof created.path !== 'string' ||
+      !created.path.startsWith(expectedPrefix) ||
+      !/^(?:versions\/\d+\/)?luau-execution-sessions\/[A-Za-z0-9-]+\/tasks\/[A-Za-z0-9-]+$/.test(
+        created.path.slice(expectedPrefix.length)
+      )
+    ) {
+      throw new Error('Roblox created a task but did not return a valid task path for the configured place.');
+    }
+
+    const taskUrl = API_ROOT + '/' + created.path;
+    const startedAt = Date.now();
+    const maxWaitMs = timeoutSeconds * 1000 + 45_000;
+    let task = created;
+    let polls = 0;
+
+    while (String(task.state || '').toUpperCase() === 'PROCESSING') {
+      if (Date.now() - startedAt > maxWaitMs) {
+        throw new Error('The Roblox task is still processing after the local wait limit. Task path: ' + created.path);
+      }
+
+      await sleep(2000);
+      polls++;
+
+      const pollResponse = await fetchImpl(taskUrl, {
+        method: 'GET',
+        headers: {
+          'x-api-key': apiKey,
+          accept: 'application/json',
+        },
+        signal: AbortSignal.timeout(20_000),
       });
-    }
-  }
+      task = await readJsonResponse(pollResponse, 'Roblox task status');
 
-  let logs = [];
-  try {
-    const logsResponse = await fetchImpl(taskUrl + '/logs', {
-      method: 'GET',
-      headers: {
-        'x-api-key': apiKey,
-        accept: 'application/json',
-      },
-      signal: AbortSignal.timeout(20_000),
-    });
-    const logPayload = await readJsonResponse(logsResponse, 'Roblox task logs');
-    const rows = Array.isArray(logPayload.luauExecutionSessionTaskLogs)
-      ? logPayload.luauExecutionSessionTaskLogs
-      : [];
-    logs = rows.flatMap((row) => Array.isArray(row.messages) ? row.messages : []);
-    if (!logs.length) {
-      logs = rows.flatMap((row) =>
-        Array.isArray(row.structuredMessages)
-          ? row.structuredMessages.map((entry) => entry.message).filter(Boolean)
-          : []
-      );
+      if (typeof onStatus === 'function') {
+        onStatus({
+          state: String(task.state || 'UNKNOWN'),
+          polls,
+          elapsedMs: Date.now() - startedAt,
+        });
+      }
     }
-  } catch (error) {
-    logs = ['[log retrieval] ' + String(error.message || error)];
-  }
 
-  return {
-    task,
-    logs,
-    taskPath: created.path,
-    polls,
-    elapsedMs: Date.now() - startedAt,
-  };
+    let logs = [];
+    try {
+      const logsResponse = await fetchImpl(taskUrl + '/logs', {
+        method: 'GET',
+        headers: {
+          'x-api-key': apiKey,
+          accept: 'application/json',
+        },
+        signal: AbortSignal.timeout(20_000),
+      });
+      const logPayload = await readJsonResponse(logsResponse, 'Roblox task logs');
+      const rows = Array.isArray(logPayload.luauExecutionSessionTaskLogs)
+        ? logPayload.luauExecutionSessionTaskLogs
+        : [];
+      logs = rows.flatMap((row) => Array.isArray(row.messages) ? row.messages : []);
+      if (!logs.length) {
+        logs = rows.flatMap((row) =>
+          Array.isArray(row.structuredMessages)
+            ? row.structuredMessages.map((entry) => entry.message).filter(Boolean)
+            : []
+        );
+      }
+    } catch (error) {
+      logs = ['[log retrieval] ' + String(error.message || error)];
+    }
+
+    return {
+      task,
+      logs,
+      taskPath: created.path,
+      polls,
+      elapsedMs: Date.now() - startedAt,
+    };
   } finally {
     activeLocalTasks--;
   }

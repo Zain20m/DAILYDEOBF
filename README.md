@@ -8,7 +8,7 @@ Discord bot that accepts Luau source as a `.lua`, `.luau`, or `.txt` upload, or 
 - Input: `.lua`, `.luau`, `.txt`, or a direct script URL
 - Deobfuscator picker button: **15.1**
 - Outputs: lifted listing, readable/renamed bootstrap, extraction report, and string list
-- 400 KB input limit, URL redirect validation, private-network URL blocking, temporary per-job directories, time limit, and a separate Node child process for analysis
+- 2 MB input limit, URL redirect validation, private-network URL blocking, temporary per-job directories, time limit, and a separate Node child process for analysis
 
 ## Run locally
 

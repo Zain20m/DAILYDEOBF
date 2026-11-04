@@ -9,6 +9,7 @@ on:
       - "scripts/test-idx-resolver.js"
       - "scripts/roblox-execution.js"
       - "scripts/test-roblox-execution.js"
+      - "docs/roblox-open-cloud-exec.md"
       - "pureluau.js"
       - "scripts/test-pureluau.js"
       - "scripts/deep-reconstruction-prompt.txt"

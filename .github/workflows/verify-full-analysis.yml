@@ -90,8 +90,8 @@ jobs:
           start = source.index("async function processLuraph151(")
           end = source.index("async function startWorkflow(", start)
           pipeline = source[start:end]
-          for required in ("runPythonEngine(", "runEngine(", "'--max-runs', '16'", "'--devirt-rounds', '200'", "'--budget', '60'"):
+          for required in ("runPythonEngine(", "runEngine(", "'--max-runs', '8'", "'--devirt-rounds', '60'", "'--budget', '25'", "DEVIRT_FULL_ROUNDS" ):
               if required not in pipeline:
                   raise SystemExit("15.1 full-analysis pipeline is missing: " + required)
-          print("15.1 FULL ANALYSIS ROUTING OK: v15 primary + beta fallback")
+          if "DEVIRT_FULL_ROUNDS" in pipeline:\n    raise SystemExit("Slow full-lift-every-round mode must remain disabled")\n          print("15.1 FULL ANALYSIS ROUTING OK: adaptive v15 primary + beta fallback")
           PY

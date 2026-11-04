@@ -6,6 +6,7 @@ on:
       - "index.js"
       - "package.json"
       - "scripts/setup-engines.js"
+      - "luraph-v14-engine/**"
       - "luraph-v15-engine/**"
       - "luraph-v15.1-engine/**"
       - ".github/workflows/verify-full-analysis.yml"
@@ -30,15 +31,24 @@ jobs:
           node scripts/setup-engines.js
           python3 - <<'PY'
           from pathlib import Path
-          for engine in (Path("luraph-v15-engine"), Path("luraph-v15.1-engine")):
+          for engine in (Path("luraph-v14-engine"), Path("luraph-v15-engine"), Path("luraph-v15.1-engine")):
               files = list(engine.rglob("*.py"))
               for path in files:
                   if "__pycache__" not in path.parts:
                       compile(path.read_text(encoding="utf-8"), str(path), "exec")
               print(f"PYTHON_SYNTAX_OK: {engine} ({len(files)} source files)")
+          v14 = Path("luraph-v14-engine")
+          for version in ("7", "8", "9"):
+              if not (v14 / "obfuscators" / f"luraph_v14_{version}" / "driver.py").is_file():
+                  raise SystemExit(f"Missing Luraph v14.{version} engine")
+          if (v14 / "obfuscators" / "luraph_v15").exists():
+              raise SystemExit("The separate v14 package must not duplicate the v15 engine")
+          import subprocess
+          subprocess.run(["python3", str(v14 / "cli.py"), "--help"], check=True, stdout=subprocess.DEVNULL)
+          print("V14_FRONTENDS_OK: dedicated 14.7 / 14.8 / 14.9; no copied v15 plugin")
           PY
 
-      - name: Verify 15.1 is routed through the v15-compatible engine
+      - name: Verify 15.1 full-lift routing
         shell: bash
         run: |
           set -euo pipefail
@@ -90,10 +100,12 @@ jobs:
           start = source.index("async function processLuraph151(")
           end = source.index("async function startWorkflow(", start)
           pipeline = source[start:end]
-          for required in ("runPythonEngine(", "'--max-runs', '8'", "'--devirt-rounds', '60'", "'--budget', '25'"):
+          for required in ("runPythonEngine(", "'--max-runs', '16'", "'--devirt-rounds', '200'", "'--budget', '60'", "'--timeout', '180'"):
               if required not in pipeline:
-                  raise SystemExit("15.1 adaptive-analysis pipeline is missing: " + required)
-          if "DEVIRT_FULL_ROUNDS" in pipeline:
-              raise SystemExit("Slow full-lift-every-round mode must remain disabled")
-          print("15.1 FULL ANALYSIS ROUTING OK: adaptive v15 primary + beta fallback")
+                  raise SystemExit("15.1 full-analysis pipeline is missing: " + required)
+          if "DEVIRT_FULL_ROUNDS: '1'" not in pipeline:
+              raise SystemExit("15.1 full-lift-every-round mode was not restored")
+          if "if (!(await hasLift(primary.base)))" not in pipeline:
+              raise SystemExit("15.1 fallback must run when the primary has no full source lift")
+          print("15.1 FULL ANALYSIS ROUTING OK: restored full VM lift + fallback")
           PY

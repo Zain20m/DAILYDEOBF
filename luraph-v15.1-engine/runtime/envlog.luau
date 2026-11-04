@@ -3215,7 +3215,7 @@ end
 -- LPH_ENCFUNC can also compile small decrypted function chunks. Preserve the
 -- source on the returned function so the proto dumper can attach it to an
 -- otherwise anonymous lf entry instead of losing it as a runtime placeholder.
-E.__LSRC = R.setmetatable({}, {__mode = "k"})
+CHAIN.__LSRC = R.setmetatable({}, {__mode = "k"})
 local NEWCHUNKS = {}
 local function srcKey(src)
         local h = 0
@@ -3252,7 +3252,7 @@ E.loadstring = function(src, chunkname)
         if not f then return nil, err end
         R.setfenv(f, ENV)
         if R.type(src) == "string" and #src > 0 and #src <= 65536 then
-                E.__LSRC[f] = src
+                CHAIN.__LSRC[f] = src
         end
         comment("loadstring() of " .. #src .. " bytes: " .. quote(R.sub(src, 1, 200)))
         return f
@@ -5495,7 +5495,7 @@ do
                                 if R.type(pf) == "table" then
                                         return '{"lf":' .. fids[v] .. ',"pf":' .. enc(pf) .. '}'
                                 end
-                                local loadedSource = E.__LSRC and R.rawget(E.__LSRC, v)
+                                local loadedSource = CHAIN.__LSRC and R.rawget(CHAIN.__LSRC, v)
                                 if R.type(loadedSource) == "string" and #loadedSource > 0 and #loadedSource <= 65536 then
                                         return '{"lf":' .. fids[v] .. ',"src":"' .. hex(loadedSource) .. '"}'
                                 end

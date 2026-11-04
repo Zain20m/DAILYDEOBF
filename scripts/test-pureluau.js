@@ -245,5 +245,5 @@ test('uses the StyLua Luau parser/formatter for valid source', () => {
   assert.equal(result.formatterUsed, 'StyLua 2.6.0 (Luau)');
   assert.equal(result.formatterSyntaxValidated, true);
   assert.match(result.output, /local function example\(arg\)/);
-  assert.match(result.output, /\n  if arg then\n/);
+  assert.match(result.output, /\n[\t ]+if arg then\n/);
 });

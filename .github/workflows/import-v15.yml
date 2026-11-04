@@ -1,9 +1,9 @@
-name: Import Deobfuscator v15
+name: Import newest Luraph v15 engine
 
 on:
   push:
     paths:
-      - "upload/DAILY-DEOBF-v15-engine-patched.zip"
+      - "upload/DAILY-DEOBF-LURAPH-V15-NEWEST.zip"
 
 permissions:
   contents: write
@@ -15,30 +15,30 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Extract engine files
+      - name: Extract and install newest engine
         shell: bash
         run: |
-          ARCHIVE="upload/DAILY-DEOBF-v15-engine-patched.zip"
-          if [ ! -f "$ARCHIVE" ]; then
-            echo "Archive is not present; nothing to import."
-            exit 0
-          fi
+          set -euo pipefail
+          ARCHIVE="upload/DAILY-DEOBF-LURAPH-V15-NEWEST.zip"
+          test -f "$ARCHIVE"
 
-          rm -rf /tmp/deobf-v15-import
-          mkdir -p /tmp/deobf-v15-import
-          unzip -q "$ARCHIVE" -d /tmp/deobf-v15-import
-          test -d /tmp/deobf-v15-import/Deobfuscator
+          rm -rf /tmp/daily-deobf-import
+          mkdir -p /tmp/daily-deobf-import
+          unzip -q "$ARCHIVE" -d /tmp/daily-deobf-import
+          test -f /tmp/daily-deobf-import/luraph-v15-engine/deob.js
+          test -f /tmp/daily-deobf-import/luraph-v15-engine/bin/luau
+          test -f /tmp/daily-deobf-import/luraph-v15-engine/bin/luau-ast
 
-          rm -rf Deobfuscator
-          cp -R /tmp/deobf-v15-import/Deobfuscator ./Deobfuscator
+          rm -rf luraph-v15-engine
+          cp -R /tmp/daily-deobf-import/luraph-v15-engine ./luraph-v15-engine
+          chmod +x luraph-v15-engine/bin/luau luraph-v15-engine/bin/luau-ast
+          python3 scripts/apply-luraph-newest.py
           rm -f "$ARCHIVE"
 
+          node --check index.js
+          node --check luraph-v15-engine/deob.js
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A Deobfuscator upload
-          if git diff --cached --quiet; then
-            echo "No extracted changes to commit."
-            exit 0
-          fi
-          git commit -m "Import extracted Deobfuscator v15 engine"
+          git add -A index.js package.json README.md luraph-v15-engine engine vendor scripts/setup-engine.js upload
+          git commit -m "Replace legacy 15.1 engine with newest Luraph v15"
           git push

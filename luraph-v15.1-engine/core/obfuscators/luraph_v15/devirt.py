@@ -1525,8 +1525,14 @@ class ProtoLifter:
             # indexes such as 2066 and 2373. Keep the reserved synthetic-vreg
             # range unavailable to source registers.
             if isinstance(k, (int, float)) and (k < 0 or k >= 800000):
-                raise Unsupported("invalid register index %s [stack_base=%r, proto=%r]"
-                                   % (k, self.stack_base, getattr(self.proto, "tid", None)))
+                detail = ""
+                if os.environ.get("DEVIRT_TB"):
+                    detail = " [last_op=%r stack_candidates=%r]" % (
+                        getattr(self, "last_op", None),
+                        getattr(self, "sp_debug", ())[:12],
+                    )
+                raise Unsupported("invalid register index %s [stack_base=%r, proto=%r]%s"
+                                   % (k, self.stack_base, getattr(self.proto, "tid", None), detail))
             if self.jvals.get(k) is FRAME:
                 return obj
             if k in self.jvals:
@@ -3310,6 +3316,15 @@ class Stepper:
                         if loc:
                             self.fixed_decls.add(loc)
         self.sp_cands = self._stack_pointer_candidates()
+        if os.environ.get("DEVIRT_TB"):
+            pid = self.lf.dump.pid_of_table.get(getattr(self.lf.proto, "tid", None))
+            regfiles = sorted(k for k, v in self.cs.vars.items() if isinstance(v, RegFile))
+            pairs = sorted((str(r), str(i)) for r, i in
+                           self.vm.__dict__.get("_sp_cands", {}).get(None, ()))
+            print("[sp] proto=%s vm=%s regfiles=%s pairs=%s candidates=%s" %
+                  (pid if pid is not None else getattr(self.lf.proto, "tid", None),
+                   getattr(self.vm, "tag", "?"), regfiles[:8], pairs[:16],
+                   sorted(self.sp_cands)[:16]), file=sys.stderr)
         self._strip_save_restore()
         self._init_vregs()
         if not hasattr(vm, "_mode_loop_cache"):
@@ -3509,6 +3524,12 @@ class Stepper:
                         if isinstance(val, dict) and val.get("type") == "AstExprLocal":
                             copysrc.add(val["local"]["location"])
         hits = [k for k in cands if k in calluse and (k in storeuse or k in copysrc)]
+        if os.environ.get("DEVIRT_TB"):
+            pid = self.lf.dump.pid_of_table.get(getattr(self.lf.proto, "tid", None))
+            print("[regfile] proto=%s temps=%s call=%s store=%s copy=%s hits=%s" %
+                  (pid if pid is not None else getattr(self.lf.proto, "tid", None),
+                   sorted(cands)[:12], sorted(calluse)[:12], sorted(storeuse)[:12],
+                   sorted(copysrc)[:12], sorted(hits)), file=sys.stderr)
         if len(hits) != 1:
             return
         self.cs.vars[hits[0]] = RegFile()
@@ -3637,6 +3658,24 @@ class Stepper:
         # while the prologue locals needed to identify the frame can already
         # have concrete values in inner/parent scopes.
         sb = self._sp_value(locs, inner)
+        if os.environ.get("DEVIRT_TB"):
+            samples = []
+            for key in sorted(self.sp_cands):
+                if key in inner.vars:
+                    value = inner.vars[key]
+                    if isinstance(value, Const):
+                        value = value.v
+                    label = repr(value)
+                    samples.append((str(key), label[:72]))
+            pid = self.lf.dump.pid_of_table.get(getattr(self.lf.proto, "tid", None))
+            print("[sp-value] proto=%s selected=%r values=%s carried=%s" %
+                  (pid if pid is not None else getattr(self.lf.proto, "tid", None),
+                   sb, samples[:12], [str(k) for k, _ in locs if k in self.sp_cands]),
+                  file=sys.stderr)
+        self.lf.sp_debug = tuple(
+            (str(key), repr(inner.vars.get(key))[:72]) for key in sorted(self.sp_cands)
+            if key in inner.vars
+        )
         if sb is not None:
             self.lf.stack_base = sb
             for k, vreg in list(self.vreg_of.items()):

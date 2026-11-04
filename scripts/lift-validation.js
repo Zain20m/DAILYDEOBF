@@ -108,6 +108,8 @@ function inspectLiftText(source) {
   const metrics = {
     nonCommentLines,
     devirtErrors: countMatches(withoutComments, /error\s*\(\s*(['"])devirt:/gi),
+    registerErrors: countMatches(withoutComments, /(?:invalid register (?:index|store)|corrupt\\/encrypted register index)/gi),
+    controlFlowStubs: countMatches(withoutComments, /(?:unexplored successor|unstructured jump|could not reconstruct control flow)/gi),
     nilCalls: countMatches(code, /\(\s*nil\s*\)\s*\(/g) + countMatches(code, /(?:^|[;,\s])nil\s*\(/g),
     nilIndexes: countMatches(code, /\[\s*nil\s*\]/g),
     nilArithmetic: countMatches(code, /\bnil\s*(?:\+|-|\*|\/|\/\/|%)/g) +
@@ -121,6 +123,8 @@ function inspectLiftText(source) {
   const issues = [];
   if (!metrics.nonCommentLines) issues.push('No executable source statements were generated.');
   if (metrics.devirtErrors) issues.push(metrics.devirtErrors + ' explicit devirtualization error stub(s) remain.');
+  if (metrics.registerErrors) issues.push(metrics.registerErrors + ' invalid or encrypted register index error(s) remain.');
+  if (metrics.controlFlowStubs) issues.push(metrics.controlFlowStubs + ' unresolved control-flow marker(s) remain.');
   if (metrics.nilCalls) issues.push(metrics.nilCalls + ' call(s) have a nil function target.');
   if (metrics.nilIndexes) issues.push(metrics.nilIndexes + ' table index(es) use nil as the key.');
   if (metrics.nilArithmetic) issues.push(metrics.nilArithmetic + ' arithmetic operation(s) use nil.');
@@ -136,6 +140,8 @@ function inspectLiftText(source) {
   const complete = metrics.nonCommentLines > 0 && issues.length === 0;
   const penalty =
     metrics.devirtErrors * 5000 +
+    metrics.registerErrors * 4000 +
+    metrics.controlFlowStubs * 2500 +
     metrics.nilCalls * 250 +
     metrics.nilIndexes * 150 +
     metrics.nilArithmetic * 300 +
@@ -147,7 +153,32 @@ function inspectLiftText(source) {
     : -1;
 
   const details = collectDetails(text, code, withoutComments);
-  return { candidate: metrics.nonCommentLines > 0, complete, issues, metrics, score, details };
+  const categories = {
+    syntax: { status: 'not_checked' },
+    vmReconstruction: { status: complete ? 'no_static_failures_detected' : 'incomplete' },
+    registerRecovery: {
+      status: metrics.registerErrors ? 'incomplete' : 'not_proven',
+      unresolved: metrics.registerErrors,
+    },
+    functionReferences: {
+      status: (metrics.nilCalls || metrics.unresolvedRuntimeCalls) ? 'incomplete' : 'not_proven',
+      unresolved: metrics.nilCalls + metrics.unresolvedRuntimeCalls,
+    },
+    runtimeOperations: {
+      status: (metrics.runtimeStubDefinitions || metrics.unresolvedRuntimeCalls) ? 'incomplete' : 'not_proven',
+      unresolved: metrics.runtimeStubDefinitions + metrics.unresolvedRuntimeCalls,
+    },
+    devirtualizationStubs: {
+      status: metrics.devirtErrors ? 'incomplete' : 'none_detected',
+      unresolved: metrics.devirtErrors,
+    },
+    controlFlow: {
+      status: metrics.controlFlowStubs ? 'incomplete' : 'not_proven',
+      unresolved: metrics.controlFlowStubs,
+    },
+    behavioralConsistency: { status: 'not_checked' },
+  };
+  return { candidate: metrics.nonCommentLines > 0, complete, issues, metrics, categories, score, details };
 }
 
 module.exports = { inspectLiftText };

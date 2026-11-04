@@ -206,7 +206,7 @@ async function run(job) {
     const assessment = inspectLiftText(lifted);
     let syntaxError = null;
 
-    if (assessment.complete) {
+    if (assessment.candidate) {
       try {
         vmmap.loadAst(dpath);
       } catch (error) {
@@ -219,7 +219,8 @@ async function run(job) {
     }
 
     const reasons = assessment.issues.slice();
-    if (syntaxError) reasons.push('Luau AST parse failed: ' + String(syntaxError.message || syntaxError).slice(0, 240));\n    else if (assessment.candidate && !assessment.complete) reasons.push('Luau syntax passed, but VM reconstruction is still incomplete');
+    if (syntaxError) reasons.push('Luau AST parse failed: ' + String(syntaxError.message || syntaxError).slice(0, 240));
+    else if (assessment.candidate && !assessment.complete) reasons.push('Luau syntax passed, but VM reconstruction is still incomplete');
     process.stderr.write('[!] devirtualized candidate failed validation: ' +
       (reasons.join('; ') || 'unknown structural or syntax error') +
       '; retaining it only as a debug artifact and returning the behaviour trace\n');

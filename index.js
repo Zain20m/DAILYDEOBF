@@ -591,7 +591,7 @@ async function processLuraphV14(message, prompt, input, version) {
 
     const output = await fs.readFile(outputPath, 'utf8');
     if (!output.trim()) throw new Error('The v' + version + ' engine produced an empty result.');
-    const isLifted = /^\\s*--\\s*Devirtualized with Luraph v14\\./m.test(output.slice(0, 2500));
+    const isLifted = /^\s*--\s*Devirtualized with Luraph v14\./m.test(output.slice(0, 2500));
     const elapsedMs = Date.now() - startedAt;
     const report = [
       'DAILY DEOBF · Luraph v' + version + ' analysis report',
@@ -604,14 +604,14 @@ async function processLuraphV14(message, prompt, input, version) {
       '',
       'Engine progress log:',
       String(result.stderr || 'No diagnostic output was returned.').slice(-14000),
-    ].join('\\n');
+    ].join('\n');
 
     const resultName = 'Luraph_v' + version.replace('.', '_') +
       (isLifted ? '_devirtualized.luau' : '_partial_result.luau');
 
     await message.reply({
       content: isLifted
-        ? '**DAILY DEOBF · Luraph v' + version + '**\\n✅ Static VM-lifted Luau generated. The analysis report is attached too.'
+        ? '**DAILY DEOBF · Luraph v' + version + '**\n✅ Static VM-lifted Luau generated. The analysis report is attached too.'
         : '**DAILY DEOBF · Luraph v' + version + '**\\n⚠️ The engine did not confirm a full VM lift. This may be a partial recovery or behaviour trace, not complete source.',
       files: [
         new AttachmentBuilder(outputPath, { name: resultName }),
@@ -920,7 +920,7 @@ async function startWorkflow(message) {
       componentCollector.stop('cancelled');
       return;
     }
-    const v14Match = interaction.customId.match(/^deobf-v(14\\.[789]):/);
+    const v14Match = interaction.customId.match(/^deobf-v(14\.[789]):/);
     if (v14Match) {
       await interaction.deferUpdate();
       componentCollector.stop('selected');
@@ -929,7 +929,7 @@ async function startWorkflow(message) {
       } catch (error) {
         const messageText = String(error.message || error).slice(0, 1500);
         await prompt.edit({
-          content: '**Luraph v' + v14Match[1] + ' failed**\\n' + messageText.replace(/`/g, "'"),
+          content: '**Luraph v' + v14Match[1] + ' failed**\n' + messageText.replace(/`/g, "'"),
           components: [],
         }).catch(() => {});
       }

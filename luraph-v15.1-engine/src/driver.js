@@ -133,7 +133,8 @@ async function run(job) {
     job.write(job.tracePath, tidy.tidy(text, { preamble: !args.keepPreamble }));
   }
 
-  if (!devirtOn && !job.debug) {
+  if (!devirtOn || job.debug) {
+    // Preserve the runtime trace separately when a full lift succeeds.
     writeTrace();
   }
 

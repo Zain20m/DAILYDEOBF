@@ -643,7 +643,7 @@ async function processLuraphV14(message, prompt, input, version) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-v14-'));
   const inputPath = path.join(tempRoot, 'input.lua');
   const outputPath = path.join(tempRoot, 'deobfuscated.luau');
-  const inputBytes = Buffer.byteLength(input.source, 'utf8');
+  const inputBytes = Buffer.byteLength(source, 'utf8');
   const progress = createAnalysisProgress(prompt, input.filename, inputBytes, 'Luraph v' + version);
   const startedAt = Date.now();
 
@@ -783,7 +783,37 @@ async function processLuraphV15(message, prompt, input) {
   }
 }
 
+function normalizeLuraph151Source(source) {
+  const marker = '):Qg()(...);';
+  const first = source.indexOf(marker);
+  if (first < 0) return { source, removedBytes: 0 };
+
+  const cleanEnd = first + marker.length;
+  const duplicateTail = source.slice(cleanEnd);
+
+  // Some copies of this sample have a 468-byte duplicate tail which starts
+  // halfway through the word "function" ("unction(") and repeats the final
+  // Qg() call. It is malformed appended data, not part of the first script.
+  // Only trim this very specific, short, terminal pattern.
+  const second = source.indexOf(marker, cleanEnd);
+  const isDuplicateTail =
+    duplicateTail.startsWith('unction(') &&
+    duplicateTail.endsWith(marker) &&
+    duplicateTail.lastIndexOf(marker) === duplicateTail.length - marker.length &&
+    duplicateTail.length <= 4096 &&
+    second === source.length - marker.length;
+
+  if (!isDuplicateTail) return { source, removedBytes: 0 };
+  const cleaned = source.slice(0, cleanEnd);
+  return {
+    source: cleaned,
+    removedBytes: Buffer.byteLength(duplicateTail, 'utf8'),
+  };
+}
+
 async function processLuraph151(message, prompt, input) {
+  const normalized = normalizeLuraph151Source(input.source);
+  const source = normalized.source;
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-151-'));
 
   async function prepare(name) {
@@ -792,7 +822,7 @@ async function processLuraph151(message, prompt, input) {
     const outputDir = path.join(root, 'output');
     const outputPath = path.join(outputDir, 'deobfuscated.luau');
     await fs.mkdir(outputDir, { recursive: true });
-    await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
+    await fs.writeFile(inputPath, source, { encoding: 'utf8', mode: 0o600 });
     return { root, inputPath, outputDir, outputPath, base: path.join(outputDir, 'deobfuscated') };
   }
 
@@ -819,6 +849,13 @@ async function processLuraph151(message, prompt, input) {
   let compatibilityValidation = null;
 
   try {
+    if (normalized.removedBytes > 0) {
+      await progress.setPhase(
+        'Removed malformed duplicate tail',
+        'Removed ' + normalized.removedBytes + ' trailing bytes that repeated the final Qg() call and began mid-token.'
+      );
+    }
+
     await progress.setPhase(
       'Running the dedicated 15.1 engine',
       'The 15.1 engine gets the first full reconstruction pass. Its output is checked for unresolved VM values and Luau syntax.'

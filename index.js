@@ -239,8 +239,18 @@ function runEngine(inputPath, outDir) {
         return reject(new Error('This script took too long to process. Try a smaller file or a simpler protected build.'));
       }
       if (code !== 0) {
-        const detail = (stderr || stdout).trim().split('\n').slice(-5).join('\n');
-        return reject(new Error(detail || `Deobfuscator exited with code ${code}.`));
+        const raw = (stderr || stdout).trim();
+        const lines = raw.split('\n').filter(Boolean);
+        // Keep the actual parser error as well as the useful tail of the stack.
+        // Previously only the last five lines were shown, hiding the syntax
+        // error and its line/column information.
+        const detail = lines.length > 9
+          ? [...lines.slice(0, 3), '…', ...lines.slice(-6)].join('\n')
+          : lines.join('\n');
+        const parserHint = /luaparse|parseSubExpression|parseExpectedExpression/i.test(raw)
+          ? '\n\nThe engine parser rejected this input. This commonly happens when a Luau-only construct reaches its Lua parser; the exact line/column above is needed to add a safe compatibility fix.'
+          : '';
+        return reject(new Error((detail || `Deobfuscator exited with code ${code}.`) + parserHint));
       }
       resolve(stdout);
     });

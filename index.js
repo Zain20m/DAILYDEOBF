@@ -571,10 +571,16 @@ async function sendAnalysisOutput(message, input, config) {
 
   const engineLog = String(config.stderr || '');
   const otherEngineLog = String(config.otherEngineStderr || '');
+  const isNotableEngineLog = (line) =>
+    line.startsWith('[!]') || /devirt round|devirtualizing \(round|loadstring.d .*VM chunk|anti-tamper/i.test(line);
   const notableLogs = engineLog.split('\n')
     .map((line) => line.trim())
-    .filter((line) => line.startsWith('[!]') || /devirt round|devirtualizing \(round|loadstring.d .*VM chunk|anti-tamper/i.test(line))
+    .filter(isNotableEngineLog)
     .slice(-18);
+  const otherNotableLogs = otherEngineLog.split('\n')
+    .map((line) => line.trim())
+    .filter(isNotableEngineLog)
+    .slice(-12);
   const liftMatches = [...engineLog.matchAll(/([\d,]+) functions,\s*([\d,]+) unlifted blocks,\s*([\d,]+) unstructured jumps/g)];
   const liftStats = liftMatches.length ? liftMatches[liftMatches.length - 1] : null;
   const liftedFunctions = liftStats ? Number(liftStats[1].replaceAll(',', '')) : null;
@@ -596,7 +602,7 @@ async function sendAnalysisOutput(message, input, config) {
     'Maximum VM execution passes: ' + config.maxRuns,
     'Maximum devirtualization rounds: ' + config.devirtRounds,
     'Loader VM analysis: ' + (config.loaderAnalysis ? 'enabled' : 'disabled'),
-    'Full lifted functions: ' + (liftedFunctions === null ? 'not reported' : liftedFunctions),
+    'Lifter functions processed: ' + (liftedFunctions === null ? 'not reported' : liftedFunctions),
     'Unlifted blocks: ' + (unliftedBlocks === null ? 'not reported' : unliftedBlocks),
     'Unstructured jumps: ' + (unstructuredJumps === null ? 'not reported' : unstructuredJumps),
     'Captured prototypes: ' + (prototypeCount || (protoBytes ? 'present, count unavailable' : 'not captured')),
@@ -616,14 +622,8 @@ async function sendAnalysisOutput(message, input, config) {
       : ['- No source-level diagnostic samples were found.']),
     '',
     'Other engine diagnostics:',
-    ...(otherEngineLog.split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.startsWith('[!]') || /devirt round|devirtualizing \\(round|loadstring.d .*VM chunk|anti-tamper/i.test(line))
-      .slice(-12).length
-      ? otherEngineLog.split('\n')
-          .map((line) => line.trim())
-          .filter((line) => line.startsWith('[!]') || /devirt round|devirtualizing \\(round|loadstring.d .*VM chunk|anti-tamper/i.test(line))
-          .slice(-12)
+    ...(otherNotableLogs.length
+      ? otherNotableLogs
       : ['No additional diagnostics from the comparison engine.']),
     '',
     'Important:',

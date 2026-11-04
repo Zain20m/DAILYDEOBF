@@ -436,7 +436,7 @@ function runPythonEngine(engineDir, engineCli, inputPath, outputPath, timeoutMs,
 
 
 async function cleanLuraph151Candidate(filePath, engineDir) {
-  const rawPath = filePath.replace(/\\.luau$/i, '.raw.luau');
+  const rawPath = filePath.replace(/\.luau$/i, '.raw.luau');
   let backupMade = false;
   try {
     const raw = await fs.readFile(filePath, 'utf8');

@@ -738,7 +738,7 @@ async function processLuraph151(message, prompt, input) {
   try {
     await progress.setPhase(
       'Preparing the v15-compatible beta pipeline',
-      'Running the uploaded v15 engine with adaptive VM tracing and fast devirtualization rounds.'
+      'Running the full VM-lifting pass with extended tracing, constants and reconstruction rounds.'
     );
 
     try {
@@ -781,7 +781,7 @@ async function processLuraph151(message, prompt, input) {
     if (!(await hasLift(primary.base))) {
       await progress.setPhase(
         'Trying the 15.1 beta fallback',
-        'The primary engine produced no usable artifacts, so the separate beta runner is being tried with a smaller recovery budget.'
+        'The primary engine did not produce a source lift, so the separate beta runner is getting a full reconstruction pass too.'
       );
 
       const fallback = await prepare(fallbackRoot);

@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
+  extractInlineLoadstringSources,
   extractLoadstringHttpGetUrls,
   extractStaticFetchUrls,
   resolveLoadstringSources,
@@ -173,4 +174,37 @@ test('.get supports a supplied direct URL seed', async () => {
   });
   assert.equal(result.captures[0].name, 'get1.lua');
   assert.equal(result.captures[0].source, 'print("downloaded")');
+});
+
+
+test('captures literal source passed directly to loadstring', () => {
+  const source = 'loadstring("print(1)")()\\nloadstring([=[print(2)]=])()';
+  assert.deepEqual(extractInlineLoadstringSources(source), ['print(1)', 'print(2)']);
+});
+
+test('finds remote URLs stored in variables and request aliases', () => {
+  const source = [
+    'local firstUrl = "https://example.com/first.lua"',
+    'loadstring(game:HttpGet(firstUrl))()',
+    'local fetcher = syn.request',
+    'fetcher({Url = "https://example.com/second.lua"})',
+    'request({["Url"] = "https://example.com/third.lua"})',
+  ].join('\\n');
+  assert.deepEqual(extractStaticFetchUrls(source), [
+    'https://example.com/first.lua',
+    'https://example.com/second.lua',
+    'https://example.com/third.lua',
+  ]);
+});
+
+test('returns more than ten chunks when the configured limit allows it', async () => {
+  const source = Array.from({ length: 24 }, (_, i) =>
+    'loadstring(game:HttpGet("https://example.com/chunk-' + i + '.lua"))()'
+  ).join('\\n');
+  const result = await resolveLoadstringSources(source, {
+    maxFiles: 40,
+    fetchText: async () => 'print("chunk")',
+  });
+  assert.equal(result.captures.length, 24);
+  assert.equal(result.captures[23].name, 'loadstring24.txt');
 });

@@ -10,9 +10,9 @@ CORE = ROOT / "luraph-v15.1-engine" / "core"
 sys.path.insert(0, str(CORE))
 
 from ir import Opaque
-from obfuscators.luraph_v15.devirt import Dump, OpaqueFn, ProtoLifter, SharedFn, Stepper
+from obfuscators.luraph_v15.devirt import Dump, MaybeBox, OpaqueFn, ProtoLifter, SharedFn, Stepper, UnknownValue
 from obfuscators.luraph_v15.vmmap import ctor_assignments
-from luasym import RegFile, Scope
+from luasym import RegFile, Scope, Unsupported
 
 
 def make_dump():
@@ -48,6 +48,29 @@ def main():
     proto_expr = lifter.as_expr(proto_fn)
     assert isinstance(proto_expr, SharedFn)
     assert proto_expr.fn.pf_tid == 42
+
+    # An open-upvalue box is a reference to a register, not a nil value.
+    # If the capture cannot provide the referenced value, preserve an
+    # explicit unknown sentinel and stop source emission rather than
+    # manufacturing a Lua nil.
+    unknown_lifter = object.__new__(ProtoLifter)
+    unknown = ProtoLifter.index(unknown_lifter, MaybeBox(17), 4, None)
+    assert isinstance(unknown, UnknownValue)
+    assert "open-upvalue box contents" in unknown.reason
+    for operation in (
+        lambda: ProtoLifter.as_expr(unknown_lifter, unknown),
+        lambda: ProtoLifter.value_of(unknown_lifter, unknown),
+        lambda: ProtoLifter.check_decision(unknown_lifter, unknown),
+    ):
+        try:
+            operation()
+        except Unsupported as error:
+            assert "unresolved VM value" in str(error)
+        else:
+            raise AssertionError("unknown VM value was emitted as Lua source")
+
+    # A genuine nil remains a genuine nil and is not upgraded to Unknown.
+    assert ProtoLifter.as_expr(unknown_lifter, None).v is None
 
     # Truly unresolved functions remain explicit, but their diagnostic now
     # records the original function id and whether a proto/source was found.

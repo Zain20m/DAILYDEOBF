@@ -758,6 +758,53 @@ def _carry_key(v):
         return v
     return id(v)
 
+MAX_SYMBOLIC_CARRY_NODES = 12
+MAX_SYMBOLIC_CARRY_DEPTH = 4
+MAX_SYMBOLIC_CARRY_REGS = 64
+
+
+def bounded_symbolic_carry(value):
+    """Whether a pure, small expression can be snapshotted across VM handlers.
+
+    Some handler locals hold an expression such as r + 1 or constants[i].
+    Dropping it made the next handler see the old prologue value (often nil).
+    Snapshotting a bounded expression into a synthetic register preserves its
+    value at the handler boundary without carrying growing expression chains
+    through loop states.
+    """
+    compounds = (Bin, Un, Index, IfExp)
+    leaves = (Const, Reg, Pseudo, Global, Upval, Vararg, TempVal)
+    if isinstance(value, TempVal):
+        return True
+    if not isinstance(value, compounds):
+        return False
+
+    pending = [(value, 1)]
+    seen = set()
+    while pending:
+        node, depth = pending.pop()
+        if depth > MAX_SYMBOLIC_CARRY_DEPTH:
+            return False
+        ident = id(node)
+        if ident in seen:
+            continue
+        seen.add(ident)
+        if len(seen) > MAX_SYMBOLIC_CARRY_NODES:
+            return False
+        if isinstance(node, leaves):
+            if isinstance(node, Const) and not (
+                node.v is None or type(node.v) in (bool, int, float, bytes, str)
+            ):
+                return False
+            continue
+        if not isinstance(node, compounds):
+            return False
+        children = [child for child in node.__dict__.values() if isinstance(child, Expr)]
+        if not children:
+            return False
+        pending.extend((child, depth + 1) for child in children)
+    return True
+
 MAX_STACK_DEPTHS = int(os.environ.get('DEVIRT_MAX_DEPTHS', 32))
 STACK_WALK_MAX = 30000
 
@@ -3769,7 +3816,12 @@ class Stepper:
         for k in (self.read_first & self.written) - self.sp_cands - self.carry - set(self.vreg_of) - self.not_carried - self.fixed_decls:
             v = dict.get(acc, k)
             lw = self.last_written_val.get(k, v)
-            if self.lf.stack_base is None and not (self.carry & self.sp_cands) and isinstance(lw, Reg):
+            if self.lf.stack_base is None and not (self.carry & self.sp_cands) and (
+                    isinstance(lw, Reg) or
+                    (len(self.vreg_of) < MAX_SYMBOLIC_CARRY_REGS and bounded_symbolic_carry(lw))
+            ):
+                # Snapshot register reads and bounded symbolic expressions at
+                # this handler boundary so the next handler sees the same value.
                 vreg = 800000 + len(self.vreg_of) + 1
                 self.vreg_of[k] = vreg
                 self.lf.vreg_set.add(vreg)
@@ -3779,6 +3831,14 @@ class Stepper:
                     isinstance(v, (Reg, Pseudo, Global)) or \
                     (isinstance(v, Const) and (v.v is None or isinstance(v.v, (bool, int, float, bytes, str)))):
                 self.carry.add(k)
+                self.new_carry = True
+                continue
+            if k not in self.lf.special and len(self.vreg_of) < MAX_SYMBOLIC_CARRY_REGS and bounded_symbolic_carry(v):
+                # Keep expression chains out of State.locs; materialize them
+                # once into a synthetic register instead.
+                vreg = 800000 + len(self.vreg_of) + 1
+                self.vreg_of[k] = vreg
+                self.lf.vreg_set.add(vreg)
                 self.new_carry = True
         if self.lf.stack_base is None and not (self.carry & self.sp_cands):
             for k in list(self.carry):

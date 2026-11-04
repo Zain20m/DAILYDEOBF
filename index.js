@@ -20,6 +20,8 @@ const MAX_OUTPUT_BYTES = 18 * 1024 * 1024;
 const INPUT_WAIT_MS = 180_000;
 const PICKER_WAIT_MS = 120_000;
 const ENGINE_TIMEOUT_MS = 25 * 60_000;
+const ENGINE_V14_DIR = path.join(__dirname, 'luraph-v14-engine');
+const ENGINE_V14_CLI = path.join(ENGINE_V14_DIR, 'cli.py');
 const ENGINE_V15_DIR = path.join(__dirname, 'luraph-v15-engine');
 const ENGINE_V15_CLI = path.join(ENGINE_V15_DIR, 'deob.py');
 const ENGINE_151_DIR = path.join(__dirname, 'luraph-v15.1-engine');
@@ -548,6 +550,94 @@ async function sendAnalysisOutput(message, input, config) {
   return { hasLiftedSource, prototypeCount, chunks: chunkFiles.length };
 }
 
+
+async function processLuraphV14(message, prompt, input, version) {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-v14-'));
+  const inputPath = path.join(tempRoot, 'input.lua');
+  const outputPath = path.join(tempRoot, 'deobfuscated.luau');
+  const inputBytes = Buffer.byteLength(input.source, 'utf8');
+  const progress = createAnalysisProgress(prompt, input.filename, inputBytes, 'Luraph v' + version);
+  const startedAt = Date.now();
+
+  try {
+    await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
+    await progress.setPhase(
+      'Preparing the dedicated v' + version + ' engine',
+      'Using the isolated v14.x VM frontend and shared Luau runtime.'
+    );
+
+    const result = await runPythonEngine(
+      ENGINE_V14_DIR,
+      ENGINE_V14_CLI,
+      inputPath,
+      outputPath,
+      ENGINE_TIMEOUT_MS,
+      [
+        '--engine', version,
+        '--debug',
+        '--strings',
+        '--max-runs', '12',
+        '--devirt-rounds', '200',
+        '--timeout', '600',
+        '--budget', '600',
+      ],
+      { onProgress: progress.onLine },
+    );
+
+    await progress.setPhase(
+      'Checking the reconstructed Luau',
+      'Separating a VM-lifted result from a behaviour trace before sending the file.'
+    );
+
+    const output = await fs.readFile(outputPath, 'utf8');
+    if (!output.trim()) throw new Error('The v' + version + ' engine produced an empty result.');
+    const isLifted = /^\\s*--\\s*Devirtualized with Luraph v14\\./m.test(output.slice(0, 2500));
+    const elapsedMs = Date.now() - startedAt;
+    const report = [
+      'DAILY DEOBF · Luraph v' + version + ' analysis report',
+      'Result: ' + (isLifted ? 'STATIC VM LIFT GENERATED' : 'TRACE / PARTIAL RECOVERY'),
+      'Input: ' + String(input.filename || 'script.lua'),
+      'Input size: ' + formatBytes(inputBytes),
+      'Elapsed: ' + formatDuration(elapsedMs),
+      'Engine: dedicated Luraph v' + version + ' frontend',
+      'VM lift: ' + (isLifted ? 'devirtualized-source header detected' : 'no devirtualized-source header detected'),
+      '',
+      'Engine progress log:',
+      String(result.stderr || 'No diagnostic output was returned.').slice(-14000),
+    ].join('\\n');
+
+    const resultName = 'Luraph_v' + version.replace('.', '_') +
+      (isLifted ? '_devirtualized.luau' : '_partial_result.luau');
+
+    await message.reply({
+      content: isLifted
+        ? '**DAILY DEOBF · Luraph v' + version + '**\\n✅ Static VM-lifted Luau generated. The analysis report is attached too.'
+        : '**DAILY DEOBF · Luraph v' + version + '**\\n⚠️ The engine did not confirm a full VM lift. This may be a partial recovery or behaviour trace, not complete source.',
+      files: [
+        new AttachmentBuilder(outputPath, { name: resultName }),
+        new AttachmentBuilder(Buffer.from(report, 'utf8'), { name: 'analysis_report_v' + version.replace('.', '_') + '.txt' }),
+      ],
+      allowedMentions: { repliedUser: false },
+    });
+
+    await progress.complete(isLifted
+      ? 'The VM-lifted Luau result and analysis report were attached.'
+      : 'The partial result and analysis report were attached and clearly labelled.');
+    await prompt.edit({
+      content: isLifted
+        ? '✅ Luraph v' + version + ' analysis finished. Static VM-lifted Luau was generated.'
+        : '⚠️ Luraph v' + version + ' analysis finished. The result is labelled as partial recovery.',
+      components: [],
+    });
+  } catch (error) {
+    await progress.fail(error);
+    throw error;
+  } finally {
+    progress.stop();
+    await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 async function processLuraphV15(message, prompt, input) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-v15-'));
   const inputPath = path.join(tempRoot, 'input.lua');
@@ -785,23 +875,39 @@ async function startWorkflow(message) {
   const input = firstAttachment
     ? await inputFromAttachment(firstAttachment)
     : await collectInput(message, prompt);
-  const chooseRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`deobf-luraph-v15:${message.author.id}`)
-      .setLabel('Luraph v15')
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId(`deobf-151:${message.author.id}`)
-      .setLabel('Luraph 15.1')
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(`deobf-cancel:${message.author.id}`)
-      .setLabel('Cancel')
-      .setStyle(ButtonStyle.Secondary),
-  );
+  const chooseRows = [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`deobf-luraph-v15:${message.author.id}`)
+        .setLabel('Luraph v15')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`deobf-151:${message.author.id}`)
+        .setLabel('Luraph 15.1')
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`deobf-v14.7:${message.author.id}`)
+        .setLabel('Luraph 14.7')
+        .setStyle(ButtonStyle.Secondary),
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`deobf-v14.8:${message.author.id}`)
+        .setLabel('Luraph 14.8')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`deobf-v14.9:${message.author.id}`)
+        .setLabel('Luraph 14.9')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`deobf-cancel:${message.author.id}`)
+        .setLabel('Cancel')
+        .setStyle(ButtonStyle.Secondary),
+    ),
+  ];
   await prompt.edit({
     content: '⚙️ **Choose a deobfuscator**\nSelect the engine you want to use:',
-    components: [chooseRow],
+    components: chooseRows,
   });
 
   const componentCollector = prompt.createMessageComponentCollector({
@@ -812,6 +918,21 @@ async function startWorkflow(message) {
     if (interaction.customId === `deobf-cancel:${message.author.id}`) {
       await interaction.update({ content: 'Cancelled.', components: [] });
       componentCollector.stop('cancelled');
+      return;
+    }
+    const v14Match = interaction.customId.match(/^deobf-v(14\\.[789]):/);
+    if (v14Match) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        await processLuraphV14(message, prompt, input, v14Match[1]);
+      } catch (error) {
+        const messageText = String(error.message || error).slice(0, 1500);
+        await prompt.edit({
+          content: '**Luraph v' + v14Match[1] + ' failed**\\n' + messageText.replace(/`/g, "'"),
+          components: [],
+        }).catch(() => {});
+      }
       return;
     }
     if (interaction.customId === `deobf-151:${message.author.id}`) {

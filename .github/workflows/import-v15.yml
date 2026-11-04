@@ -3,7 +3,7 @@ name: Import newest Luraph v15 engine
 on:
   push:
     paths:
-      - "upload/DAILY-DEOBF-LURAPH-V15-NEWEST.zip"
+      - "upload/DAILY-DEOBF-LURAPH-V15-NEWEST*.zip"
 
 permissions:
   contents: write
@@ -19,8 +19,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ARCHIVE="upload/DAILY-DEOBF-LURAPH-V15-NEWEST.zip"
-          test -f "$ARCHIVE"
+          shopt -s nullglob
+          ARCHIVES=(upload/DAILY-DEOBF-LURAPH-V15-NEWEST*.zip)
+          if [ "${#ARCHIVES[@]}" -eq 0 ]; then
+            echo "No matching Luraph v15 archive found."
+            exit 1
+          fi
+          ARCHIVE="${ARCHIVES[0]}"
+          echo "Importing: $ARCHIVE"
 
           rm -rf /tmp/daily-deobf-import
           mkdir -p /tmp/daily-deobf-import

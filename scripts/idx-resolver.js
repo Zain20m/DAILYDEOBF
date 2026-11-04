@@ -10,15 +10,29 @@ const URL_FIELDS = new Set(['url', 'uri', 'urlstring']);
 function extractInlineLoadstringSources(source) {
   const tokens = tokenizeLua(String(source || ''));
   const chunks = [];
+  const knownStrings = new Map();
+
   for (let i = 0; i + 2 < tokens.length; i++) {
+    if (tokens[i].type === 'identifier' && tokens[i + 1].value === '=') {
+      if (tokens[i + 2].type === 'string') {
+        knownStrings.set(tokens[i].value, tokens[i + 2].value);
+      } else {
+        knownStrings.delete(tokens[i].value);
+      }
+    }
+
     if (
       tokens[i].type !== 'identifier' || tokens[i].value.toLowerCase() !== 'loadstring' ||
-      tokens[i + 1].value !== '(' ||
-      tokens[i + 2].type !== 'string'
+      tokens[i + 1].value !== '('
     ) continue;
 
-    const chunk = tokens[i + 2].value;
-    if (chunk.trim() && !isHttpUrl(chunk)) chunks.push(chunk);
+    const argument = tokens[i + 2];
+    const chunk = argument && argument.type === 'string'
+      ? argument.value
+      : (argument && argument.type === 'identifier' ? knownStrings.get(argument.value) : null);
+    if (typeof chunk === 'string' && chunk.trim() && !isHttpUrl(chunk)) {
+      chunks.push(chunk);
+    }
   }
   return chunks;
 }

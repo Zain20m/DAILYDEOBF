@@ -132,6 +132,26 @@ function decodeSource(bytes) {
   return source;
 }
 
+async function inputFromAttachment(attachment) {
+  const filename = attachment.name || 'script.txt';
+  if (!/\.(lua|luau|txt)$/i.test(filename)) {
+    throw new Error('Upload a `.lua`, `.luau`, or `.txt` file.');
+  }
+  if (attachment.size > MAX_INPUT_BYTES) {
+    throw new Error('The file is too large. Maximum size is 400 KB.');
+  }
+
+  // Discord CDN attachments are trusted HTTPS URLs; download them directly.
+  const response = await fetch(attachment.url, {
+    redirect: 'error',
+    signal: AbortSignal.timeout(15_000),
+    headers: { 'user-agent': 'DAILY-DEOBF/1.0' },
+  });
+  if (!response.ok) throw new Error(`Could not download the Discord attachment (HTTP ${response.status}).`);
+  const bytes = await readResponseLimited(response, MAX_INPUT_BYTES);
+  return { source: decodeSource(bytes), filename };
+}
+
 async function collectInput(message, prompt) {
   const collector = message.channel.createMessageCollector({
     filter: (msg) => msg.author.id === message.author.id && msg.channelId === message.channelId,
@@ -150,32 +170,23 @@ async function collectInput(message, prompt) {
       try {
         if (reply.content.trim().toLowerCase() === '.cancel') throw new Error('Cancelled.');
         const attachment = reply.attachments.first();
-        let bytes;
-        let filename;
         if (attachment) {
-          filename = attachment.name || 'script.txt';
-          if (!/\.(lua|luau|txt)$/i.test(filename)) {
-            throw new Error('Upload a `.lua`, `.luau`, or `.txt` file.');
-          }
-          if (attachment.size > MAX_INPUT_BYTES) throw new Error('The file is too large. Maximum size is 400 KB.');
-          const result = await fetchPublicText(attachment.url);
-          bytes = result.bytes;
-        } else {
-          const candidate = reply.content.trim().replace(/^<|>$/g, '');
-          let parsed;
-          try {
-            parsed = new URL(candidate);
-          } catch {
-            throw new Error('Send one direct HTTP/HTTPS script URL, or attach a `.lua`, `.luau`, or `.txt` file.');
-          }
-          if (!['http:', 'https:'].includes(parsed.protocol)) {
-            throw new Error('Only HTTP and HTTPS URLs are supported.');
-          }
-          const result = await fetchPublicText(parsed.toString());
-          bytes = result.bytes;
-          filename = result.filename;
+          resolve(await inputFromAttachment(attachment));
+          return;
         }
-        resolve({ source: decodeSource(bytes), filename });
+
+        const candidate = reply.content.trim().replace(/^<|>$/g, '');
+        let parsed;
+        try {
+          parsed = new URL(candidate);
+        } catch {
+          throw new Error('Send one direct HTTP/HTTPS script URL, or attach a `.lua`, `.luau`, or `.txt` file.');
+        }
+        if (!['http:', 'https:'].includes(parsed.protocol)) {
+          throw new Error('Only HTTP and HTTPS URLs are supported.');
+        }
+        const result = await fetchPublicText(parsed.toString());
+        resolve({ source: decodeSource(result.bytes), filename: result.filename });
       } catch (error) {
         reject(error);
       }
@@ -283,7 +294,11 @@ async function startWorkflow(message) {
     content: '📄 **DAILY DEOBF**\nSend a `.lua`, `.luau`, or `.txt` file, or paste a direct URL to your Luau script.\n\nMaximum input size: 400 KB.',
     allowedMentions: { repliedUser: false },
   });
-  const input = await collectInput(message, prompt);
+  // Accept attachments on the original command message too.
+  const firstAttachment = message.attachments.first();
+  const input = firstAttachment
+    ? await inputFromAttachment(firstAttachment)
+    : await collectInput(message, prompt);
   const chooseRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`deobf-151:${message.author.id}`)

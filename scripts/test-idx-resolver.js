@@ -86,3 +86,21 @@ test('honours the output count limit', async () => {
   assert.equal(result.captures.length, 4);
   assert.equal(result.truncated, true);
 });
+
+test('caps total fetch attempts even when URLs fail', async () => {
+  const source = Array.from({ length: 12 }, (_, i) =>
+    'loadstring(game:HttpGet("https://example.com/fail-' + i + '.lua"))()'
+  ).join('\n');
+  let attempts = 0;
+  const result = await resolveLoadstringSources(source, {
+    maxFiles: 4,
+    fetchText: async () => {
+      attempts++;
+      throw new Error('offline');
+    },
+  });
+
+  assert.equal(attempts, 4);
+  assert.equal(result.attempts, 4);
+  assert.equal(result.truncated, true);
+});

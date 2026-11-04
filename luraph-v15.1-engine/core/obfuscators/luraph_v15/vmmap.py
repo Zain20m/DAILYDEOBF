@@ -534,36 +534,161 @@ def _maker_params(maker):
     return pi, ui
 
 def ctor_assignments(root):
-    """Functions assigned by index into a captured table anywhere in the
-    source: `(A)[0x3c]=function(W,m) ...` -> {("A", 60): fn}. Luraph builds
-    that register their closure factory at run time (a plain assignment, not
-    a table constructor) are invisible to find_ctor_funcs; the dump's captured
-    table for `A` still holds the function under the same index, so binding
-    needs the assignment form too."""
-    out = {}
+    """Map functions installed on VM tables after their table constructor.
 
-    def visit(n):
+    Supports bracket and dotted writes, named function statements, and local
+    aliases of a function value. The capture names the table by the local
+    visible to the maker, which may be an alias rather than the original
+    declaration, so all statically known aliases receive the same mapping.
+    """
+    out = {}
+    fn_defs = {}
+    table_aliases = {}
+
+    def local_ref(node):
+        node = _unwrap(node) if isinstance(node, dict) else node
+        if isinstance(node, dict) and node.get("type") == "AstExprLocal":
+            local = node.get("local") or {}
+            return local.get("location"), local.get("name")
+        return None, None
+
+    def static_key(node):
+        if not isinstance(node, dict):
+            return node.encode("latin-1") if isinstance(node, str) else None
+        typ = node.get("type")
+        if typ == "AstExprConstantNumber":
+            return _fix_int(node.get("value"))
+        if typ == "AstExprConstantString":
+            value = node.get("value")
+            return value.encode("latin-1") if isinstance(value, str) else None
+        # AstExprIndexName stores the property as an AstName in "index"
+        # on some Luau AST builds, and directly as a string on others.
+        for field in ("name", "index", "value"):
+            value = node.get(field)
+            if isinstance(value, str):
+                return value.encode("latin-1")
+            if isinstance(value, dict):
+                name = value.get("name") or value.get("value")
+                if isinstance(name, str):
+                    return name.encode("latin-1")
+        return None
+
+    def target_parts(var):
+        if not isinstance(var, dict):
+            return None, None
+        typ = var.get("type")
+        if typ not in ("AstExprIndexExpr", "AstExprIndexName"):
+            return None, None
+        base_node = var.get("expr")
+        base_loc, base_name = local_ref(base_node)
+        key_node = var.get("index")
+        key = static_key(key_node)
+        if typ == "AstExprIndexName" and key is None:
+            key = static_key(var.get("name"))
+        if base_loc is None or key is None:
+            return None, None
+        return (base_loc, base_name), key
+
+    def resolve_local_fn(loc, seen=None):
+        seen = set() if seen is None else seen
+        if loc in seen:
+            return None
+        seen.add(loc)
+        value = fn_defs.get(loc)
+        if isinstance(value, dict) and value.get("type") == "AstExprFunction":
+            return value
+        if isinstance(value, tuple) and value and value[0] == "local":
+            return resolve_local_fn(value[1], seen)
+        return None
+
+    nodes = []
+    def collect(n):
         if isinstance(n, dict):
-            if n.get("type") == "AstStatAssign":
-                for var, val in zip(n["vars"], n["values"]):
-                    if _unwrap(val).get("type") != "AstExprFunction" or \
-                            var.get("type") != "AstExprIndexExpr":
-                        continue
-                    val = _unwrap(val)
-                    base = local_name(_unwrap(var["expr"]))
-                    idx = _unwrap(var["index"])
-                    if not base:
-                        continue
-                    if idx.get("type") == "AstExprConstantNumber":
-                        out.setdefault((base.encode("latin-1"), _fix_int(idx["value"])), val)
-                    elif idx.get("type") == "AstExprConstantString":
-                        out.setdefault((base.encode("latin-1"), idx["value"].encode("latin-1")), val)
-            for v in list(n.values()):
-                visit(v)
+            nodes.append(n)
+            for value in n.values():
+                collect(value)
         elif isinstance(n, list):
-            for v in n:
-                visit(v)
-    visit(root)
+            for value in n:
+                collect(value)
+    collect(root)
+
+    # First resolve simple local function definitions and table aliases.
+    for n in nodes:
+        typ = n.get("type")
+        if typ == "AstStatLocal":
+            for var, value in zip(n.get("vars", ()), n.get("values", ())):
+                loc = var.get("location")
+                if not loc or not isinstance(value, dict):
+                    continue
+                value = _unwrap(value)
+                if value.get("type") == "AstExprFunction":
+                    fn_defs[loc] = value
+                else:
+                    alias_loc, _ = local_ref(value)
+                    if alias_loc is not None:
+                        fn_defs[loc] = ("local", alias_loc)
+                        table_aliases[loc] = alias_loc
+        elif typ == "AstStatAssign":
+            for var, value in zip(n.get("vars", ()), n.get("values", ())):
+                loc, _ = local_ref(var)
+                if loc is None or not isinstance(value, dict):
+                    continue
+                value = _unwrap(value)
+                if value.get("type") == "AstExprFunction":
+                    fn_defs[loc] = value
+                else:
+                    alias_loc, _ = local_ref(value)
+                    if alias_loc is not None:
+                        fn_defs[loc] = ("local", alias_loc)
+                        table_aliases[loc] = alias_loc
+
+    def aliases_for(loc, name):
+        names = {name.encode("latin-1")} if name else set()
+        pending = [loc]
+        seen = set()
+        while pending:
+            current = pending.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            for alias, target in table_aliases.items():
+                if target == current:
+                    pending.append(alias)
+                    for candidate in nodes:
+                        if candidate.get("type") == "AstStatLocal":
+                            for var in candidate.get("vars", ()):
+                                if var.get("location") == alias and var.get("name"):
+                                    names.add(var["name"].encode("latin-1"))
+                        elif candidate.get("type") == "AstStatAssign":
+                            for var in candidate.get("vars", ()):
+                                vloc, vname = local_ref(var)
+                                if vloc == alias and vname:
+                                    names.add(vname.encode("latin-1"))
+        return names
+
+    def add(var, value):
+        if not isinstance(value, dict):
+            return
+        value = _unwrap(value)
+        if value.get("type") == "AstExprLocal":
+            value = resolve_local_fn(value.get("local", {}).get("location"))
+        if not isinstance(value, dict) or value.get("type") != "AstExprFunction":
+            return
+        base, key = target_parts(var)
+        if base is None:
+            return
+        loc, name = base
+        for alias_name in aliases_for(loc, name):
+            out.setdefault((alias_name, key), value)
+
+    for n in nodes:
+        typ = n.get("type")
+        if typ == "AstStatAssign":
+            for var, value in zip(n.get("vars", ()), n.get("values", ())):
+                add(var, value)
+        elif typ == "AstStatFunction":
+            add(n.get("name"), n.get("func") or n.get("value"))
+
     return out
 
 def outer_decls(root, target):

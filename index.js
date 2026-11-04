@@ -21,7 +21,7 @@ const ENGINE_TIMEOUT_MS = 15 * 60_000;
 const ENGINE_V15_DIR = path.join(__dirname, 'luraph-v15-engine');
 const ENGINE_V15_CLI = path.join(ENGINE_V15_DIR, 'deob.js');
 const ENGINE_151_DIR = path.join(__dirname, 'luraph-v15.1-engine');
-const ENGINE_151_CLI = path.join(ENGINE_151_DIR, 'bin', 'luraph-deobf.js');
+const ENGINE_151_CLI = path.join(ENGINE_151_DIR, 'deob.js');
 const activeUsers = new Set();
 
 if (!TOKEN) {
@@ -204,7 +204,7 @@ async function collectInput(message, prompt) {
   });
 }
 
-function runEngine(engineDir, engineCli, inputPath, outputPath, timeoutMs, legacy = false) {
+function runEngine(engineDir, engineCli, inputPath, outputPath, timeoutMs, legacy = false, extraArgs = []) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [
       legacy ? '--max-old-space-size=512' : '--max-old-space-size=1024',
@@ -213,6 +213,7 @@ function runEngine(engineDir, engineCli, inputPath, outputPath, timeoutMs, legac
       '-o',
       outputPath,
       ...(legacy ? ['--steps', '180000'] : ['--timeout', '120']),
+      ...extraArgs,
     ], {
       cwd: engineDir,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -284,45 +285,40 @@ async function processLuraph151(message, prompt, input) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-151-'));
   const inputPath = path.join(tempRoot, 'input.lua');
   const outDir = path.join(tempRoot, 'output');
+  const outputPath = path.join(outDir, 'deobfuscated.luau');
   await fs.mkdir(outDir, { recursive: true });
   await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
 
   try {
-    await prompt.edit({ content: 'Running **Luraph 15.1**…', components: [] });
-    await runEngine(ENGINE_151_DIR, ENGINE_151_CLI, inputPath, outDir, 90_000, true);
-    const names = [
-      '06_lifted_listing.lua',
-      '01_bootstrap_readable.lua',
-      '07_STRUCTURE_REPORT.md',
-      '00_extract_info.json',
-      '06_strings_seen.txt',
-    ];
-    const files = [];
-    let total = 0;
-    for (const name of names) {
-      try {
-        const data = await fs.readFile(path.join(outDir, name));
-        total += data.length;
-        if (total <= MAX_OUTPUT_BYTES && data.length <= 8 * 1024 * 1024) {
-          files.push(new AttachmentBuilder(data, { name }));
-        }
-      } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
-      }
+    await prompt.edit({ content: 'Running Luraph 15.1 with the replacement engine...', components: [] });
+    await runEngine(
+      ENGINE_151_DIR,
+      ENGINE_151_CLI,
+      inputPath,
+      outputPath,
+      ENGINE_TIMEOUT_MS,
+      false,
+      ['--plugin', 'luraph_v15', '--budget', '30'],
+    );
+
+    const data = await fs.readFile(outputPath);
+    if (!data.length) throw new Error('The engine returned an empty output file.');
+    if (data.length > MAX_OUTPUT_BYTES) {
+      throw new Error('The deobfuscated output is larger than the Discord attachment limit.');
     }
-    if (!files.length) throw new Error('Luraph 15.1 completed but did not produce its expected output files.');
+
+    const safeName = String(input.filename || 'script.lua').replaceAll(String.fromCharCode(96), '');
     await message.reply({
-      content: '**DAILY DEOBF · Luraph 15.1**\\nProcessed: ' + input.filename.replace(/\\`/g, '') +
-        '\\n\\nThe lifted listing shows instructions observed during analysis. Some protected scripts may not expose every function in one run.',
-      files,
+      content: '**DAILY DEOBF - Luraph 15.1 (new engine)**\nProcessed: ' + safeName +
+        '\n\nThe engine reconstructs code paths it can analyze. Some protected paths may remain incomplete.',
+      files: [new AttachmentBuilder(data, { name: 'deobfuscated.luau' })],
       allowedMentions: { repliedUser: false },
     });
-    await prompt.edit({ content: '✅ Luraph 15.1 finished. Its output files are attached above.', components: [] });
+    await prompt.edit({ content: 'Luraph 15.1 finished. The deobfuscated Luau file is attached above.', components: [] });
   } finally {
     await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
   }
 }
-
 async function startWorkflow(message) {
   const prompt = await message.reply({
     content: '📄 **DAILY DEOBF**\nSend a `.lua`, `.luau`, or `.txt` file, or paste a direct URL to your Luau script.\n\nMaximum input size: 2 MB.',

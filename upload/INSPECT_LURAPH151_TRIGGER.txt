@@ -1,1 +1,0 @@
-Temporary trigger for safe inspection of the uploaded Luraph 15.1 ZIP. This file is removed after import.

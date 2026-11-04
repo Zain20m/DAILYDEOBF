@@ -57,6 +57,7 @@ class Dump:
         self.lfs = {}
         self.shared = {}        
         self.shared_meta = {}   
+        self.bad_registers = []
         self.buf_loc = {}       
         self._load_tables(d["tables"])
 
@@ -384,6 +385,8 @@ class OpaqueFn:
         self.node = None
         self.pf_tid = None
         self.source = None
+        self.refs = []
+        self.binding = None
 
 class FrameArg(Global):
     """The caller's register frame passed as a call argument (a register
@@ -1327,6 +1330,7 @@ class ProtoLifter:
             self.dump.shared_meta.setdefault(n, {
                 "lfid": v.lfid, "proto": v.pf_tid,
                 "source_captured": bool(v.source), "constructor_matched": v.node is not None,
+                "refs": v.refs[:4], "binding": v.binding,
             })
             return SharedFn(v, n)
         if isinstance(v, OpaqueFn):
@@ -1531,6 +1535,14 @@ class ProtoLifter:
                         getattr(self, "last_op", None),
                         getattr(self, "sp_debug", ())[:12],
                     )
+                if os.environ.get("DEVIRT_TB") and len(getattr(self.dump, "bad_registers", ())) < 16:
+                    self.dump.bad_registers.append({
+                        "index": k,
+                        "stack_base": self.stack_base,
+                        "proto": getattr(self.proto, "tid", None),
+                        "last_op": getattr(self, "last_op", None),
+                        "sp_candidates": getattr(self, "sp_debug", ())[:8],
+                    })
                 raise Unsupported("invalid register index %s [stack_base=%r, proto=%r]%s"
                                    % (k, self.stack_base, getattr(self.proto, "tid", None), detail))
             if self.jvals.get(k) is FRAME:
@@ -4530,7 +4542,7 @@ class Program:
                         shared[nm] = v
         self.dump.shared_cap = shared
 
-        for cap in self.dump.protos.values():
+        for cap_key, cap in self.dump.protos.items():
             try:
                 vm = self.vm_of(cap)
             except Unsupported:
@@ -4540,6 +4552,8 @@ class Program:
                 continue
             ctor = self.ctors[id(vm)]
             assign_ctor = getattr(vm, "assign_ctor", {})
+            maker_tag = cap.get("__maker")
+            maker_tag = maker_tag.decode("latin-1") if isinstance(maker_tag, bytes) else str(maker_tag)
             for nm, e in cap.items():
                 if not isinstance(e, LTable):
                     continue
@@ -4557,6 +4571,19 @@ class Program:
                         fn = assign_ctor.get((nm.encode("latin-1"), S.fix_int(k)))
                     if fn is not None:
                         v.node = fn
+                        v.binding = (cap_key, nm, repr(k), maker_tag)
+                    else:
+                        ref = (str(cap_key), nm, repr(k), maker_tag)
+                        if ref not in v.refs and len(v.refs) < 8:
+                            v.refs.append(ref)
+
+        if os.environ.get("DEVIRT_TB"):
+            unresolved = [v for v in self.dump.lfs.values()
+                          if isinstance(v, OpaqueFn) and v.node is None
+                          and v.pf_tid is None and not v.source]
+            examples = [(v.lfid, v.refs[:2]) for v in unresolved[:8]]
+            print("[fn-bind-summary] unresolved=%d examples=%r" %
+                  (len(unresolved), examples), file=sys.stderr)
         g = LTable()
         for lib in ("bit32", "string", "table", "math", "buffer", "utf8"):
             t = LTable()
@@ -5228,6 +5255,18 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
         at = next((i for i, l in enumerate(out) if l and not l.startswith("--")), len(out))
         out[at:at] = shared
     text = backend.polish("\n".join(out))
+    if os.environ.get("DEVIRT_TB"):
+        if prog.dump.shared_meta:
+            unresolved_shared = [
+                (n, meta) for n, meta in sorted(prog.dump.shared_meta.items())
+                if not meta.get("constructor_matched") and not meta.get("source_captured")
+            ]
+            print("[fn-stub-summary] count=%d examples=%r" %
+                  (len(unresolved_shared), unresolved_shared[:8]), file=sys.stderr)
+        bad = prog.dump.bad_registers
+        if bad:
+            print("[register-summary] count=%d examples=%r" %
+                  (len(bad), bad[:6]), file=sys.stderr)
     return text, fl.stats, prog.requests, buffer_patches(prog.dump)
 
 finish_text = backend.finish_text

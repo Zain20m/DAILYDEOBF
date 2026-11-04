@@ -4895,8 +4895,6 @@ class Program:
                         "preceding_ir": preceding,
                         "reason": str(e)[:280],
                     }
-                    if os.environ.get("DEVIRT_TB"):
-                        print("[walk-step-error] %s" % node.vm_context, file=sys.stderr)
                     if os.environ.get("DEVIRT_TRACEBACK"):
                         import traceback
                         traceback.print_exc()
@@ -5723,22 +5721,27 @@ def _walk_one(prog, vm, vmobj, proto, pkey, init_facts=None):
     ent["requests"] = lf.requests
     ent["errors"] = sum(1 for _, n in order if getattr(n, "error", None))
     if os.environ.get("DEVIRT_ERRS"):
-        for state_key, n in order:
-            if getattr(n, "error", None):
-                context = getattr(n, "vm_context", None)
-                if context:
-                    print("[walk] proto=%s state=%s reason=%s source=%r operation=%r opcode=%r " 
-                          "registers=%r stack_base=%r known=%r unknown=%r preceding=%r" %
-                          (context.get("prototype_id"), state_key[:2], n.error,
-                           context.get("source_offset"), context.get("ast_operation"),
-                           context.get("opcode"), context.get("register_operands"),
-                           context.get("stack_base"), context.get("known_values"),
-                           context.get("unknown_registers"), context.get("preceding_ir")),
-                          file=sys.stderr)
-                else:
-                    print("[walk] proto=%s state=%s %s" %
-                          (dump.pid_of_table.get(proto.tid, proto.tid), state_key[:2], n.error),
-                          file=sys.stderr)
+        failures = [(state_key, node) for state_key, node in order
+                    if getattr(node, "error", None)]
+        for state_key, n in failures[:8]:
+            context = getattr(n, "vm_context", None)
+            if context:
+                print("[walk] proto=%s state=%s reason=%s source=%r operation=%r opcode=%r " 
+                      "registers=%r stack_base=%r known=%r unknown=%r preceding=%r" %
+                      (context.get("prototype_id"), state_key[:2], n.error,
+                       context.get("source_offset"), context.get("ast_operation"),
+                       context.get("opcode"), context.get("register_operands"),
+                       context.get("stack_base"), context.get("known_values"),
+                       context.get("unknown_registers"), context.get("preceding_ir")),
+                      file=sys.stderr)
+            else:
+                print("[walk] proto=%s state=%s %s" %
+                      (dump.pid_of_table.get(proto.tid, proto.tid), state_key[:2], n.error),
+                      file=sys.stderr)
+        if len(failures) > 8:
+            print("[walk] proto=%s additional_unresolved_operations=%d (first 8 shown)" %
+                  (dump.pid_of_table.get(proto.tid, proto.tid), len(failures) - 8),
+                  file=sys.stderr)
     kids = [c for c in lf.children if isinstance(c.proto, LTable)]
     ent["children"] = [pkey.get(c.proto.tid, c.proto) for c in kids]
     if os.environ.get("DEVIRT_TB") and kids:

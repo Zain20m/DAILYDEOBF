@@ -3803,11 +3803,24 @@ class Stepper:
         self.written |= acc.written
         for k in (self.read_first & self.written & self.sp_cands) - self.carry - self.not_carried - self.fixed_decls:
             v = dict.get(acc, k)
-            if k in self.lf.special or not (isinstance(v, int) and not isinstance(v, bool)):
-                self.not_carried.add(k)
+            if isinstance(v, int) and not isinstance(v, bool):
+                self.carry.add(k)
+                self.new_carry = True
                 continue
-            self.carry.add(k)
-            self.new_carry = True
+            # Stack-pointer candidates can themselves be a short expression
+            # (for example the previous register plus a frame offset). Do not
+            # drop these: the next dispatch handler would otherwise read the
+            # stale prologue value, commonly nil, and corrupt every later
+            # register access. Snapshot only bounded, pure expressions.
+            if (k not in self.lf.special
+                    and len(self.vreg_of) < MAX_SYMBOLIC_CARRY_REGS
+                    and bounded_symbolic_carry(v)):
+                vreg = 800000 + len(self.vreg_of) + 1
+                self.vreg_of[k] = vreg
+                self.lf.vreg_set.add(vreg)
+                self.new_carry = True
+                continue
+            self.not_carried.add(k)
         # v14.9: handler temps holding state across instructions (`p=(b)` in
         # one handler, `p=p[y]` in a later one) -- carry only STABLE values:
         # concrete VM objects, register reads, constants. Growing chains

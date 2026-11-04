@@ -605,38 +605,72 @@ async function processLuraph151(message, prompt, input) {
   const base = path.join(outputDir, 'deobfuscated');
   await fs.mkdir(outputDir, { recursive: true });
   await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
-  const progress = createAnalysisProgress(prompt, input.filename, Buffer.byteLength(input.source, 'utf8'), 'Luraph 15.1');
+
+  const inputBytes = Buffer.byteLength(input.source, 'utf8');
+  const progress = createAnalysisProgress(prompt, input.filename, inputBytes, 'Luraph 15.1');
   const startedAt = Date.now();
 
   try {
-    await progress.start();
-    const result = await runEngine(
-      ENGINE_151_DIR, ENGINE_151_CLI, inputPath, outputPath, ENGINE_TIMEOUT_MS, false,
+    await progress.setPhase(
+      'Preparing the v15-compatible beta pipeline',
+      '15.1 is being processed with the uploaded Luraph v15 devirtualizer, including full VM capture and lifting.'
+    );
+
+    const result = await runPythonEngine(
+      ENGINE_V15_DIR,
+      ENGINE_V15_CLI,
+      inputPath,
+      outputPath,
+      ENGINE_TIMEOUT_MS,
       [
-        '--plugin', 'luraph_v15', '--debug', '--strings',
-        '--max-runs', '12', '--devirt-rounds', '200',
-        '--budget', '30', '--timeout', '90',
+        '--obfuscator', 'luraph_v15',
+        '--debug',
+        '--strings',
+        '--max-runs', '16',
+        '--devirt-rounds', '200',
+        '--budget', '60',
+        '--timeout', '180',
+        '--no-pypy',
       ],
       {
-        // This beta engine skips the loader VM by default. Including it is what
-        // lifts the hidden payload VM instead of returning only the behaviour trace.
         env: {
+          DEVIRT_FULL_ROUNDS: '1',
           DEVIRT_LOADERS: '1',
+          DEVIRT_TIMING: '1',
+          DEVIRT_ERRS: '1',
+          DEVIRT_TB: '1',
+          DEVIRT_WALK_LIMIT: '750000',
         },
         onProgress: progress.onLine,
       },
     );
 
-    await progress.setPhase('Packaging Luraph 15.1 analysis artifacts', 'Collecting reconstructed Luau, the trace, strings and VM metadata.');
+    await progress.setPhase(
+      'Checking reconstructed Luau and VM artifacts',
+      'Verifying the full lift, captured prototypes, dynamically loaded chunks and trace separately.'
+    );
+
     const summary = await sendAnalysisOutput(message, input, {
-      label: 'Luraph 15.1', base, outputDir,
-      elapsedMs: Date.now() - startedAt, stderr: result.stderr,
-      maxRuns: 12, devirtRounds: 200, loaderAnalysis: true,
+      label: 'Luraph 15.1 · v15-compatible beta pipeline',
+      base,
+      outputDir,
+      elapsedMs: Date.now() - startedAt,
+      stderr: result.stderr,
+      maxRuns: 16,
+      devirtRounds: 200,
+      loaderAnalysis: true,
     });
+
     await progress.complete(summary.hasLiftedSource
-      ? 'A reconstructed Luau file and supporting analysis artifacts were attached.'
-      : 'The trace and diagnostic artifacts were attached; the engine did not finish a full lift.');
-    await prompt.edit({ content: '✅ Luraph 15.1 analysis finished. Check the attached result and analysis report.', components: [] });
+      ? 'Full reconstructed Luau generated. Supporting trace and VM artifacts were attached separately.'
+      : 'The engine completed its analysis but could only produce a behaviour trace. The report explains which VM artifacts were captured and why a full lift was not available.');
+
+    await prompt.edit({
+      content: summary.hasLiftedSource
+        ? '✅ Luraph 15.1 full analysis finished. The reconstructed Luau and supporting analysis files are attached.'
+        : '⚠️ Luraph 15.1 analysis finished, but the VM could not be fully lifted. The trace is labelled separately from source. Check the analysis report.',
+      components: [],
+    });
   } catch (error) {
     await progress.fail(error);
     throw error;
@@ -645,7 +679,6 @@ async function processLuraph151(message, prompt, input) {
     await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
   }
 }
-
 
 async function startWorkflow(message) {
   const prompt = await message.reply({

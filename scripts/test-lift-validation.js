@@ -16,7 +16,7 @@ const literalNoise = inspectLiftText([
   'local longMessage = [=[(nil)(3) nil + 8]=]',
   '-- nil + 5 and bit32.band(nil, 255)',
   'print(message, longMessage)',
-].join('\\n'));
+].join('\n'));
 assert.equal(literalNoise.complete, true);
 assert.deepEqual(literalNoise.issues, []);
 

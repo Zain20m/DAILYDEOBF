@@ -1682,7 +1682,7 @@ function formatExecResult(result) {
 
 async function startExecWorkflow(message, inlineSource = null) {
   const allowedUsers = getExecAllowedUsers();
-  if (!allowedUsers.has(message.author.id)) {
+  if (!allowedUsers.has('*') && !allowedUsers.has(message.author.id)) {
     throw new Error(
       allowedUsers.size
         ? 'You are not on the .exec allowlist.'

@@ -1,50 +1,60 @@
-name: Import newest Luraph v15 engine
+name: Inspect Luraph 15.1 upload
 
 on:
   push:
     paths:
       - "upload/**"
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  import-engine:
+  inspect-151:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-
-      - name: Extract and install newest engine
+      - name: Inspect archive only (no project code is executed)
         shell: bash
         run: |
-          set -euo pipefail
-          shopt -s nullglob
-          ARCHIVES=(upload/DAILY-DEOBF-LURAPH-V15-NEWEST*.zip)
-          if [ "${#ARCHIVES[@]}" -eq 0 ]; then
-            echo "No matching Luraph v15 archive found."
-            exit 1
-          fi
-          ARCHIVE="${ARCHIVES[0]}"
-          echo "Importing: $ARCHIVE"
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, BadZipFile
 
-          rm -rf /tmp/daily-deobf-import
-          mkdir -p /tmp/daily-deobf-import
-          unzip -q "$ARCHIVE" -d /tmp/daily-deobf-import
-          test -f /tmp/daily-deobf-import/luraph-v15-engine/deob.js
-          test -f /tmp/daily-deobf-import/luraph-v15-engine/bin/luau
-          test -f /tmp/daily-deobf-import/luraph-v15-engine/bin/luau-ast
-
-          rm -rf luraph-v15-engine
-          cp -R /tmp/daily-deobf-import/luraph-v15-engine ./luraph-v15-engine
-          chmod +x luraph-v15-engine/bin/luau luraph-v15-engine/bin/luau-ast
-          python3 scripts/apply-luraph-newest.py
-          rm -f "$ARCHIVE"
-
-          node --check index.js
-          node --check luraph-v15-engine/deob.js
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Replace legacy 15.1 engine with newest Luraph v15"
-          git push
+          archive = Path("upload/Luraph_v15_1_Deobfuscator_Newest.zip")
+          if not archive.is_file():
+              raise SystemExit(f"Missing archive: {archive}")
+          print(f"ARCHIVE {archive} {archive.stat().st_size} bytes")
+          try:
+              with ZipFile(archive) as z:
+                  bad = z.testzip()
+                  if bad:
+                      raise SystemExit(f"ZIP CRC failed: {bad}")
+                  infos = [i for i in z.infolist() if not i.is_dir()]
+                  print(f"ZIP_OK files={len(infos)} uncompressed={sum(i.file_size for i in infos)} bytes")
+                  for i in infos:
+                      print(f"FILE {i.file_size:>10} {i.filename}")
+                  print("\n--- README and dependency manifests ---")
+                  selected = 0
+                  for i in infos:
+                      base = i.filename.replace("\\", "/").rsplit("/", 1)[-1].lower()
+                      if base.startswith("readme") or base in {
+                          "requirements.txt", "pyproject.toml", "package.json",
+                          "setup.py", "setup.cfg", "cmakelists.txt", "makefile"
+                      }:
+                          if i.file_size > 40000:
+                              print(f"SKIP {i.filename}: {i.file_size} bytes")
+                              continue
+                          try:
+                              doc = z.read(i).decode("utf-8", "replace")
+                          except Exception as exc:
+                              print(f"READ_ERROR {i.filename}: {exc}")
+                              continue
+                          print(f"\n### {i.filename}\n{doc[:7000]}")
+                          selected += 1
+                          if selected >= 10:
+                              break
+          except BadZipFile as exc:
+              raise SystemExit(f"Invalid ZIP: {exc}")
+          PY

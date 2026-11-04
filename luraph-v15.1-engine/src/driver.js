@@ -6,6 +6,7 @@ const vmmap = require('./vmmap');
 const harness = require('./harness');
 const trace = require('./traceout');
 const tidy = require('./tidy');
+const { inspectLiftText } = require('../../scripts/lift-validation');
 
 const SPIN_CHECKS = 24;
 
@@ -202,12 +203,26 @@ async function run(job) {
 
   if (devirtOn && fs.existsSync(dpath)) {
     const lifted = fs.readFileSync(dpath, 'utf8');
-    const nilCalls = (lifted.match(/\(nil\)\(/g) || []).length;
-    const lines = lifted.split('\n').length;
-    if (nilCalls < 50 || nilCalls * 100 < lines) {
+    const assessment = inspectLiftText(lifted);
+    let syntaxError = null;
+
+    if (assessment.complete) {
+      try {
+        vmmap.loadAst(dpath);
+      } catch (error) {
+        syntaxError = error;
+      }
+    }
+
+    if (assessment.complete && !syntaxError) {
       return dpath;
     }
-    process.stderr.write(`[!] the devirtualized output is broken (${nilCalls} calls of nil); writing behaviour trace instead\n`);
+
+    const reasons = assessment.issues.slice();
+    if (syntaxError) reasons.push('Luau AST parse failed: ' + String(syntaxError.message || syntaxError).slice(0, 240));
+    process.stderr.write('[!] devirtualized candidate failed validation: ' +
+      (reasons.join('; ') || 'unknown structural or syntax error') +
+      '; retaining it only as a debug artifact and returning the behaviour trace\n');
     if (!job.debug) { try { fs.unlinkSync(dpath); } catch {} }
     writeTrace();
     return job.tracePath;

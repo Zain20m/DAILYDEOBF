@@ -10,6 +10,8 @@ const clean = inspectLiftText([
 ].join('\n'));
 assert.equal(clean.complete, true);
 assert.deepEqual(clean.issues, []);
+assert.equal(clean.categories.syntax.status, 'not_checked');
+assert.equal(clean.categories.behavioralConsistency.status, 'not_checked');
 
 const literalNoise = inspectLiftText([
   'local message = "nil + 4 bit32.band(nil, 2) data[nil]"',
@@ -31,10 +33,18 @@ const broken = inspectLiftText([
   '  bit32.band(nil, 255)',
   '  luraph_runtime1(nil)',
   '  error("devirt: corrupt/encrypted register index 2066")',
+  '  error("devirt: invalid register index 443960945")',
+  '  error("devirt: unexplored successor proto=7")',
   'end',
 ].join('\n'));
 assert.equal(broken.complete, false);
 assert.ok(broken.metrics.devirtErrors > 0);
+assert.ok(broken.metrics.registerErrors > 0);
+assert.ok(broken.metrics.controlFlowStubs > 0);
+assert.equal(broken.categories.registerRecovery.status, 'incomplete');
+assert.equal(broken.categories.devirtualizationStubs.status, 'incomplete');
+assert.equal(broken.categories.controlFlow.status, 'incomplete');
+assert.equal(broken.categories.behavioralConsistency.status, 'not_checked');
 assert.ok(broken.metrics.nilCalls > 0);
 assert.ok(broken.metrics.nilIndexes > 0);
 assert.ok(broken.metrics.nilArithmetic > 0);

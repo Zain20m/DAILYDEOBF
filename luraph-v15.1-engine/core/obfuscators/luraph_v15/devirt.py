@@ -2534,9 +2534,16 @@ class UnknownValue(Expr):
 
 
 def _unknown_in(value):
-    """Return the first unresolved sentinel nested in an IR/symbolic value."""
+    """Return the first unresolved sentinel nested in an IR/symbolic value.
+
+    Most values passed through the lifter are atomic constants/register refs.
+    Skip those without walking their trees; compound expressions still get a
+    complete scan so an unknown cannot hide inside an Index/Bin/closure.
+    """
     if isinstance(value, UnknownValue):
         return value
+    if isinstance(value, (Const, Reg, Pseudo, Global, Upval, TempVal, Vararg, Missing)):
+        return None
     if isinstance(value, Expr):
         return next((node for node in walk_expr(value) if isinstance(node, UnknownValue)), None)
     if isinstance(value, Multi):

@@ -1451,10 +1451,14 @@ class ProtoLifter:
             k = S.norm_key(key)
             if isinstance(k, (int, float)) and k < 1 and self.stack_base is not None:
                 raise Unsupported("read below the stack VM's frame (register %s)" % k)
-            if isinstance(k, (int, float)) and (k < 0 or (1024 < k < 800000)) and self.stack_base is None:
-                raise Unsupported("corrupt/encrypted register index %s [stack_base=%r, stack_pointer_candidates=%d, proto=%r]"
-                                   % (k, self.stack_base, len(getattr(self.vm, "_sp_cands", {}).get(None, ())),
-                                      getattr(self.proto, "tid", None)))
+            # A concrete non-negative index is still a usable VM register
+            # even when stack-base inference failed. Do not label every
+            # register above 1024 as encrypted: wide frames legitimately use
+            # indexes such as 2066 and 2373. Keep the reserved synthetic-vreg
+            # range unavailable to source registers.
+            if isinstance(k, (int, float)) and (k < 0 or k >= 800000):
+                raise Unsupported("invalid register index %s [stack_base=%r, proto=%r]"
+                                   % (k, self.stack_base, getattr(self.proto, "tid", None)))
             if self.jvals.get(k) is FRAME:
                 return obj
             if k in self.jvals:
@@ -1658,10 +1662,12 @@ class ProtoLifter:
                 return
             if isinstance(key, (int, float)) and key < 1 and self.stack_base is not None:
                 raise Unsupported("store below the stack VM's frame (register %s)" % key)
-            if isinstance(key, (int, float)) and (key < 0 or (1024 < key < 800000)) and self.stack_base is None:
-                raise Unsupported("corrupt/encrypted register store %s [stack_base=%r, stack_pointer_candidates=%d, proto=%r]"
-                                   % (key, self.stack_base, len(getattr(self.vm, "_sp_cands", {}).get(None, ())),
-                                      getattr(self.proto, "tid", None)))
+            # Match index(): accept concrete positive register slots even
+            # if the frame base is not known yet. The slot remains an exact
+            # Reg(key), and candidate validation will reject broken lifts.
+            if isinstance(key, (int, float)) and (key < 0 or key >= 800000):
+                raise Unsupported("invalid register store %s [stack_base=%r, proto=%r]"
+                                   % (key, self.stack_base, getattr(self.proto, "tid", None)))
             self.emit(Assign(Reg(S.norm_key(key)), self.value_of(v)))
             return
         if isinstance(obj, FrameProxy):

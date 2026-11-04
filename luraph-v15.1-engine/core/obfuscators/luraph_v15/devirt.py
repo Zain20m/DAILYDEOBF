@@ -56,6 +56,7 @@ class Dump:
         self.tables = {}
         self.lfs = {}
         self.shared = {}        
+        self.shared_meta = {}   
         self.buf_loc = {}       
         self._load_tables(d["tables"])
 
@@ -357,6 +358,12 @@ class Dump:
             pf = v.get("pf")
             if pf is not None and "t" in pf:
                 f.pf_tid = pf["t"]
+            source_hex = v.get("src")
+            if isinstance(source_hex, str) and source_hex:
+                try:
+                    f.source = bytes.fromhex(source_hex).decode("utf-8", "replace")
+                except ValueError:
+                    f.source = None
             return f
         if "num" in v:
             return {"inf": float("inf"), "-inf": float("-inf"), "nan": float("nan"), "-0": -0.0}[v["num"]]
@@ -375,7 +382,8 @@ class OpaqueFn:
     def __init__(self, lfid):
         self.lfid = lfid
         self.node = None
-        self.pf_tid = None      
+        self.pf_tid = None
+        self.source = None
 
 class FrameArg(Global):
     """The caller's register frame passed as a call argument (a register
@@ -1309,8 +1317,17 @@ class ProtoLifter:
             return Global("_ENV")
         if isinstance(v, LuaFunc) and isinstance(self.vm, JitModel):
             return self.jit_closure(v)
+        if isinstance(v, OpaqueFn) and v.node is None and v.pf_tid is None and v.source:
+            # LPH_ENCFUNC may compile a decrypted source chunk with loadstring.
+            # The runtime dump carries that source for otherwise anonymous
+            # function IDs, so preserve the chunk as a real Luau function.
+            return Opaque("function", "function(...)\n" + v.source + "\nend")
         if isinstance(v, OpaqueFn) and v.pf_tid is not None and v.node is None:
             n = self.dump.shared.setdefault(v.lfid, len(self.dump.shared) + 1)
+            self.dump.shared_meta.setdefault(n, {
+                "lfid": v.lfid, "proto": v.pf_tid,
+                "source_captured": bool(v.source), "constructor_matched": v.node is not None,
+            })
             return SharedFn(v, n)
         if isinstance(v, OpaqueFn):
             if v.node is not None:
@@ -1319,6 +1336,10 @@ class ProtoLifter:
                     return clo
                 return Opaque("function", self.plain_function_text(v.node) or "function(...) end")
             n = self.dump.shared.setdefault(v.lfid, len(self.dump.shared) + 1)
+            self.dump.shared_meta.setdefault(n, {
+                "lfid": v.lfid, "proto": v.pf_tid,
+                "source_captured": bool(v.source), "constructor_matched": v.node is not None,
+            })
             return SharedFn(v, n)
         if isinstance(v, Buf):
 
@@ -5154,8 +5175,13 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
 
     shared = []
     for n in sorted(prog.dump.shared.values()):
-        shared += ["-- Luraph runtime function (from the VM object, not part of the script: not lifted).",
-                   "-- LPH_ENCFUNC decrypts a function this way: (key, encrypted buffer, ...) -> function.",
+        meta = prog.dump.shared_meta.get(n, {})
+        detail = "-- unresolved function id=%s proto=%s source_captured=%s constructor_matched=%s" % (
+            meta.get("lfid", "unknown"), meta.get("proto", "none"),
+            bool(meta.get("source_captured")), bool(meta.get("constructor_matched")),
+        )
+        shared += [detail,
+                   "-- LPH_ENCFUNC can compile a decrypted function through loadstring; source capture is attempted.",
                    "local function luraph_runtime%d(...)" % n,
                    "\terror(\"Luraph runtime function, not devirtualized\")",
                    "end", ""]

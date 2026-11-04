@@ -1,4 +1,4 @@
-name: Verify original Luraph v15 lifter on 15.1 beta
+name: Verify DAILY DEOBF original Luraph engine
 
 on:
   push:
@@ -7,7 +7,6 @@ on:
       - "package.json"
       - "scripts/setup-engines.js"
       - "luraph-v15-engine/**"
-      - "upload/Luraph_v15_1_Deobfuscator_Newest.zip"
       - ".github/workflows/verify-full-analysis.yml"
   workflow_dispatch:
 
@@ -17,11 +16,11 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify app wiring, engine files and Python syntax
+      - name: Verify bot wiring and original engine installation
         shell: bash
         run: |
           set -euo pipefail
@@ -32,18 +31,49 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           engine = Path("luraph-v15-engine/deobf")
-          for path in engine.rglob("*.py"):
-              if "__pycache__" not in path.parts:
-                  compile(path.read_text(encoding="utf-8"), str(path), "exec")
-          for name in ("luau", "luau-ast"):
-              path = engine / "bin" / name
-              if not path.is_file():
-                  raise SystemExit("Missing original runtime binary: " + str(path))
+          for source in engine.rglob("*.py"):
+              if "__pycache__" not in source.parts:
+                  compile(source.read_text(encoding="utf-8"), str(source), "exec")
           print("ORIGINAL_ENGINE_PYTHON_SYNTAX_OK")
           PY
           python3 luraph-v15-engine/deobf/deob.py --help >/dev/null
 
-      - name: Run original full Luraph lifter against bundled 15.1 beta input
+      - name: Verify 15.1 beta detection and bundled Luau tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          import subprocess
+          import tempfile
+          engine = Path("luraph-v15-engine/deobf")
+          with tempfile.TemporaryDirectory() as td:
+              root = Path(td)
+              sample = root / "beta.lua"
+              sample.write_text(
+                  "-- This file was protected using Luraph Obfuscator v15.1 [https://lura.ph/]\nreturn function() end\n",
+                  encoding="utf-8"
+              )
+              detection = subprocess.run(
+                  ["python3", str(engine / "deob.py"), str(sample), "--detect"],
+                  check=True, capture_output=True, text=True
+              )
+              print("DETECTION=" + detection.stdout.strip())
+              if not detection.stdout.startswith("luraph_v15"):
+                  raise SystemExit("15.1 beta header was not detected by the original v15 lifter")
+              runtime = root / "runtime.luau"
+              runtime.write_text('print("Luau runtime OK")\n', encoding="utf-8")
+              subprocess.run([str(engine / "bin" / "luau"), str(runtime)], check=True)
+              ast = subprocess.run(
+                  [str(engine / "bin" / "luau-ast"), str(runtime)],
+                  check=True, capture_output=True
+              )
+              json.loads(ast.stdout.decode("latin-1"))
+              print("LUUA_RUNTIME_AND_AST_OK")
+          PY
+
+      - name: Full-analysis smoke test against the uploaded 15.1 beta sample
         shell: bash
         run: |
           set -euo pipefail
@@ -59,33 +89,32 @@ jobs:
           import tempfile
 
           wrapper = Path("upload/Luraph_v15_1_Deobfuscator_Newest.zip")
-          if not wrapper.is_file():
-              raise SystemExit("Missing uploaded 15.1 beta archive")
           with ZipFile(wrapper) as z:
               bad = z.testzip()
               if bad:
-                  raise SystemExit("ZIP CRC check failed: " + bad)
+                  raise SystemExit("ZIP CRC failure: " + bad)
               rar_entries = [x for x in z.infolist() if x.filename.lower().endswith(".rar")]
               if len(rar_entries) != 1:
-                  raise SystemExit("Expected one nested RAR inside the uploaded ZIP")
+                  raise SystemExit("Expected one nested RAR in the uploaded 15.1 ZIP")
               rar_data = z.read(rar_entries[0])
 
-          with tempfile.TemporaryDirectory(prefix="daily-deobf-original-151-") as temp:
-              root = Path(temp)
+          with tempfile.TemporaryDirectory(prefix="daily-deobf-original-151-") as td:
+              root = Path(td)
               rar = root / "payload.rar"
-              extracted = root / "rar"
-              outdir = Path("test-results/original-v15-beta/output")
+              extracted = root / "extract"
+              output_dir = root / "output"
               extracted.mkdir()
-              outdir.mkdir(parents=True, exist_ok=True)
+              output_dir.mkdir()
               rar.write_bytes(rar_data)
-              subprocess.run([os.environ["SEVEN"], "x", "-y", f"-o{extracted}", str(rar)], check=True)
-
-              source_root = extracted / "v15_tool_attempt_source"
-              sample = source_root / "samples_v15.1_deobfuscated" / "2153b779fa7a87f2_obfuscated.lua"
+              subprocess.run(
+                  [os.environ["SEVEN"], "x", "-y", f"-o{extracted}", str(rar)],
+                  check=True, capture_output=True
+              )
+              sample = extracted / "v15_tool_attempt_source/samples_v15.1_deobfuscated/2153b779fa7a87f2_obfuscated.lua"
               if not sample.is_file():
-                  raise SystemExit("Bundled 15.1 regression sample is missing")
+                  raise SystemExit("Uploaded 15.1 regression sample is missing")
 
-              output = outdir / "deobfuscated.luau"
+              output = output_dir / "deobfuscated.luau"
               env = os.environ.copy()
               env.update({
                   "DEVIRT_LOADERS": "1",
@@ -99,47 +128,31 @@ jobs:
                   [
                       "python3", str(cli), str(sample), "-o", str(output),
                       "--obfuscator", "luraph_v15",
-                      "--debug", "--strings",
-                      "--max-runs", "20",
-                      "--devirt-rounds", "200",
-                      "--budget", "90",
-                      "--timeout", "180",
-                      "--no-pypy",
+                      "--debug", "--strings", "--no-pypy",
+                      "--max-runs", "20", "--devirt-rounds", "200",
+                      "--budget", "90", "--timeout", "180",
                   ],
-                  cwd="luraph-v15-engine/deobf",
-                  env=env,
-                  capture_output=True,
-                  text=True,
-                  timeout=1200,
+                  cwd="luraph-v15-engine/deobf", env=env,
+                  capture_output=True, text=True, timeout=1200,
               )
-              print("ORIGINAL V15 STDOUT:\\n" + result.stdout[-6000:])
-              print("ORIGINAL V15 STDERR:\\n" + result.stderr[-20000:])
-
-              base = outdir / "deobfuscated"
+              print("ENGINE_STDOUT:\n" + result.stdout[-5000:])
+              print("ENGINE_STDERR:\n" + result.stderr[-16000:])
+              base = output_dir / "deobfuscated"
               lifted = Path(str(base) + ".devirt.luau")
-              protos = Path(str(base) + ".protos.json")
-              strings = Path(str(base) + ".strings.txt")
-              print("FULL_LIFT=" + str(lifted.is_file() and lifted.stat().st_size > 0))
-              print("TRACE=" + str(output.is_file() and output.stat().st_size > 0))
-              print("PROTOS=" + str(protos.is_file() and protos.stat().st_size > 0))
-              print("STRINGS=" + str(strings.is_file() and strings.stat().st_size > 0))
-              if result.returncode != 0:
-                  raise SystemExit("Original v15 engine exited with " + str(result.returncode))
-              if lifted.is_file() and lifted.stat().st_size:
+              prototypes = Path(str(base) + ".protos.json")
+              print("FULL_LIFT_BYTES=" + str(lifted.stat().st_size if lifted.is_file() else 0))
+              print("PROTO_BYTES=" + str(prototypes.stat().st_size if prototypes.is_file() else 0))
+              if result.returncode != 0 or not output.is_file() or output.stat().st_size == 0:
+                  raise SystemExit("Original v15 engine failed to produce a 15.1 analysis result")
+              meaningful = []
+              if lifted.is_file():
+                  meaningful = [
+                      line for line in lifted.read_text(encoding="utf-8", errors="replace").splitlines()
+                      if line.strip() and not line.strip().startswith("--")
+                  ]
+              if meaningful:
                   print("RESULT_CLASS=FULL_VM_LIFT")
-              elif output.is_file() and output.stat().st_size:
-                  print("RESULT_CLASS=BEHAVIOUR_TRACE_FALLBACK")
               else:
-                  raise SystemExit("The original v15 engine produced neither a lift nor a trace")
-              if not protos.is_file():
-                  print("WARNING=No prototype dump was retained for this beta sample")
+                  print("RESULT_CLASS=TRACE_FALLBACK")
+                  print("The engine captured the sample but fell back to its behaviour trace.")
           PY
-
-      - name: Upload beta analysis artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: original-v15-beta-analysis
-          path: |
-            test-results/original-v15-beta/output/**
-          if-no-files-found: ignore

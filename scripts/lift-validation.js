@@ -108,7 +108,7 @@ function inspectLiftText(source) {
   const metrics = {
     nonCommentLines,
     devirtErrors: countMatches(withoutComments, /error\s*\(\s*(['"])devirt:/gi),
-    registerErrors: countMatches(withoutComments, /(?:invalid register (?:index|store)|corrupt\\/encrypted register index)/gi),
+    registerErrors: countMatches(withoutComments, /(?:invalid register (?:index|store)|corrupt.?encrypted register index)/gi),
     controlFlowStubs: countMatches(withoutComments, /(?:unexplored successor|unstructured jump|could not reconstruct control flow)/gi),
     nilCalls: countMatches(code, /\(\s*nil\s*\)\s*\(/g) + countMatches(code, /(?:^|[;,\s])nil\s*\(/g),
     nilIndexes: countMatches(code, /\[\s*nil\s*\]/g),

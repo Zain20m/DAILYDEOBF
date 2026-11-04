@@ -200,6 +200,12 @@ async function processFile(absInput, args) {
     }
 
     if (final && result && fs.existsSync(result)) {
+      if (args.debug && path.resolve(result) !== path.resolve(job.tracePath) && fs.existsSync(job.tracePath)) {
+        const traceCopy = job.path('.trace.luau');
+        if (path.resolve(traceCopy) !== path.resolve(result) && path.resolve(traceCopy) !== path.resolve(final)) {
+          fs.copyFileSync(job.tracePath, traceCopy);
+        }
+      }
       let content = fs.readFileSync(result, 'utf8');
       content = content.replace(/^(\s*--(?:[ \t]*(?:Deobfuscated by|Detected obfuscation|Local names are inferred|source:|NOTE: reconstructed|during the trace)[^\n]*\n?|\s*\n))+/, '');
       fs.writeFileSync(final, content, 'utf8');

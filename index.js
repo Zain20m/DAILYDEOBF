@@ -17,10 +17,9 @@ const MAX_INPUT_BYTES = 2 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 18 * 1024 * 1024;
 const INPUT_WAIT_MS = 180_000;
 const PICKER_WAIT_MS = 120_000;
-const ENGINE_TIMEOUT_MS = 90_000;
-const MAX_VM_STEPS = 180_000;
-const ENGINE_DIR = path.join(__dirname, 'engine');
-const ENGINE_CLI = path.join(ENGINE_DIR, 'bin', 'luraph-deobf.js');
+const ENGINE_TIMEOUT_MS = 15 * 60_000;
+const ENGINE_DIR = path.join(__dirname, 'luraph-v15-engine');
+const ENGINE_CLI = path.join(ENGINE_DIR, 'deob.js');
 const activeUsers = new Set();
 
 if (!TOKEN) {
@@ -203,16 +202,16 @@ async function collectInput(message, prompt) {
   });
 }
 
-function runEngine(inputPath, outDir) {
+function runEngine(inputPath, outputPath) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [
-      '--max-old-space-size=512',
+      '--max-old-space-size=1024',
       ENGINE_CLI,
       inputPath,
       '-o',
-      outDir,
-      '--steps',
-      String(MAX_VM_STEPS),
+      outputPath,
+      '--timeout',
+      '120',
     ], {
       cwd: ENGINE_DIR,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -226,7 +225,7 @@ function runEngine(inputPath, outDir) {
       if (stdout.length < 24_000) stdout += chunk.toString();
     });
     child.stderr.on('data', (chunk) => {
-      if (stderr.length < 8_000) stderr += chunk.toString();
+      if (stderr.length < 12_000) stderr += chunk.toString();
     });
     const timer = setTimeout(() => child.kill('SIGKILL'), ENGINE_TIMEOUT_MS);
     child.once('error', (error) => {
@@ -236,69 +235,49 @@ function runEngine(inputPath, outDir) {
     child.once('close', (code, signal) => {
       clearTimeout(timer);
       if (signal === 'SIGKILL') {
-        return reject(new Error('This script took too long to process. Try a smaller file or a simpler protected build.'));
+        return reject(new Error('This script exceeded the 15-minute processing limit.'));
       }
       if (code !== 0) {
         const raw = (stderr || stdout).trim();
         const lines = raw.split('\n').filter(Boolean);
-        // Keep the actual parser error as well as the useful tail of the stack.
-        // Previously only the last five lines were shown, hiding the syntax
-        // error and its line/column information.
-        const detail = lines.length > 14
-          ? [...lines.slice(0, 9), '…', ...lines.slice(-5)].join('\n')
+        const detail = lines.length > 18
+          ? [...lines.slice(0, 12), '…', ...lines.slice(-6)].join('\n')
           : lines.join('\n');
-        const parserHint = /luaparse|parseSubExpression|parseExpectedExpression/i.test(raw)
-          ? '\n\nParser compatibility error: the bundled Luraph engine reached its Lua parser and rejected syntax in this input. The line and column above identify the failure. Raising the upload limit does not fix parser incompatibility; this engine build currently has no verified Luau-to-Lua compatibility pass.'
-          : '';
-        return reject(new Error((detail || `Deobfuscator exited with code ${code}.`) + parserHint));
+        return reject(new Error(detail || ('Deobfuscator exited with code ' + code + '.')));
       }
       resolve(stdout);
     });
   });
 }
-
 async function processLuraph151(message, prompt, input) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-'));
   const inputPath = path.join(tempRoot, 'input.lua');
   const outDir = path.join(tempRoot, 'output');
+  const outputPath = path.join(outDir, 'deobfuscated.luau');
   await fs.mkdir(outDir, { recursive: true });
   await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
 
   try {
-    await prompt.edit({ content: 'Running **Luraph 15.1** on your Luau script…', components: [] });
-    await runEngine(inputPath, outDir);
-    const names = [
-      '06_lifted_listing.lua',
-      '01_bootstrap_readable.lua',
-      '07_STRUCTURE_REPORT.md',
-      '00_extract_info.json',
-      '06_strings_seen.txt',
-    ];
-    const files = [];
-    let total = 0;
-    for (const name of names) {
-      try {
-        const data = await fs.readFile(path.join(outDir, name));
-        total += data.length;
-        if (total <= MAX_OUTPUT_BYTES && data.length <= 8 * 1024 * 1024) {
-          files.push(new AttachmentBuilder(data, { name }));
-        }
-      } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
-      }
+    await prompt.edit({ content: 'Running the newest Luraph v15 engine…', components: [] });
+    await runEngine(inputPath, outputPath);
+    const data = await fs.readFile(outputPath);
+    if (!data.length) throw new Error('The engine returned an empty output file.');
+    if (data.length > MAX_OUTPUT_BYTES) {
+      throw new Error('The deobfuscated output is larger than Discord attachment limit.');
     }
-    if (!files.length) throw new Error('The engine completed but did not produce the expected Luau output files.');
+
+    const safeName = input.filename.replaceAll(String.fromCharCode(96), '');
     await message.reply({
-      content: `**DAILY DEOBF · Luraph 15.1**\nProcessed: ${input.filename.replace(/\`/g, '')}\n\nThe lifted listing is a dynamic view of instructions observed during analysis. Some protected scripts may not expose every function in a static run.`,
-      files,
+      content: '**DAILY DEOBF · Luraph v15 (new engine)**\nProcessed: ' + safeName +
+        '\n\nThe engine reconstructs code from VM paths it can analyze. Unsupported or protected paths may remain incomplete.',
+      files: [new AttachmentBuilder(data, { name: 'deobfuscated.luau' })],
       allowedMentions: { repliedUser: false },
     });
-    await prompt.edit({ content: '✅ Deobfuscation finished. Your output files are attached above.', components: [] });
+    await prompt.edit({ content: '✅ Deobfuscation finished. The .luau output is attached above.', components: [] });
   } finally {
     await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
   }
 }
-
 async function startWorkflow(message) {
   const prompt = await message.reply({
     content: '📄 **DAILY DEOBF**\nSend a `.lua`, `.luau`, or `.txt` file, or paste a direct URL to your Luau script.\n\nMaximum input size: 2 MB.',

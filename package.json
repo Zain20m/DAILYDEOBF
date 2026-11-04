@@ -6,10 +6,11 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "check": "node --check index.js && node --check scripts/setup-engine.js",
-    "postinstall": "node scripts/setup-engine.js"
+    "check": "node --check index.js && node --check luraph-v15-engine/deob.js"
   },
-  "engines": { "node": ">=20.11.0" },
+  "engines": {
+    "node": ">=20.11.0"
+  },
   "dependencies": {
     "adm-zip": "^0.5.16",
     "discord.js": "^14.22.1",

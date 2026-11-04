@@ -3539,8 +3539,8 @@ class Stepper:
         def unresolved_or_temporary(loc):
             if loc in first_init_decls:
                 return True
-            current = self.cs.vars.get(loc, _NOT_FOUND)
-            return current is None or isinstance(current, TempVal)
+            return (loc in self.cs.vars
+                    and (self.cs.vars[loc] is None or isinstance(self.cs.vars[loc], TempVal)))
 
         for st in prologue + first_init:
             typ = st.get("type")

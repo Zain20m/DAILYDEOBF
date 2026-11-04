@@ -3504,45 +3504,84 @@ class Stepper:
                 self.cs.vars[wd] = LTable()
 
     def _detect_regfile(self):
-        """v14.9 builds create the register file with a VM runtime helper call
-        in the prologue (`local b = S[32](w)` -- a plain function behind a
-        state-table slot), not a direct table.create(), so the walk sees a
-        stub call. Detect the prologue local the handlers use as the register
-        array -- element calls `b[v](...)`, numeric stores `b[...]=...`,
-        regfile copies `p=(b)` -- and model it as a RegFile."""
+        """Identify a VM register array from its use in the dispatch handlers.
+
+        Older builds leave a TempVal when the prologue calls a register-array
+        factory. Some v15.1 builds instead evaluate that call to None because
+        the factory is an opaque VM helper. In that case the AST still gives
+        strong evidence: a call-initialized local is indexed as a callable
+        slot and is also written/copied in the dispatch loop. Accept that
+        local only when the structural match is unique.
+        """
+        def ungroup(node):
+            while isinstance(node, dict) and node.get("type") == "AstExprGroup":
+                node = node.get("expr")
+            return node
+
+        def local_location(node):
+            node = ungroup(node)
+            if isinstance(node, dict) and node.get("type") == "AstExprLocal":
+                return node.get("local", {}).get("location")
+            return None
+
+        call_initialized = set()
+        for st in self.vm.inner_body[:self.first_inner]:
+            typ = st.get("type")
+            if typ == "AstStatLocal":
+                for var, val in zip(st.get("vars", ()), st.get("values", ())):
+                    val = ungroup(val)
+                    loc = var.get("location")
+                    if (loc in self.cs.vars and isinstance(val, dict)
+                            and val.get("type") == "AstExprCall"
+                            and (self.cs.vars[loc] is None or isinstance(self.cs.vars[loc], TempVal))):
+                        call_initialized.add(loc)
+            elif typ == "AstStatAssign":
+                for var, val in zip(st.get("vars", ()), st.get("values", ())):
+                    loc = local_location(var)
+                    val = ungroup(val)
+                    if (loc in self.cs.vars and isinstance(val, dict)
+                            and val.get("type") == "AstExprCall"
+                            and (self.cs.vars[loc] is None or isinstance(self.cs.vars[loc], TempVal))):
+                        call_initialized.add(loc)
+
         cands = {k for k, v in self.cs.vars.items() if isinstance(v, TempVal)}
-        if not cands:
-            return
+        cands |= call_initialized
         calluse, storeuse, copysrc = set(), set(), set()
         for _, _, w in self.loops:
             for n in iter_nodes(w):
                 t = n.get("type")
                 if t == "AstExprCall":
-                    f = n.get("func")
-                    if isinstance(f, dict) and f.get("type") == "AstExprIndexExpr" \
-                            and f.get("expr", {}).get("type") == "AstExprLocal":
-                        calluse.add(f["expr"]["local"]["location"])
+                    f = ungroup(n.get("func"))
+                    if isinstance(f, dict) and f.get("type") == "AstExprIndexExpr":
+                        loc = local_location(f.get("expr"))
+                        if loc is not None:
+                            calluse.add(loc)
                 elif t in ("AstStatAssign", "AstStatCompoundAssign"):
                     vs = n.get("vars") if t == "AstStatAssign" else [n.get("var")]
                     for var in vs:
-                        if isinstance(var, dict) and var.get("type") == "AstExprIndexExpr" \
-                                and var.get("expr", {}).get("type") == "AstExprLocal":
-                            storeuse.add(var["expr"]["local"]["location"])
+                        var = ungroup(var)
+                        if isinstance(var, dict) and var.get("type") == "AstExprIndexExpr":
+                            loc = local_location(var.get("expr"))
+                            if loc is not None:
+                                storeuse.add(loc)
                     if t == "AstStatAssign":
                         for val in n.get("values", []):
-                            if isinstance(val, dict) and val.get("type") == "AstExprLocal":
-                                copysrc.add(val["local"]["location"])
+                            loc = local_location(val)
+                            if loc is not None:
+                                copysrc.add(loc)
                 elif t == "AstStatLocal":
                     for val in n.get("values", []):
-                        if isinstance(val, dict) and val.get("type") == "AstExprLocal":
-                            copysrc.add(val["local"]["location"])
+                        loc = local_location(val)
+                        if loc is not None:
+                            copysrc.add(loc)
         hits = [k for k in cands if k in calluse and (k in storeuse or k in copysrc)]
         if os.environ.get("DEVIRT_TB"):
             pid = self.lf.dump.pid_of_table.get(getattr(self.lf.proto, "tid", None))
-            print("[regfile] proto=%s temps=%s call=%s store=%s copy=%s hits=%s" %
+            print("[regfile] proto=%s temps=%s call_init=%s call=%s store=%s copy=%s hits=%s" %
                   (pid if pid is not None else getattr(self.lf.proto, "tid", None),
-                   sorted(cands)[:12], sorted(calluse)[:12], sorted(storeuse)[:12],
-                   sorted(copysrc)[:12], sorted(hits)), file=sys.stderr)
+                   sorted(k for k, v in self.cs.vars.items() if isinstance(v, TempVal)),
+                   sorted(call_initialized), sorted(calluse), sorted(storeuse),
+                   sorted(copysrc), sorted(hits)), file=sys.stderr)
         if len(hits) != 1:
             return
         self.cs.vars[hits[0]] = RegFile()

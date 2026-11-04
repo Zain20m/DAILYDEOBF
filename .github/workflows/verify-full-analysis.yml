@@ -74,7 +74,7 @@ jobs:
               root = Path(temp)
               rar = root / "payload.rar"
               extracted = root / "rar"
-              outdir = root / "output"
+              outdir = Path("test-results/original-v15-beta/output")
               extracted.mkdir()
               outdir.mkdir()
               rar.write_bytes(rar_data)
@@ -141,5 +141,5 @@ jobs:
         with:
           name: original-v15-beta-analysis
           path: |
-            /tmp/daily-deobf-original-151-*/output/**
+            test-results/original-v15-beta/output/**
           if-no-files-found: ignore

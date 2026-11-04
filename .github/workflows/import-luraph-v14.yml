@@ -1,0 +1,59 @@
+name: Import separate Luraph v14 engines
+
+on:
+  push:
+    paths:
+      - ".github/workflows/import-luraph-v14.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  import-v14:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Import only the v14.7, v14.8 and v14.9 engines
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/larpcorrupt/luraph-v15-v14.x-deobfuscator.git /tmp/luraph-upstream
+          SRC=/tmp/luraph-upstream/Deobfuscator/deobf
+          DEST=luraph-v14-engine
+          test -f "$SRC/cli.py"
+          test -f "$SRC/obfuscators/luraph_v14_7/driver.py"
+          test -f "$SRC/obfuscators/luraph_v14_8/driver.py"
+          test -f "$SRC/obfuscators/luraph_v14_9/driver.py"
+          rm -rf "$DEST"
+          mkdir -p "$DEST/obfuscators"
+          find "$SRC" -maxdepth 1 -type f \\( -name '*.py' -o -name '*.luau' \\) ! -name 'deob.py' -exec cp {} "$DEST/" \\;
+          cp "$SRC/obfuscators/base.py" "$DEST/obfuscators/base.py"
+          for version in 7 8 9; do
+            cp -a "$SRC/obfuscators/luraph_v14_$version" "$DEST/obfuscators/"
+          done
+          cat > "$DEST/obfuscators/__init__.py" <<'PY'
+          """Isolated Luraph v14 engine package. Luraph v15 is maintained separately."""
+          PY
+          mkdir -p "$DEST/samples"
+          for version in 7 8 9; do
+            if [ -f "$SRC/v14.$version.txt" ]; then
+              cp "$SRC/v14.$version.txt" "$DEST/samples/"
+            fi
+          done
+          find "$DEST" -type d -name __pycache__ -prune -exec rm -rf {} +
+          find "$DEST" -type f \( -name '*.pyc' -o -name '*.pyo' -o -name '*.exe' \) -delete
+          echo "Imported v14.7, v14.8 and v14.9 only."
+      - name: Commit imported engines
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add luraph-v14-engine
+          if git diff --cached --quiet; then
+            echo "No v14 engine changes to commit."
+            exit 0
+          fi
+          git commit -m "Import separate Luraph v14.7, v14.8 and v14.9 engines"
+          git push

@@ -1604,8 +1604,8 @@ async function startIdxWorkflow(message, inlineSource = null) {
 async function startGetWorkflow(message, inlineSource = null) {
   const prompt = await message.reply({
     content: inlineSource
-      ? '🔎 DAILY DEOBF · .get\nFinding and downloading static HTTP sources...'
-      : '🔎 DAILY DEOBF · .get\nAttach a script or send a URL. I will inspect common HttpGet, GetAsync and request({Url=...}) patterns.',
+      ? '🔎 DAILY DEOBF · .get\nFinding static HTTP URLs and downloading readable source text...'
+      : '🔎 DAILY DEOBF · .get\nAttach a script or send a URL. I will scan Roblox HTTP methods, request wrappers, URL fields, aliases and embedded loader strings.',
     allowedMentions: { repliedUser: false },
   });
 
@@ -1636,20 +1636,49 @@ async function startGetWorkflow(message, inlineSource = null) {
   const resolution = await resolveStaticSources(sourceToScan, {
     initialUrls,
     maxFiles: MAX_GET_FILES,
-    maxDepth: 4,
+    maxUrls: MAX_GET_URLS,
+    maxAttempts: MAX_GET_ATTEMPTS,
+    maxDepth: 8,
     fetchText: async (rawUrl) => {
-      if (input.url && rawUrl === input.url) return input.source;
+      if (input.url && rawUrl === input.url) {
+        return {
+          source: input.source,
+          finalUrl: input.url,
+          contentType: 'input source',
+          status: 200,
+        };
+      }
       const fetched = await fetchPublicText(rawUrl);
-      return decodeSource(fetched.bytes);
+      return {
+        source: decodeSource(fetched.bytes),
+        finalUrl: fetched.finalUrl || rawUrl,
+        contentType: fetched.contentType || 'unknown',
+        status: fetched.status || null,
+      };
     },
   });
 
   if (!resolution.discovered) {
     throw new Error(
-      'No supported static HTTP URL was found. Try a direct URL, game:HttpGet("URL"), ' +
-      'HttpService:GetAsync("URL"), or request({Url = "URL"}). ' +
-      'Computed or runtime-generated URLs cannot be resolved without executing the script.'
+      'No literal HTTP/HTTPS URL was found in the source. .get scans HttpGet/HttpGetAsync, ' +
+      'HttpService GetAsync/PostAsync/RequestAsync, request/http_request and common aliases, ' +
+      'Url/Uri/Endpoint table fields, URL string constants, and nested literal loadstring text. ' +
+      'URLs built only at runtime (for example from encrypted pieces, game state or computed values) ' +
+      'cannot be known by static inspection.'
     );
+  }
+
+  function reportUrl(raw) {
+    try {
+      const url = new URL(raw);
+      url.username = '';
+      url.password = '';
+      url.hash = '';
+      const query = url.search ? '?[query redacted]' : '';
+      return url.origin + url.pathname + query;
+    } catch {
+      return String(raw || 'unknown URL').slice(0, 500);
+    }
   }
 
   const attachments = [];
@@ -1657,77 +1686,145 @@ async function startGetWorkflow(message, inlineSource = null) {
   const omittedNames = [];
   for (const capture of resolution.captures) {
     const data = Buffer.from(capture.source, 'utf8');
-    if (totalBytes + data.length > MAX_OUTPUT_BYTES - 4096) {
+    if (totalBytes + data.length > MAX_OUTPUT_BYTES - 128 * 1024) {
       omittedNames.push(capture.name);
       continue;
     }
-    attachments.push(new AttachmentBuilder(data, { name: capture.name }));
+    attachments.push({
+      name: capture.name,
+      data,
+      capture,
+    });
     totalBytes += data.length;
   }
 
+  const discoveryLines = (resolution.discoveries || []).map((item, index) => {
+    const details = [
+      String(index + 1).padStart(3, '0') + '.',
+      reportUrl(item.url),
+      'depth=' + item.depth,
+      'status=' + item.status,
+    ];
+    if (item.filename) details.push('file=' + item.filename);
+    if (item.error) details.push('error=' + item.error.replace(/[\r\n]+/g, ' ').slice(0, 500));
+    return details.join(' | ');
+  });
+
+  const captureLines = resolution.captures.map((capture) => [
+    capture.name,
+    'depth=' + capture.depth,
+    'bytes=' + Buffer.byteLength(capture.source, 'utf8'),
+    'origin=' + reportUrl(capture.url || ''),
+    'final=' + reportUrl(capture.finalUrl || capture.url || ''),
+    'http=' + (capture.statusCode || 'n/a'),
+    'content-type=' + (capture.contentType || 'unknown'),
+    capture.inline ? 'inline source' : 'downloaded source',
+  ].join(' | '));
+
+  const failureLines = resolution.failures.map((failure, index) =>
+    String(index + 1).padStart(3, '0') + '. ' + reportUrl(failure.url) +
+    ' | depth=' + (failure.depth ?? 0) +
+    ' | ' + String(failure.message || 'Unknown error').replace(/[\r\n]+/g, ' ').slice(0, 700)
+  );
+
   const reportLines = [
-    'DAILY DEOBF · .get static source retrieval report',
+    'DAILY DEOBF · .get COMPLETE STATIC DISCOVERY REPORT',
     'Input: ' + String(input.filename || 'get-input.lua'),
-    'Discovered static URLs: ' + resolution.discovered,
+    'Input bytes: ' + Buffer.byteLength(input.source, 'utf8'),
+    'Generated: ' + new Date().toISOString(),
+    '',
+    'SUMMARY',
+    'Discovered URLs: ' + resolution.discovered,
+    'Discovery records retained: ' + (resolution.discoveries || []).length,
     'Fetch attempts: ' + resolution.attempts,
+    'Visited URLs: ' + resolution.visited,
     'Downloaded source files: ' + resolution.captures.length,
     'Failed URLs: ' + resolution.failures.length,
-    'Safety limit reached: ' + (resolution.truncated ? 'yes' : 'no'),
-    'Maximum chain depth: ' + resolution.maxDepth,
-    'Maximum URLs fetched: ' + resolution.maxFiles,
+    'Remaining queued URLs: ' + (resolution.remaining || 0),
+    'Output files attached: ' + attachments.length,
+    'Output data attached: ' + formatBytes(totalBytes),
+    'Output files omitted by combined size limit: ' + omittedNames.length,
+    'Truncated by configured safety limits: ' + (resolution.truncated ? 'YES' : 'NO'),
+    'Limits: max files=' + resolution.maxFiles +
+      ', max discovered URLs=' + resolution.maxUrls +
+      ', max attempts=' + resolution.maxAttempts +
+      ', max depth=' + resolution.maxDepth,
     '',
-    'Downloaded files:',
-    ...(resolution.captures.length
-      ? resolution.captures.map((capture) => {
-          let host = 'URL';
-          try { host = new URL(capture.url).host; } catch {}
-          return '- ' + capture.name + ' · depth ' + capture.depth + ' · ' + host +
-            ' · ' + formatBytes(Buffer.byteLength(capture.source, 'utf8'));
-        })
-      : ['- None downloaded successfully.']),
+    'DISCOVERED URLS (including queued and failed URLs)',
+    ...(discoveryLines.length ? discoveryLines : ['None.']),
     '',
-    'Fetch failures:',
-    ...(resolution.failures.length
-      ? resolution.failures.map((failure) => {
-          let host = 'URL';
-          try { host = new URL(failure.url).host; } catch {}
-          return '- ' + host + ': ' + failure.message;
-        })
-      : ['- None.']),
+    'DOWNLOADED FILE DETAILS',
+    ...(captureLines.length ? captureLines : ['No source files were downloaded.']),
+    '',
+    'FAILED FETCHES',
+    ...(failureLines.length ? failureLines : ['None.']),
     ...(omittedNames.length
-      ? ['', 'Not attached because the response-size limit was reached:', ...omittedNames.map((name) => '- ' + name)]
+      ? ['', 'OMITTED OUTPUT FILES (combined output-size limit)', ...omittedNames]
       : []),
     '',
-    'Discovery methods: HttpGet, HttpGetAsync, GetAsync, request/http_request URL arguments and Url/Uri table fields.',
-    'Method: static source inspection and HTTP retrieval. The bot never executes the downloaded Luau.',
-    'Dynamically constructed URLs, encrypted values and code generated only at runtime are not discoverable by this static method.',
+    'DISCOVERY COVERAGE',
+    'Roblox methods: game:HttpGet, game.HttpGet(game, url), HttpGetAsync, HttpService:GetAsync, PostAsync, RequestAsync.',
+    'Request wrappers: request, syn.request, http_request, http.request and statically aliased forms.',
+    'Other patterns: get/fetch-style URL arguments, Url/URI/Endpoint/BaseUrl table keys, bracket-key fields, literal URL strings and URL variables.',
+    'Embedded code: recursively scans literal source passed to loadstring, including long-bracket strings.',
+    '',
+    'DOWNLOAD BEHAVIOUR',
+    'Only public HTTP/HTTPS GET downloads are attempted. The script is never executed.',
+    'POST/PUT/DELETE request bodies are not replayed. A URL found inside such request configuration is treated as a URL candidate and GET is attempted only.',
+    'Redirect destinations are rechecked for public-address safety. Common GitHub blob links are converted to raw file links.',
+    'Query strings and credentials are redacted in this report to avoid leaking tokens.',
+    'Static scanning cannot evaluate encrypted URLs, runtime concatenation dependent on values, generated signatures, game state or dynamically returned URLs.',
+    '',
   ];
 
   const reportBuffer = Buffer.from(reportLines.join('\n'), 'utf8');
-  if (totalBytes + reportBuffer.length <= MAX_OUTPUT_BYTES) {
-    attachments.push(new AttachmentBuilder(reportBuffer, { name: 'get_report.txt' }));
+  const batches = [];
+  for (let i = 0; i < attachments.length; i += 10) {
+    batches.push(attachments.slice(i, i + 10));
   }
 
-  const summary = resolution.captures.length
-    ? '✅ **.get finished.** Downloaded ' + resolution.captures.length +
-      ' source file(s) from ' + resolution.discovered + ' discovered URL(s).' +
-      (resolution.failures.length ? ' ' + resolution.failures.length + ' URL(s) failed.' : '') +
-      ' Files are attached as getN.lua.'
-    : '⚠️ **.get found the URLs, but none could be downloaded.** Check get_report.txt for details.';
+  if (!batches.length) {
+    const reason = resolution.failures.length
+      ? 'Every discovered URL failed to download. The attached report lists the exact HTTP, DNS, TLS or content error for each URL.'
+      : 'URLs were found, but no readable source files were returned. The attached report lists every discovery record.';
+    await message.reply({
+      content: '⚠️ **.get found ' + resolution.discovered + ' URL(s), but downloaded 0 source files.** ' + reason,
+      files: [new AttachmentBuilder(reportBuffer, { name: 'get_report.txt' })],
+      allowedMentions: { repliedUser: false },
+    });
+  } else {
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+      const batch = batches[batchIndex];
+      await message.reply({
+        content: batchIndex === 0
+          ? '✅ **.get downloaded ' + attachments.length + ' source file(s).** Sending individual getN.lua attachments in ' +
+            batches.length + ' batch(es). Discovered ' + resolution.discovered +
+            ' URL(s); ' + resolution.failures.length + ' failed.'
+          : '**.get files · batch ' + (batchIndex + 1) + '/' + batches.length + '**',
+        files: batch.map((item) =>
+          new AttachmentBuilder(item.data, { name: item.name })
+        ),
+        allowedMentions: { repliedUser: false },
+      });
+    }
 
-  await message.reply({
-    content: summary,
-    files: attachments,
-    allowedMentions: { repliedUser: false },
-  });
+    await message.reply({
+      content: '📋 **.get complete report** · ' + resolution.discovered +
+        ' URL(s), ' + resolution.attempts + ' fetch attempt(s), ' +
+        resolution.failures.length + ' failed.',
+      files: [new AttachmentBuilder(reportBuffer, { name: 'get_report.txt' })],
+      allowedMentions: { repliedUser: false },
+    });
+  }
+
   await prompt.edit({
-    content: resolution.captures.length
-      ? '✅ .get completed. Static remote sources are attached.'
-      : '⚠️ .get completed, but the remote sources could not be downloaded.',
+    content: attachments.length
+      ? '✅ .get completed. Sent ' + attachments.length +
+        ' individual getN.lua file(s). The full URL-by-URL report is attached separately.'
+      : '⚠️ .get completed. No source files downloaded; get_report.txt contains per-URL failure details.',
     components: [],
   }).catch(() => {});
 }
-
 
 
 function getExecAllowedUsers() {

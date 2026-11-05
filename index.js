@@ -813,7 +813,7 @@ async function sendAnalysisOutput(message, input, config) {
 
 
 
-async function processLuraphV14(message, prompt, input, version) {
+async function processLuraphV14(message, prompt, input, version, gameId = null) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-v14-'));
   const inputPath = path.join(tempRoot, 'input.lua');
   const outputPath = path.join(tempRoot, 'deobfuscated.luau');
@@ -843,6 +843,7 @@ async function processLuraphV14(message, prompt, input, version) {
         '--devirt-rounds', '200',
         '--timeout', '600',
         '--budget', '600',
+        ...(gameId ? ['--cfg', '__superz_game_id=' + gameId] : []),
       ],
       { onProgress: progress.onLine },
     );
@@ -901,7 +902,7 @@ async function processLuraphV14(message, prompt, input, version) {
   }
 }
 
-async function processLuraphV15(message, prompt, input) {
+async function processLuraphV15(message, prompt, input, displayLabel = 'Luraph v15', gameId = null) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-v15-'));
   const inputPath = path.join(tempRoot, 'input.lua');
   const outputDir = path.join(tempRoot, 'output');
@@ -920,6 +921,7 @@ async function processLuraphV15(message, prompt, input) {
         '--obfuscator', 'luraph_v15', '--debug', '--strings',
         '--max-runs', '16', '--devirt-rounds', '200',
         '--budget', '60', '--timeout', '180', '--no-pypy',
+        ...(gameId ? ['--cfg', '__superz_game_id=' + gameId] : []),
       ],
       {
         env: {
@@ -1099,7 +1101,7 @@ function normalizeLuraph151Source(source) {
   };
 }
 
-async function processLuraph151(message, prompt, input) {
+async function processLuraph151(message, prompt, input, gameId = null) {
   const normalized = normalizeLuraph151Source(input.source);
   const source = normalized.source;
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-151-'));
@@ -1166,6 +1168,7 @@ async function processLuraph151(message, prompt, input) {
           '--devirt-rounds', '200',
           '--budget', '60',
           '--timeout', '180',
+          ...(gameId ? ['--cfg-json', JSON.stringify({ __superz_game_id: Number(gameId) })] : []),
         ],
         {
           env: {
@@ -1225,6 +1228,7 @@ async function processLuraph151(message, prompt, input) {
             '--budget', '60',
             '--timeout', '180',
             '--no-pypy',
+            ...(gameId ? ['--cfg', '__superz_game_id=' + gameId] : []),
           ],
           {
             env: {
@@ -1263,7 +1267,8 @@ async function processLuraph151(message, prompt, input) {
 
       const dedicatedScore = dedicatedValidation.score ?? -1;
       const compatibilityScore = compatibilityValidation.score ?? -1;
-      if (compatibilityScore > dedicatedScore || (!dedicatedValidation.candidate && compatibilityValidation.candidate)) {
+      if (compatibilityValidation.candidate &&
+          (!dedicatedValidation.candidate || compatibilityScore > dedicatedScore)) {
         chosen = compatible;
         chosenEngineDir = ENGINE_V15_DIR;
       }
@@ -1338,6 +1343,10 @@ async function processLuraph151(message, prompt, input) {
           : []),
         'deep_reconstruction_instructions.txt contains the requested behavior-preserving follow-up checklist.',
         'The checklist is an instruction for a separate reconstruction pass, not proof that every item was automatically completed.',
+        ...(gameId ? ['Target Universe/GameId supplied to the sandbox: ' + gameId + '.'] : ['No target Universe/GameId was supplied; game-locked builds may stop in their bootstrap layer.']),
+        ...((/buffer access out of bounds|size out of range/i).test(dedicatedLogs + '\n' + compatibilityLogs) && !summary.hasLiftedSource
+          ? ['Runtime stopped during bootstrap with a buffer bounds/size error. This is not a recovered source result.', 'For a game-locked script, retry with its correct public Roblox Universe/GameId. A FlowAuth key-gated loader that requires a live authorization handshake will only expose its offline loader behaviour; the bot does not emulate or bypass that handshake.']
+          : []),
       ],
     });
 
@@ -1347,12 +1356,15 @@ async function processLuraph151(message, prompt, input) {
         ? 'Both engines were checked. The best source candidate remains partial and is labelled as such.'
         : 'Neither engine completed the VM lift. Trace and diagnostic artifacts are attached.'));
 
+    const bootstrapBoundsError = /buffer access out of bounds|size out of range/i.test(dedicatedLogs + '\n' + compatibilityLogs);
     await prompt.edit({
       content: summary.hasLiftedSource
         ? '✅ Luraph 15.1 finished. The best Luau candidate passed validation.'
         : (summary.hasLiftCandidate
           ? '⚠️ Luraph 15.1 finished with a partial VM lift. It is not marked as recovered source.'
-          : '⚠️ Luraph 15.1 finished without a full VM lift. Check the trace and analysis report.'),
+          : (bootstrapBoundsError
+            ? '⚠️ The sandbox stopped before VM capture (buffer bounds/size error). This is not deobfuscated source. For game-locked scripts, retry with the correct Universe/GameId; a live FlowAuth auth handshake cannot be reconstructed offline.'
+            : '⚠️ Luraph 15.1 finished without a full VM lift. Check the trace and analysis report.')),
       components: [],
     });
   } catch (error) {
@@ -1386,6 +1398,49 @@ function detectFlowAuthLuraphVersion(source) {
   return { version: '15.1', detectedBy: 'FlowAuth current-version default', explicit: false };
 }
 
+
+async function collectFlowAuthGameId(message, prompt) {
+  await prompt.edit({
+    content: '🎮 **FlowAuth · target game**\nSend the Roblox **Universe/GameId** for the game this script belongs to, or type **skip** if it is not game-locked.\n\nUse the universe ID, not the place ID. The ID is only used as sandbox context.',
+    components: [],
+  });
+
+  const collector = message.channel.createMessageCollector({
+    filter: (reply) => reply.author.id === message.author.id && reply.channelId === message.channelId,
+    time: PICKER_WAIT_MS,
+    max: 1,
+  });
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      collector.stop('timeout');
+      reject(new Error('GameId prompt timed out. Run .deobf and choose FlowAuth again.'));
+    }, PICKER_WAIT_MS + 1000);
+
+    collector.once('collect', (reply) => {
+      clearTimeout(timeout);
+      collector.stop('received');
+      const value = String(reply.content || '').trim();
+      if (/^(?:skip|none|n)$/i.test(value)) {
+        resolve(null);
+        return;
+      }
+      if (!/^\\d{1,16}$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) <= 0) {
+        reject(new Error('That is not a valid Universe/GameId. Send a positive numeric universe ID, or type skip.'));
+        return;
+      }
+      resolve(value);
+    });
+
+    collector.once('end', (_collected, reason) => {
+      if (reason === 'time' && collector.collected.size === 0) {
+        clearTimeout(timeout);
+        reject(new Error('GameId prompt timed out. Run .deobf and choose FlowAuth again.'));
+      }
+    });
+  });
+}
+
 async function processFlowAuth(message, prompt, input) {
   const detected = detectFlowAuthLuraphVersion(input.source);
   const displayVersion = 'Luraph v' + detected.version;
@@ -1402,10 +1457,12 @@ async function processFlowAuth(message, prompt, input) {
   if (detected.version === '14.9') {
     return processLuraphV14(message, prompt, input, '14.9');
   }
+
+  const gameId = await collectFlowAuthGameId(message, prompt);
   if (detected.version === '15') {
-    return processLuraphV15(message, prompt, input);
+    return processLuraphV15(message, prompt, input, 'FlowAuth · Luraph v15', gameId);
   }
-  return processLuraph151(message, prompt, input);
+  return processLuraph151(message, prompt, input, gameId);
 }
 
 function buildIdxCaptureRunner(source) {

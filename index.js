@@ -923,7 +923,7 @@ async function processLuraphV15(message, prompt, input) {
       ],
       {
         env: {
-          DEVIRT_FULL_ROUNDS: '1', DEVIRT_LOADERS: '1',
+          DEVIRT_LOADERS: '1',
           DEVIRT_TIMING: '1', DEVIRT_ERRS: '1', DEVIRT_TB: '1',
           DEVIRT_WALK_LIMIT: '750000',
         },
@@ -1173,7 +1173,6 @@ async function processLuraph151(message, prompt, input) {
             DEVIRT_TIMING: '1',
             DEVIRT_ERRS: '1',
             DEVIRT_TB: '1',
-            DEVIRT_FULL_ROUNDS: '1',
             DEVIRT_WALK_LIMIT: '750000',
           },
           onProgress: progress.onLine,
@@ -1229,7 +1228,6 @@ async function processLuraph151(message, prompt, input) {
           ],
           {
             env: {
-              DEVIRT_FULL_ROUNDS: '1',
               DEVIRT_LOADERS: '1',
               DEVIRT_TIMING: '1',
               DEVIRT_ERRS: '1',

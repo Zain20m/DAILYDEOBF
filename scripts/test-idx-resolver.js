@@ -123,6 +123,7 @@ test('extracts common static HTTP fetch patterns for .get', () => {
   ].join('\n');
 
   assert.deepEqual(extractStaticFetchUrls(source), [
+    'https://ignored.example/string',
     'https://example.com/colon.lua',
     'https://example.com/dot.lua',
     'https://example.com/getasync.lua',
@@ -250,4 +251,97 @@ test('recovers inline loadstring source assigned to a literal variable', () => {
     'print(123)',
     'warn("hello")',
   ]);
+});
+
+
+test('.get detects HttpGetAsync, PostAsync, RequestAsync and URL table variants', () => {
+  const source = [
+    'local service = game:GetService("HttpService")',
+    'service:GetAsync("https://example.com/get-async.lua")',
+    'service:PostAsync("https://example.com/post-async.lua", "body")',
+    'service:RequestAsync({Url = "https://example.com/request-async.lua", Method = "GET"})',
+    'service:RequestAsync({["URL"] = "https://example.com/bracket-url.lua"})',
+    'local endpoint = "https://example.com/endpoint.lua"',
+    'request({Uri = endpoint})',
+    'local getter = game.HttpGetAsync',
+    'getter(game, "https://example.com/aliased-get.lua")',
+  ].join('\\n');
+
+  assert.deepEqual(extractStaticFetchUrls(source), [
+    'https://example.com/get-async.lua',
+    'https://example.com/post-async.lua',
+    'https://example.com/request-async.lua',
+    'https://example.com/bracket-url.lua',
+    'https://example.com/endpoint.lua',
+    'https://example.com/aliased-get.lua',
+  ]);
+});
+
+test('.get scans URLs inside nested literal loadstring source', async () => {
+  const source = [
+    'loadstring([=[',
+    '  loadstring([=[',
+    '    request({Url = "https://example.com/nested.lua"})',
+    '  ]=])()',
+    ']=])()',
+  ].join('\\n');
+
+  const result = await resolveStaticSources(source, {
+    maxFiles: 5,
+    maxUrls: 20,
+    maxAttempts: 20,
+    maxDepth: 4,
+    fetchText: async (url) => {
+      assert.equal(url, 'https://example.com/nested.lua');
+      return 'print("nested")';
+    },
+  });
+
+  assert.equal(result.captures.length, 1);
+  assert.equal(result.captures[0].name, 'get1.lua');
+  assert.equal(result.captures[0].source, 'print("nested")');
+});
+
+test('.get keeps scanning after failed URLs instead of treating failures as output slots', async () => {
+  const source = Array.from({ length: 8 }, (_, i) =>
+    'request({Url = "https://example.com/item-' + i + '.lua"})'
+  ).join('\\n');
+  const result = await resolveStaticSources(source, {
+    maxFiles: 2,
+    maxUrls: 20,
+    maxAttempts: 20,
+    fetchText: async (url) => {
+      if (/item-[0-4]/.test(url)) throw new Error('HTTP 404');
+      return 'print("ok")';
+    },
+  });
+
+  assert.equal(result.attempts, 6);
+  assert.equal(result.failures.length, 5);
+  assert.equal(result.captures.length, 1);
+  assert.equal(result.discoveries.filter((item) => item.status === 'downloaded').length, 1);
+  assert.equal(result.discoveries.filter((item) => item.status === 'failed').length, 5);
+  assert.equal(result.truncated, false);
+});
+
+test('.get returns every URL discovery with queued/downloaded/failed state', async () => {
+  const result = await resolveStaticSources(
+    'request({Url = "https://example.com/ok.lua"})\\nrequest({Url = "https://example.com/no.lua"})',
+    {
+      maxFiles: 5,
+      maxUrls: 10,
+      maxAttempts: 10,
+      fetchText: async (url) => {
+        if (url.endsWith('/no.lua')) throw new Error('HTTP 503');
+        return { source: 'print("ok")', finalUrl: 'https://cdn.example.com/ok.lua', status: 200, contentType: 'text/plain' };
+      },
+    }
+  );
+
+  assert.equal(result.discovered, 2);
+  assert.equal(result.discoveries.length, 2);
+  assert.deepEqual(result.discoveries.map((item) => item.status), ['downloaded', 'failed']);
+  assert.equal(result.captures[0].finalUrl, 'https://cdn.example.com/ok.lua');
+  assert.equal(result.captures[0].statusCode, 200);
+  assert.equal(result.failures[0].message, 'HTTP 503');
 });

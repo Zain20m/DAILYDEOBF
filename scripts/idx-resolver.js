@@ -536,8 +536,40 @@ async function resolveStaticSources(source, options = {}) {
   }, (text, normalizations) => scanNestedLoadstringText(text, new Set(), 0, normalizations));
 }
 
+function suggestLoadstringHttpGetCorrection(source) {
+  const tokens = tokenizeLua(String(source || '').trim());
+  if (!tokens.length || tokens[0].type !== 'identifier' ||
+      tokens[0].value.toLowerCase() !== 'loadstring') return null;
+
+  for (let i = 0; i + 6 < tokens.length; i++) {
+    if (
+      tokens[i].type !== 'identifier' || tokens[i].value.toLowerCase() !== 'loadstring' ||
+      tokens[i + 1].value !== '(' ||
+      tokens[i + 2].type !== 'identifier' || tokens[i + 2].value.toLowerCase() !== 'game' ||
+      ![':', '.'].includes(tokens[i + 3].value) ||
+      tokens[i + 4].type !== 'identifier' || tokens[i + 4].value.toLowerCase() !== 'httpget' ||
+      tokens[i + 5].value !== '(' ||
+      tokens[i + 6].type !== 'string'
+    ) continue;
+
+    const originalUrl = tokens[i + 6].value;
+    if (!/\)\)\(\)$/.test(originalUrl) && !/\)\)\($/.test(originalUrl)) continue;
+
+    const correctedUrl = cleanUrlCandidate(originalUrl);
+    if (!isHttpUrl(correctedUrl) || correctedUrl === originalUrl) continue;
+
+    return {
+      originalUrl,
+      correctedUrl,
+      expression: 'loadstring(game:HttpGet(' + JSON.stringify(correctedUrl) + '))()',
+    };
+  }
+  return null;
+}
+
 module.exports = {
   extractInlineLoadstringSources,
+  suggestLoadstringHttpGetCorrection,
   extractLoadstringHttpGetUrls,
   extractStaticFetchUrls,
   resolveLoadstringSources,

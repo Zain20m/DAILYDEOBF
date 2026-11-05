@@ -15,7 +15,11 @@ const os = require('node:os');
 const path = require('node:path');
 const { inspectLiftText } = require('./scripts/lift-validation');
 const { convertToPureLuau } = require('./pureluau');
-const { resolveLoadstringSources, resolveStaticSources } = require('./scripts/idx-resolver');
+const {
+  resolveLoadstringSources,
+  resolveStaticSources,
+  suggestLoadstringHttpGetCorrection,
+} = require('./scripts/idx-resolver');
 const { buildIdxBundle } = require('./scripts/idx-output');
 const { runLuauTask } = require('./scripts/roblox-execution');
 
@@ -1684,6 +1688,54 @@ async function startGetWorkflow(message, inlineSource = null) {
   }
 
   let sourceToScan = input.source;
+  const correction = !firstAttachment
+    ? suggestLoadstringHttpGetCorrection(sourceToScan)
+    : null;
+
+  if (correction) {
+    const confirmRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('get-url-fix-yes:' + message.author.id)
+        .setLabel('Yes, fix it')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId('get-url-fix-no:' + message.author.id)
+        .setLabel('Cancel')
+        .setStyle(ButtonStyle.Secondary),
+    );
+    await prompt.edit({
+      content: '⚠️ **The URL looks malformed. Did you mean this?**\n' +
+        '**.get ' + correction.expression + '**\n' +
+        'I found ))() inside the URL text. The corrected version moves it outside the URL quotes.',
+      components: [confirmRow],
+    });
+
+    let confirmation;
+    try {
+      confirmation = await prompt.awaitMessageComponent({
+        time: PICKER_WAIT_MS,
+        filter: (interaction) =>
+          interaction.user.id === message.author.id &&
+          (interaction.customId === 'get-url-fix-yes:' + message.author.id ||
+           interaction.customId === 'get-url-fix-no:' + message.author.id),
+      });
+    } catch {
+      await prompt.edit({ content: '⌛ URL correction confirmation timed out. Run .get again.', components: [] }).catch(() => {});
+      throw new Error('URL correction confirmation timed out.');
+    }
+
+    if (confirmation.customId !== 'get-url-fix-yes:' + message.author.id) {
+      await confirmation.update({ content: 'Cancelled. No URL was downloaded.', components: [] });
+      throw new Error('Cancelled.');
+    }
+
+    await confirmation.update({
+      content: '✅ Using the corrected loadstring URL. Starting .get...',
+      components: [],
+    });
+    sourceToScan = correction.expression;
+  }
+
   const trimmed = sourceToScan.trim();
   const initialUrls = [];
   if (/^https?:\/\/\S+$/i.test(trimmed)) {

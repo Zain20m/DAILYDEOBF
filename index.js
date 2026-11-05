@@ -181,6 +181,28 @@ async function inputFromAttachment(attachment) {
   return { source: decodeSource(bytes), filename };
 }
 
+async function inputFromUrlText(text) {
+  const match = String(text || '').match(/https?:\\/\\/[^\\s"'<>]+/i);
+  if (!match) {
+    throw new Error('Send a direct script URL or a loadstring(game:HttpGet("URL"))() expression.');
+  }
+  const rawUrl = match[0].replace(/[)\\]},.;]+$/g, '');
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error('The URL in that message is invalid.');
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('Only HTTP and HTTPS URLs are supported.');
+  }
+  const result = await fetchPublicText(parsed.toString());
+  const filename = /\\.(lua|luau|txt)$/i.test(path.extname(result.filename))
+    ? result.filename
+    : 'downloaded-script.lua';
+  return { source: decodeSource(result.bytes), filename, url: parsed.toString() };
+}
+
 async function collectInput(message, prompt) {
   const collector = message.channel.createMessageCollector({
     filter: (msg) => msg.author.id === message.author.id && msg.channelId === message.channelId,
@@ -204,18 +226,8 @@ async function collectInput(message, prompt) {
           return;
         }
 
-        const candidate = reply.content.trim().replace(/^<|>$/g, '');
-        let parsed;
-        try {
-          parsed = new URL(candidate);
-        } catch {
-          throw new Error('Send one direct HTTP/HTTPS script URL, or attach a `.lua`, `.luau`, or `.txt` file.');
-        }
-        if (!['http:', 'https:'].includes(parsed.protocol)) {
-          throw new Error('Only HTTP and HTTPS URLs are supported.');
-        }
-        const result = await fetchPublicText(parsed.toString());
-        resolve({ source: decodeSource(result.bytes), filename: result.filename, url: parsed.toString() });
+        const result = await inputFromUrlText(reply.content);
+        resolve(result);
       } catch (error) {
         reject(error);
       }
@@ -687,37 +699,17 @@ async function sendAnalysisOutput(message, input, config) {
   await fs.writeFile(reportPath, reportLines.join('\n'), 'utf8');
 
   const attachments = [];
-  let totalBytes = 0;
-  async function addArtifact(filePath, fileName) {
-    if (attachments.length >= 10) return;
-    try {
-      const data = await fs.readFile(filePath);
-      if (!data.length || data.length > MAX_OUTPUT_BYTES || totalBytes + data.length > MAX_OUTPUT_BYTES) return;
-      attachments.push(new AttachmentBuilder(data, { name: fileName }));
-      totalBytes += data.length;
-    } catch {}
+  const candidatePath = hasLiftCandidate
+    ? liftedPath
+    : (traceBytes ? preferredTracePath : defaultTracePath);
+  const candidateBytes = await fileSize(candidatePath);
+  if (candidateBytes > 0 && candidateBytes <= MAX_OUTPUT_BYTES) {
+    const candidateName = hasLiftedSource
+      ? 'deobfuscated.luau'
+      : (hasLiftCandidate ? 'partial_result.luau' : 'runtime_trace.luau');
+    attachments.push(new AttachmentBuilder(await fs.readFile(candidatePath), { name: candidateName }));
   }
-
-  if (hasLiftedSource) {
-    await addArtifact(liftedPath, 'deobfuscated.luau');
-  } else if (hasLiftCandidate) {
-    await addArtifact(liftedPath, 'partial_vm_lift_candidate.luau');
-  }
-  if (traceBytes) await addArtifact(preferredTracePath, 'analysis_trace.luau');
-  if (protoBytes) await addArtifact(protoPath, 'captured_prototypes.json');
-  if (stringBytes) await addArtifact(stringsPath, 'extracted_strings.txt');
-  for (const artifact of config.extraArtifacts || []) {
-    await addArtifact(
-      path.join(outputDir, artifact.path),
-      artifact.name || path.basename(artifact.path)
-    );
-  }
-  for (const chunkName of chunkFiles.slice(0, 3)) {
-    await addArtifact(path.join(outputDir, chunkName), chunkName.replace(path.basename(base) + '.', ''));
-  }
-  await addArtifact(reportPath, 'analysis_report.txt');
-
-  if (!attachments.length) throw new Error('The engine finished without producing an attachable result or analysis report.');
+  if (!attachments.length) throw new Error('The engine did not produce a Luau output file.');
 
   const safeName = String(input.filename || 'script.lua').replaceAll(String.fromCharCode(96), '');
   let summary;
@@ -726,13 +718,13 @@ async function sendAnalysisOutput(message, input, config) {
       '\nFunctions lifted: ' + (liftedFunctions === null ? 'see report' : liftedFunctions) +
       ' · Unlifted blocks: ' + (unliftedBlocks === null ? 'see report' : unliftedBlocks) +
       '\nCaptured prototypes: ' + (prototypeCount || 'see report') + ' · Dynamic VM chunks: ' + chunkFiles.length +
-      '\nAttached: reconstructed Luau and supporting analysis artifacts.';
+      '\nAttached: deobfuscated.luau';
   } else if (hasLiftCandidate) {
     summary = '**DAILY DEOBF · ' + config.label + '**\n⚠️ Partial VM lift only. Validation found unresolved VM output, so it is not labelled as recovered source.\nProcessed: ' + safeName +
-      '\nAttached: partial candidate, behaviour trace and analysis report.';
+      '\nAttached: partial_result.luau';
   } else {
     summary = '**DAILY DEOBF · ' + config.label + '**\n⚠️ Trace-only result. The full VM lift did not complete.\nProcessed: ' + safeName +
-      '\nThe trace is labelled separately so it is not mistaken for reconstructed source. See the attached report and prototype data for diagnostics.';
+      '\nAttached: runtime_trace.luau (trace only, not reconstructed source).';
   }
 
   await message.reply({
@@ -810,7 +802,6 @@ async function processLuraphV14(message, prompt, input, version) {
         : '**DAILY DEOBF · Luraph v' + version + '**\\n⚠️ The engine did not confirm a full VM lift. This may be a partial recovery or behaviour trace, not complete source.',
       files: [
         new AttachmentBuilder(outputPath, { name: resultName }),
-        new AttachmentBuilder(Buffer.from(report, 'utf8'), { name: 'analysis_report_v' + version.replace('.', '_') + '.txt' }),
       ],
       allowedMentions: { repliedUser: false },
     });
@@ -1887,16 +1878,17 @@ function helpText() {
   ].join('\n');
 }
 
-async function startWorkflow(message) {
+async function startWorkflow(message, inlineText = null) {
   const prompt = await message.reply({
     content: '📄 **DAILY DEOBF**\nSend a `.lua`, `.luau`, or `.txt` file, or paste a direct URL to your Luau script.\n\nMaximum input size: 2 MB.',
     allowedMentions: { repliedUser: false },
   });
-  // Accept attachments on the original command message too.
+  // Accept an attachment, a URL / HttpGet expression on the command,
+  // or a URL / HttpGet expression in the follow-up message.
   const firstAttachment = message.attachments.first();
   const input = firstAttachment
     ? await inputFromAttachment(firstAttachment)
-    : await collectInput(message, prompt);
+    : (inlineText ? await inputFromUrlText(inlineText) : await collectInput(message, prompt));
   const chooseRows = [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -2104,8 +2096,9 @@ client.on(Events.MessageCreate, async (message) => {
   }
 
   if (command !== PREFIX) return;
-  if (parts.length > 1) {
-    await message.reply('Use .deobf by itself, then upload a .lua, .luau, or .txt file or send a direct URL.');
+  const inlineInput = content.slice(command.length).trim();
+  if (inlineInput.length > MAX_INPUT_BYTES) {
+    await message.reply('❌ The .deobf input is too large. Maximum size is 2 MB.');
     return;
   }
   if (activeUsers.has(message.author.id)) {

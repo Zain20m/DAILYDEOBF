@@ -60,6 +60,7 @@ jobs:
           subprocess.run(["python3", str(v14 / "cli.py"), "--help"], check=True, stdout=subprocess.DEVNULL)
           print("V14_FRONTENDS_OK: dedicated 14.7 / 14.8 / 14.9; no copied v15 plugin")
           PY
+          python3 -m unittest discover -s centurion-engine -p 'test_*.py' -v
           python3 scripts/test-151-loadstring-capture.py
 
       - name: Verify 15.1 full-lift routing

@@ -1368,6 +1368,48 @@ async function processLuraph151(message, prompt, input) {
 
 
 
+
+function detectFlowAuthLuraphVersion(source) {
+  const text = String(source || '');
+  const banner = text.match(/Luraph(?:\s+Obfuscator)?\s+v?(14\.9|15\.1|15)(?![\d.])/i);
+  if (banner) {
+    return { version: banner[1], detectedBy: 'Luraph version banner', explicit: true };
+  }
+
+  // FlowAuth's documented macro families identify the pinned Luraph version
+  // when the original macro names are still visible in the supplied source.
+  if (/\b(?:LPH_NO_VIRTUALIZE|LPH_JIT_MAX)\b/.test(text)) {
+    return { version: '14.9', detectedBy: 'v14.9 macro markers', explicit: true };
+  }
+  if (/\b(?:LPH_ATTRIBUTES|LPH_PRECHECK|LPH_ASSUME|LPH_ENCBUF)\b/.test(text)) {
+    return { version: '15.1', detectedBy: 'v15 macro markers', explicit: true };
+  }
+
+  return { version: '15.1', detectedBy: 'FlowAuth current-version default', explicit: false };
+}
+
+async function processFlowAuth(message, prompt, input) {
+  const detected = detectFlowAuthLuraphVersion(input.source);
+  const displayVersion = 'Luraph v' + detected.version;
+  const versionNote = detected.explicit
+    ? 'Version identified by ' + detected.detectedBy + '.'
+    : 'No Luraph version marker was found. Trying the documented current v15.1 route; older v14.9 builds may need a visible version marker.';
+
+  await prompt.edit({
+    content: '🧬 **FlowAuth selected**\n' + versionNote +
+      '\nUsing the matching Luraph analysis engine: **' + displayVersion + '**.',
+    components: [],
+  });
+
+  if (detected.version === '14.9') {
+    return processLuraphV14(message, prompt, input, '14.9');
+  }
+  if (detected.version === '15') {
+    return processLuraphV15(message, prompt, input);
+  }
+  return processLuraph151(message, prompt, input);
+}
+
 function buildIdxCaptureRunner(source) {
   const prelude = [
     '-- DAILY DEOBF .idx capture runner',
@@ -2268,7 +2310,7 @@ function helpText() {
   return [
     'DAILY DEOBF commands',
     '',
-    '.deobf - upload a script or paste a direct URL, then choose Luraph 14.x/15/15.1 or Centurion.',
+    '.deobf - upload a script or paste a direct URL, then choose FlowAuth, Luraph 14.x/15/15.1, or Centurion.',
     '.idx <loadstring expression> - recover inline and nested sources into one ZIP with numbered files, a readable report, manifest, previews and SHA-256 hashes (up to 50 sources).',
     '.idx - attach a script or paste a direct URL; results arrive as idx_bundle.zip plus idx_report.txt.',
     '.idx files - re-send up to 10 extracted loadstringN.txt files as individual attachments.',
@@ -2294,6 +2336,10 @@ async function startWorkflow(message, inlineText = null) {
     : (inlineText ? await inputFromUrlText(inlineText) : await collectInput(message, prompt));
   const chooseRows = [
     new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`deobf-flowauth:${message.author.id}`)
+        .setLabel('FlowAuth')
+        .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
         .setCustomId(`deobf-luraph-v15:${message.author.id}`)
         .setLabel('Luraph v15')
@@ -2341,6 +2387,17 @@ async function startWorkflow(message, inlineText = null) {
     if (interaction.customId === `deobf-cancel:${message.author.id}`) {
       await interaction.update({ content: 'Cancelled.', components: [] });
       componentCollector.stop('cancelled');
+      return;
+    }
+    if (interaction.customId === `deobf-flowauth:${message.author.id}`) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        await processFlowAuth(message, prompt, input);
+      } catch (error) {
+        const messageText = String(error.message || error).slice(0, 1500);
+        await prompt.edit({ content: '❌ **FlowAuth analysis failed**\n' + messageText.replace(/`/g, "'"), components: [] }).catch(() => {});
+      }
       return;
     }
     const v14Match = interaction.customId.match(/^deobf-v(14\.[789]):/);

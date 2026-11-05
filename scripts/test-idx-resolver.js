@@ -385,7 +385,7 @@ test('.get records URLs found beyond the configured chain depth', async () => {
 test('.get strips trailing loadstring call punctuation and deduplicates the clean URL', () => {
   const clean = 'https://api.example.workers.dev/api/loader';
   const source = [
-    'local first = [=[' + clean + '))[]=]',
+    'local first = [=[' + clean + '))(' + ']=]',
     'local second = [=[' + clean + '))()]=]',
     'local third = [=[' + clean + ']=]',
   ].join('\n');

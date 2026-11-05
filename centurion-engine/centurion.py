@@ -11,6 +11,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -53,7 +54,7 @@ def fingerprint(path):
     }
     if result["c3_refs"] >= 50 and result["func_z"] > 20:
         result["route"] = "v6-static"
-    elif "Centurion v6" in result["tag"]:
+    elif result["tag"] == "Centurion v6.1":
         result["route"] = "v6.1-sandbox"
     else:
         result["route"] = "unknown"
@@ -75,47 +76,85 @@ def esc_byte(value):
 
 
 def clean_escapes(code):
+    """Decode escaped bytes inside quoted strings without touching comments or long strings."""
     out = []
     i = 0
     n = len(code)
-    state = None
+
+    def long_bracket_open(index):
+        if index >= n or code[index] != "[":
+            return None
+        cursor = index + 1
+        while cursor < n and code[cursor] == "=":
+            cursor += 1
+        if cursor < n and code[cursor] == "[":
+            level = cursor - index - 1
+            return cursor + 1, "]" + ("=" * level) + "]"
+        return None
+
     while i < n:
         ch = code[i]
-        if state is None:
-            if ch in ('"', "'"):
-                state = ch
-                out.append(ch)
-                i += 1
+
+        # Lua line comments and long comments are copied verbatim.
+        if code.startswith("--", i):
+            opener = long_bracket_open(i + 2)
+            if opener:
+                content_start, closing = opener
+                close_at = code.find(closing, content_start)
+                if close_at < 0:
+                    out.append(code[i:])
+                    break
+                end = close_at + len(closing)
+                out.append(code[i:end])
+                i = end
                 continue
-            if ch == "[":
-                end = i + 1
-                level = 0
-                while end < n and code[end] == "=":
-                    level += 1
-                    end += 1
-                if end < n and code[end] == "[":
-                    state = ("long", level)
-                    out.append(code[i:end + 1])
-                    i = end + 1
-                    continue
+
+            newline = code.find("\n", i)
+            if newline < 0:
+                out.append(code[i:])
+                break
+            out.append(code[i:newline + 1])
+            i = newline + 1
+            continue
+
+        # Long-bracket strings are not escape-decoded.
+        if ch == "[":
+            opener = long_bracket_open(i)
+            if opener:
+                content_start, closing = opener
+                close_at = code.find(closing, content_start)
+                if close_at < 0:
+                    out.append(code[i:])
+                    break
+                end = close_at + len(closing)
+                out.append(code[i:end])
+                i = end
+                continue
+
+        if ch not in ('"', "'"):
             out.append(ch)
             i += 1
             continue
-        if isinstance(state, tuple):
-            close = "]" + "=" * state[1] + "]"
-            if code.startswith(close, i):
-                out.append(close)
-                i += len(close)
-                state = None
-            else:
+
+        quote = ch
+        out.append(ch)
+        i += 1
+        while i < n:
+            ch = code[i]
+            if ch == quote:
                 out.append(ch)
                 i += 1
-            continue
-        if ch == "\\":
+                break
+            if ch != "\\":
+                out.append(ch)
+                i += 1
+                continue
+
             if i + 1 >= n:
                 out.append("\\")
                 i += 1
-                continue
+                break
+
             nxt = code[i + 1]
             if nxt in ("x", "X") and i + 3 < n and all(
                 c in "0123456789abcdefABCDEF" for c in code[i + 2:i + 4]
@@ -123,54 +162,62 @@ def clean_escapes(code):
                 out.append(esc_byte(int(code[i + 2:i + 4], 16)))
                 i += 4
                 continue
+
             if nxt == "u" and i + 2 < n and code[i + 2] == "{":
                 end = code.find("}", i + 3)
                 if end > 0:
                     try:
-                        out.append(esc_byte(int(code[i + 3:end], 16)))
+                        out.append(chr(int(code[i + 3:end], 16)))
                         i = end + 1
                         continue
-                    except ValueError:
+                    except (ValueError, OverflowError):
                         pass
+
             if nxt == "z":
                 i += 2
                 while i < n and code[i] in " \t\n\r\v\f":
                     i += 1
                 continue
+
             if nxt.isdigit():
                 end = i + 1
                 while end < n and end < i + 4 and code[end].isdigit():
                     end += 1
-                out.append(esc_byte(int(code[i + 1:end]) % 256))
+                value = int(code[i + 1:end])
+                out.append(esc_byte(value % 256))
                 i = end
                 continue
+
+            # Keep other Lua escapes exactly as written (\\, \n, escaped quotes, etc.).
             out.extend((ch, nxt))
             i += 2
-            continue
-        if ch == state:
-            out.append(ch)
-            i += 1
-            state = None
-            continue
-        out.append(ch)
-        i += 1
+
     return "".join(out)
 
 
 def harvest_table_spans_ast(source, table_name):
     ast_tool = find_luau_ast()
-    tmp = os.path.join(HERE, "_centurion_ast_input.lua")
-    with open(tmp, "w", encoding="latin-1", newline="\n") as stream:
-        stream.write(source)
+    tmp = None
     try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="latin-1",
+            newline="\n",
+            prefix="centurion-ast-",
+            suffix=".lua",
+            delete=False,
+        ) as stream:
+            stream.write(source)
+            tmp = stream.name
         result = subprocess.run(
             [ast_tool, tmp], capture_output=True, timeout=120, check=False
         )
     finally:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
+        if tmp:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
     ast = None
     for encoding in ("utf-8", "utf-16", "latin-1"):
         try:

@@ -1766,6 +1766,9 @@ async function startGetWorkflow(message, inlineSource = null) {
       'status=' + item.status,
     ];
     if (item.filename) details.push('file=' + item.filename);
+    if (item.correctedFrom) {
+      details.push('auto-fixed=' + reportUrl(item.correctedFrom) + ' -> ' + reportUrl(item.url));
+    }
     if (item.error) details.push('error=' + item.error.replace(/[\r\n]+/g, ' ').slice(0, 500));
     return details.join(' | ');
   });
@@ -1800,6 +1803,7 @@ async function startGetWorkflow(message, inlineSource = null) {
     'Visited URLs: ' + resolution.visited,
     'Downloaded source files: ' + resolution.captures.length,
     'Failed URLs: ' + resolution.failures.length,
+    'Malformed URL candidates auto-corrected: ' + ((resolution.normalizations || []).length),
     'Remaining queued URLs: ' + (resolution.remaining || 0),
     'Additional URLs omitted by discovery cap: ' + (resolution.omittedDiscoveries || 0),
     'URLs found at maximum depth (not fetched): ' + (resolution.discoveries || []).filter((item) => item.status === 'depth-limit').length,
@@ -1832,6 +1836,7 @@ async function startGetWorkflow(message, inlineSource = null) {
     '',
     'DOWNLOAD BEHAVIOUR',
     'Only public HTTP/HTTPS GET downloads are attempted. The script is never executed.',
+    'Unmatched source-call punctuation such as ))(), ))(, or dangling brackets is removed from URL candidates before validation and fetching; the cleaned URL is the one actually requested.',
     'POST/PUT/DELETE request bodies are not replayed. A URL found inside such request configuration is treated as a URL candidate and GET is attempted only.',
     'Redirect destinations are rechecked for public-address safety. Common GitHub blob links are converted to raw file links.',
     'Query strings and credentials are redacted in this report to avoid leaking tokens.',

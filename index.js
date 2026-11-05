@@ -932,15 +932,10 @@ async function processCenturion(message, prompt, input) {
     }
 
     if (fingerprint.route === 'v6.1-sandbox') {
-      try {
-        await fs.access(sandboxDir);
-      } catch {
-        throw new Error(
-          'This is a Centurion v6.1 build, but the ZIP did not include its required ' +
-          'sandbox-copy-luraph runtime. The v6 static route is ready; v6.1 needs that missing runtime folder.'
-        );
-      }
-      centEnv.CENT_SANDBOX = sandboxDir;
+      throw new Error(
+        'This is a Centurion v6.1 build. The uploaded ZIP omitted the separate ' +
+        'sandbox-copy-luraph runtime required for that route, so this deployment supports Centurion v6 static extraction only.'
+      );
     } else if (fingerprint.route !== 'v6-static') {
       throw new Error(
         'Centurion did not recognize this script as a supported v6/v6.1 build. ' +
@@ -2095,7 +2090,7 @@ async function startWorkflow(message, inlineText = null) {
         await processCenturion(message, prompt, input);
       } catch (error) {
         const messageText = String(error.message || error).slice(0, 1500);
-        await prompt.edit({ content: '❌ **Centurion failed**\\n' + messageText, components: [] }).catch(() => {});
+        await prompt.edit({ content: '❌ **Centurion failed**\n' + messageText, components: [] }).catch(() => {});
       }
       return;
     }

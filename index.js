@@ -10,6 +10,8 @@ const {
 const { spawn } = require('node:child_process');
 const dns = require('node:dns').promises;
 const net = require('node:net');
+const http = require('node:http');
+const https = require('node:https');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
@@ -104,13 +106,70 @@ async function assertPublicUrl(url) {
       hostname.endsWith('.local') || hostname.endsWith('.internal')) {
     throw new Error('That URL host is not allowed.');
   }
+
   const literalVersion = net.isIP(hostname);
-  const addresses = literalVersion
-    ? [{ address: hostname }]
-    : await dns.lookup(hostname, { all: true, verbatim: true });
-  if (!addresses.length || addresses.some((entry) => isPrivateAddress(entry.address))) {
-    throw new Error('That URL does not point to a public address.');
+  let addresses;
+  try {
+    addresses = literalVersion
+      ? [{ address: hostname, family: literalVersion }]
+      : await dns.lookup(hostname, { all: true, verbatim: true });
+  } catch (error) {
+    const code = error && (error.code || error.message) || 'unknown DNS error';
+    throw new Error('DNS lookup failed for ' + hostname + ': ' + String(code));
   }
+
+  if (!addresses.length || addresses.some((entry) => isPrivateAddress(entry.address))) {
+    throw new Error('That URL does not point exclusively to public addresses.');
+  }
+  return addresses;
+}
+
+async function requestPinnedAddress(url, address) {
+  return new Promise((resolve, reject) => {
+    const transport = url.protocol === 'https:' ? https : http;
+    const family = net.isIP(address.address);
+    const lookup = (_hostname, options, callback) => {
+      if (options && options.all) {
+        callback(null, [{ address: address.address, family }]);
+      } else {
+        callback(null, address.address, family);
+      }
+    };
+
+    const request = transport.request(url, {
+      method: 'GET',
+      agent: false,
+      autoSelectFamily: false,
+      lookup,
+      signal: AbortSignal.timeout(30_000),
+      headers: {
+        'user-agent': 'Mozilla/5.0 (compatible; DAILY-DEOBF/1.0)',
+        accept: 'text/plain, text/*, application/luau, application/javascript, application/octet-stream, application/json, */*;q=0.8',
+        'accept-encoding': 'identity',
+        connection: 'close',
+      },
+    }, (response) => {
+      const status = Number(response.statusCode || 0);
+      resolve({
+        status,
+        statusText: response.statusMessage || '',
+        ok: status >= 200 && status < 300,
+        headers: {
+          get(name) {
+            const value = response.headers[String(name).toLowerCase()];
+            return Array.isArray(value) ? value.join(', ') : (value ?? null);
+          },
+        },
+        body: {
+          [Symbol.asyncIterator]: () => response[Symbol.asyncIterator](),
+          cancel: async () => { response.destroy(); },
+        },
+      });
+    });
+
+    request.once('error', reject);
+    request.end();
+  });
 }
 
 async function readResponseLimited(response, limit) {
@@ -122,7 +181,11 @@ async function readResponseLimited(response, limit) {
   for await (const chunk of response.body) {
     total += chunk.length;
     if (total > limit) {
-      await response.body.cancel().catch(() => {});
+      if (typeof response.body.cancel === 'function') {
+        await response.body.cancel().catch(() => {});
+      } else if (typeof response.body.destroy === 'function') {
+        response.body.destroy();
+      }
       throw new Error(`The file is too large. Maximum size is ${Math.round(limit / 1024)} KB.`);
     }
     chunks.push(Buffer.from(chunk));
@@ -148,29 +211,34 @@ async function fetchPublicText(rawUrl) {
 
   const maxRedirects = 8;
   for (let redirect = 0; redirect <= maxRedirects; redirect++) {
+    let addresses;
     try {
-      await assertPublicUrl(current);
+      addresses = await assertPublicUrl(current);
     } catch (error) {
       throw new Error('URL safety/DNS check failed for ' + current.hostname + ': ' +
         String(error && (error.message || error) || 'unknown error'));
     }
 
     let response;
-    try {
-      response = await fetch(current, {
-        redirect: 'manual',
-        signal: AbortSignal.timeout(30_000),
-        headers: {
-          'user-agent': 'Mozilla/5.0 (compatible; DAILY-DEOBF/1.0)',
-          accept: 'text/plain, text/*, application/luau, application/javascript, application/octet-stream, application/json, */*;q=0.8',
-        },
-      });
-    } catch (error) {
-      const reason = error && (
-        error.cause && (error.cause.code || error.cause.message) ||
-        error.code || error.message
-      ) || 'unknown network error';
-      throw new Error('Network/TLS request failed for ' + current.hostname + ': ' + String(reason));
+    const connectionErrors = [];
+    for (const address of addresses) {
+      try {
+        response = await requestPinnedAddress(current, address);
+        break;
+      } catch (error) {
+        const reason = error && (
+          error.cause && (error.cause.code || error.cause.message) ||
+          error.code || error.message
+        ) || 'unknown network error';
+        connectionErrors.push(address.address + ': ' + String(reason));
+      }
+    }
+    if (!response) {
+      throw new Error(
+        'Network/TLS connection failed for ' + current.hostname +
+        ' across ' + addresses.length + ' public address(es): ' +
+        connectionErrors.join(' | ').slice(0, 900)
+      );
     }
 
     if ([301, 302, 303, 307, 308].includes(response.status)) {
@@ -187,11 +255,17 @@ async function fetchPublicText(rawUrl) {
       } catch {
         throw new Error('The server returned an invalid redirect URL.');
       }
+      if (response.body && typeof response.body.cancel === 'function') {
+        await response.body.cancel().catch(() => {});
+      }
       continue;
     }
 
     if (!response.ok) {
       const retryAfter = response.headers.get('retry-after');
+      if (response.body && typeof response.body.cancel === 'function') {
+        await response.body.cancel().catch(() => {});
+      }
       throw new Error(
         'HTTP ' + response.status + ' ' + (response.statusText || '') +
         ' while downloading from ' + current.hostname +

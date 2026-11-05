@@ -903,7 +903,6 @@ async function processCenturion(message, prompt, input) {
     CENT_LUAU_EXE: path.join(luauBin, process.platform === 'win32' ? 'luau.exe' : 'luau'),
     CENT_LUAU_AST: path.join(luauBin, process.platform === 'win32' ? 'luau-ast.exe' : 'luau-ast'),
   };
-  const sandboxDir = path.join(__dirname, 'sandbox-copy-luraph');
   const progress = createAnalysisProgress(
     prompt, input.filename, Buffer.byteLength(input.source, 'utf8'), 'Centurion'
   );
@@ -914,7 +913,7 @@ async function processCenturion(message, prompt, input) {
     await progress.start();
     await progress.setPhase(
       'Fingerprinting the Centurion build',
-      'Checking whether this input matches the v6 static route or the v6.1 sandbox route.'
+      'Checking for the supported v6 static route. The separate v6.1 runtime is not bundled in this deployment.'
     );
 
     const fingerprintResult = await runCommand(
@@ -933,8 +932,9 @@ async function processCenturion(message, prompt, input) {
 
     if (fingerprint.route === 'v6.1-sandbox') {
       throw new Error(
-        'This is a Centurion v6.1 build. The uploaded ZIP omitted the separate ' +
-        'sandbox-copy-luraph runtime required for that route, so this deployment supports Centurion v6 static extraction only.'
+        'This is a Centurion v6.1 build, but this bot currently contains only the v6 static adapter. ' +
+        'The original v6.1 path expects sandbox-copy-luraph/harness.py, and its runtime code is not wired into this adapter. ' +
+        'Adding placeholder files will not enable v6.1.'
       );
     } else if (fingerprint.route !== 'v6-static') {
       throw new Error(
@@ -944,10 +944,8 @@ async function processCenturion(message, prompt, input) {
     }
 
     await progress.setPhase(
-      fingerprint.route === 'v6-static' ? 'Extracting Centurion v6 factories' : 'Running Centurion v6.1 sandbox',
-      fingerprint.route === 'v6-static'
-        ? 'The static route extracts the payload factory functions and decodes string escapes. This is a stage-one result, not a complete runnable reconstruction.'
-        : 'Running the offline Centurion harness with its frozen environment packs.'
+      'Extracting Centurion v6 factories',
+      'The static route extracts payload factory functions and decodes string escapes. This is a stage-one result, not a complete runnable reconstruction.'
     );
 
     const result = await runCommand(

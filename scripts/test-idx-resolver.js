@@ -345,3 +345,38 @@ test('.get returns every URL discovery with queued/downloaded/failed state', asy
   assert.equal(result.captures[0].statusCode, 200);
   assert.equal(result.failures[0].message, 'HTTP 503');
 });
+
+
+test('.get resolves literal URL concatenation with string constants', () => {
+  const source = [
+    'local base = "https://example.com/"',
+    'local resource = "script.lua"',
+    'local target = base .. resource',
+    'request({Url = target})',
+  ].join('\\n');
+
+  assert.deepEqual(extractStaticFetchUrls(source), [
+    'https://example.com/',
+    'https://example.com/script.lua',
+  ]);
+});
+
+test('.get records URLs found beyond the configured chain depth', async () => {
+  const result = await resolveStaticSources(
+    'request({Url = "https://example.com/root.lua"})',
+    {
+      maxFiles: 5,
+      maxUrls: 10,
+      maxAttempts: 10,
+      maxDepth: 0,
+      fetchText: async () => 'request({Url = "https://example.com/child.lua"})',
+    }
+  );
+
+  assert.equal(result.captures.length, 1);
+  assert.equal(result.discovered, 2);
+  assert.equal(result.discoveries.length, 2);
+  assert.equal(result.discoveries[1].url, 'https://example.com/child.lua');
+  assert.equal(result.discoveries[1].status, 'depth-limit');
+  assert.equal(result.truncated, true);
+});

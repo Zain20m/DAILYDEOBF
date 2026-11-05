@@ -25,7 +25,9 @@ const MAX_INPUT_BYTES = 2 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 18 * 1024 * 1024;
 const MAX_PURELUA_CHARS = 1_500_000;
 const MAX_IDX_CAPTURE_FILES = 50;
-const MAX_GET_FILES = 10;
+const MAX_GET_FILES = 50;
+const MAX_GET_URLS = 250;
+const MAX_GET_ATTEMPTS = 150;
 const INPUT_WAIT_MS = 180_000;
 const PICKER_WAIT_MS = 120_000;
 const ENGINE_TIMEOUT_MS = 25 * 60_000;
@@ -126,29 +128,88 @@ async function readResponseLimited(response, limit) {
 
 async function fetchPublicText(rawUrl) {
   let current = new URL(rawUrl);
-  for (let redirect = 0; redirect <= 3; redirect++) {
-    await assertPublicUrl(current);
-    const response = await fetch(current, {
-      redirect: 'manual',
-      signal: AbortSignal.timeout(15_000),
-      headers: {
-        'user-agent': 'DAILY-DEOBF/1.0',
-        accept: 'text/plain, text/*, application/octet-stream;q=0.9, */*;q=0.1',
-      },
-    });
+  current.hash = '';
+
+  // GitHub blob pages are HTML. Convert the standard blob URL to its raw
+  // counterpart before requesting it so .get receives source text.
+  if (current.hostname.toLowerCase() === 'github.com') {
+    const match = current.pathname.match(/^\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/(.+)$/);
+    if (match) {
+      current = new URL(
+        'https://raw.githubusercontent.com/' + match[1] + '/' + match[2] + '/' +
+        match[3] + '/' + match[4]
+      );
+    }
+  }
+
+  const maxRedirects = 8;
+  for (let redirect = 0; redirect <= maxRedirects; redirect++) {
+    try {
+      await assertPublicUrl(current);
+    } catch (error) {
+      throw new Error('URL safety/DNS check failed for ' + current.hostname + ': ' +
+        String(error && (error.message || error) || 'unknown error'));
+    }
+
+    let response;
+    try {
+      response = await fetch(current, {
+        redirect: 'manual',
+        signal: AbortSignal.timeout(30_000),
+        headers: {
+          'user-agent': 'Mozilla/5.0 (compatible; DAILY-DEOBF/1.0)',
+          accept: 'text/plain, text/*, application/luau, application/javascript, application/octet-stream, application/json, */*;q=0.8',
+        },
+      });
+    } catch (error) {
+      const reason = error && (
+        error.cause && (error.cause.code || error.cause.message) ||
+        error.code || error.message
+      ) || 'unknown network error';
+      throw new Error('Network/TLS request failed for ' + current.hostname + ': ' + String(reason));
+    }
+
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.get('location');
-      if (!location || redirect === 3) throw new Error('The URL redirected too many times.');
-      current = new URL(location, current);
+      if (!location) {
+        throw new Error('HTTP ' + response.status + ' redirect did not include a Location header.');
+      }
+      if (redirect === maxRedirects) {
+        throw new Error('The URL exceeded the ' + maxRedirects + '-redirect limit.');
+      }
+      try {
+        current = new URL(location, current);
+        current.hash = '';
+      } catch {
+        throw new Error('The server returned an invalid redirect URL.');
+      }
       continue;
     }
-    if (!response.ok) throw new Error(`Could not download that URL (HTTP ${response.status}).`);
-    const type = (response.headers.get('content-type') || '').toLowerCase();
-    if (type.includes('text/html')) throw new Error('That URL returned a webpage. Please use a direct script URL.');
+
+    if (!response.ok) {
+      const retryAfter = response.headers.get('retry-after');
+      throw new Error(
+        'HTTP ' + response.status + ' ' + (response.statusText || '') +
+        ' while downloading from ' + current.hostname +
+        (retryAfter ? '. Retry-After: ' + retryAfter : '')
+      );
+    }
+
+    // Do not reject a response only because the host labelled it text/html.
+    // Some script hosts mislabel plain Luau. decodeSource checks the body itself.
     const bytes = await readResponseLimited(response, MAX_INPUT_BYTES);
-    return { bytes, filename: path.basename(current.pathname) || 'script.lua' };
+    const contentType = String(response.headers.get('content-type') || 'unknown')
+      .split(';')[0].trim().toLowerCase();
+
+    return {
+      bytes,
+      filename: path.basename(current.pathname) || 'script.lua',
+      finalUrl: current.toString(),
+      contentType,
+      status: response.status,
+    };
   }
-  throw new Error('Could not download that URL.');
+  throw new Error('Could not download the URL after following redirects.');
 }
 
 function decodeSource(bytes) {

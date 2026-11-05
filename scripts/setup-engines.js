@@ -1,9 +1,25 @@
 'use strict';
 
 const fs = require('node:fs');
+const zlib = require('node:zlib');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
+
+const centurionDir = path.join(root, 'centurion-engine');
+const centurionDriverPacked = path.join(centurionDir, 'centurion.py.gz.b64');
+if (!fs.existsSync(centurionDriverPacked)) {
+  throw new Error('Centurion driver package is missing: ' + centurionDriverPacked);
+}
+try {
+  const packedDriver = fs.readFileSync(centurionDriverPacked, 'utf8').trim();
+  fs.writeFileSync(
+    path.join(centurionDir, 'centurion.py'),
+    zlib.gunzipSync(Buffer.from(packedDriver, 'base64'))
+  );
+} catch (error) {
+  throw new Error('Could not unpack the Centurion driver: ' + error.message);
+}
 
 const engines = [
   {
@@ -83,6 +99,18 @@ const engines = [
       'bin/luau-ast',
     ],
   },
+  {
+    label: 'Centurion v6 / v6.1',
+    directory: 'centurion-engine',
+    required: [
+      'centurion.py',
+      'p2d_errors.json',
+      'callerr_rules.json',
+      'enumprops.json',
+      'httpresps.json',
+      'guessed_p2d.json',
+    ],
+  },
 ];
 
 function cleanPythonCache(directory) {
@@ -137,4 +165,4 @@ for (const engine of engines) {
   }
 }
 
-console.log('Validated separate Luraph v14.7/v14.8/v14.9, v15 and 15.1 engines.');
+console.log('Validated separate Luraph v14.7/v14.8/v14.9, v15, 15.1 and Centurion engines.');

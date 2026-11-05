@@ -144,8 +144,10 @@ for (const engine of engines) {
   cleanPythonCache(base);
 
   if (process.platform !== 'win32') {
-    fs.chmodSync(path.join(base, 'bin', 'luau'), 0o755);
-    fs.chmodSync(path.join(base, 'bin', 'luau-ast'), 0o755);
+    for (const binary of ['luau', 'luau-ast']) {
+      const runtimeBinary = path.join(base, 'bin', binary);
+      if (fs.existsSync(runtimeBinary)) fs.chmodSync(runtimeBinary, 0o755);
+    }
   }
 }
 

@@ -20,6 +20,7 @@ on:
       - "luraph-v14-engine/**"
       - "luraph-v15-engine/**"
       - "luraph-v15.1-engine/**"
+      - "centurion-engine/**"
       - ".github/workflows/verify-full-analysis.yml"
 
 permissions:
@@ -43,7 +44,7 @@ jobs:
           node scripts/setup-engines.js
           python3 - <<'PY'
           from pathlib import Path
-          for engine in (Path("luraph-v14-engine"), Path("luraph-v15-engine"), Path("luraph-v15.1-engine")):
+          for engine in (Path("luraph-v14-engine"), Path("luraph-v15-engine"), Path("luraph-v15.1-engine"), Path("centurion-engine")):
               files = list(engine.rglob("*.py"))
               for path in files:
                   if "__pycache__" not in path.parts:

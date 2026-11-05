@@ -1,11 +1,12 @@
 'use strict';
 
 const REQUEST_FUNCTIONS = new Set([
-  'httpget', 'httpgetasync', 'getasync',
-  'request', 'http_request', 'httprequest',
-  'get', 'fetch', 'loadstring',
+  'httpget', 'httpgetasync', 'getasync', 'postasync',
+  'httppost', 'httppostasync', 'requestasync',
+  'request', 'http_request', 'httprequest', 'syn_request',
+  'get', 'fetch', 'http_fetch', 'loadstring',
 ]);
-const URL_FIELDS = new Set(['url', 'uri', 'urlstring']);
+const URL_FIELDS = new Set(['url', 'uri', 'urlstring', 'endpoint', 'baseurl', 'baseuri']);
 
 function extractInlineLoadstringSources(source) {
   const tokens = tokenizeLua(String(source || ''));
@@ -152,20 +153,30 @@ function extractLoadstringHttpGetUrls(source) {
 }
 
 function extractStaticFetchUrls(source) {
-  const tokens = tokenizeLua(String(source || ''));
+  const text = String(source || '');
+  const tokens = tokenizeLua(text);
   const urls = [];
   const literalStrings = new Map();
   const requestAliases = new Set(REQUEST_FUNCTIONS);
 
+  // Collect string constants and aliases before resolving calls.
   for (let i = 0; i + 2 < tokens.length; i++) {
     if (tokens[i].type === 'identifier' && tokens[i + 1].value === '=' && tokens[i + 2].type === 'string') {
       literalStrings.set(tokens[i].value, tokens[i + 2].value);
     }
     if (tokens[i].type === 'identifier' && tokens[i + 1].value === '=') {
-      const target = tokens.slice(i + 2, i + 7)
+      const target = tokens.slice(i + 2, i + 9)
         .find((part) => part.type === 'identifier' && REQUEST_FUNCTIONS.has(part.value.toLowerCase()));
       if (target) requestAliases.add(tokens[i].value.toLowerCase());
     }
+  }
+
+  // Any literal URL is evidence, even when the author stores it for a wrapper.
+  // The tokenizer has already removed comments and ignores ordinary source text.
+  for (const token of tokens) {
+    if (token.type !== 'string') continue;
+    const matches = token.value.match(/https?:\/\/[^\s"'<>\x60]+/gi) || [];
+    for (const match of matches) urls.push(match.replace(/[)\]},.;]+$/g, ''));
   }
 
   for (let i = 0; i < tokens.length; i++) {
@@ -181,16 +192,11 @@ function extractStaticFetchUrls(source) {
       ? beforePrevious.value.toLowerCase()
       : '';
 
-    // HttpGet/GetAsync/request("https://...") and dotted equivalents.
-    if (
-      previous && previous.value === '(' &&
-      requestAliases.has(apiName)
-    ) {
+    if (previous && previous.value === '(' && requestAliases.has(apiName)) {
       urls.push(literalUrl);
       continue;
     }
 
-    // game.HttpGet(game, "https://...") passes the receiver explicitly.
     const apiBeforeExplicitReceiver = tokens[i - 4];
     if (
       previous && previous.value === ',' &&
@@ -202,7 +208,6 @@ function extractStaticFetchUrls(source) {
       continue;
     }
 
-    // request({ Url = "https://..." }) and similar options-table forms.
     if (
       previous && previous.value === '=' &&
       beforePrevious && beforePrevious.type === 'identifier' &&
@@ -212,7 +217,6 @@ function extractStaticFetchUrls(source) {
       continue;
     }
 
-    // request({ ["Url"] = "https://..." }) and bracket-key variants.
     const bracketField = tokens[i - 3];
     if (
       previous && previous.value === '=' &&

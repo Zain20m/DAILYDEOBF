@@ -6,6 +6,7 @@ const {
   extractInlineLoadstringSources,
   extractLoadstringHttpGetUrls,
   extractStaticFetchUrls,
+  suggestLoadstringHttpGetCorrection,
   resolveLoadstringSources,
   resolveStaticSources,
 } = require('./idx-resolver');
@@ -418,4 +419,21 @@ test('.get repairs malformed URL punctuation before calling the downloader', asy
   assert.equal(result.discoveries[0].url, corrected);
   assert.equal(result.discoveries[0].correctedFrom, malformed);
   assert.deepEqual(result.normalizations, [{ original: malformed, url: corrected }]);
+});
+
+
+test('.get suggests moving a swallowed ))() outside the HttpGet URL quotes', () => {
+  const malformed = 'loadstring(game:HttpGet("https://api.meowxsrc.workers.dev/api/loader))()")';
+  const suggestion = suggestLoadstringHttpGetCorrection(malformed);
+
+  assert.deepEqual(suggestion, {
+    originalUrl: 'https://api.meowxsrc.workers.dev/api/loader))()',
+    correctedUrl: 'https://api.meowxsrc.workers.dev/api/loader',
+    expression: 'loadstring(game:HttpGet("https://api.meowxsrc.workers.dev/api/loader"))()',
+  });
+});
+
+test('.get does not prompt when ))() is already outside the URL quotes', () => {
+  const correct = 'loadstring(game:HttpGet("https://api.meowxsrc.workers.dev/api/loader"))()';
+  assert.equal(suggestLoadstringHttpGetCorrection(correct), null);
 });

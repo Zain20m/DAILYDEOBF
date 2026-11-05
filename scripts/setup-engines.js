@@ -1,25 +1,9 @@
 'use strict';
 
 const fs = require('node:fs');
-const zlib = require('node:zlib');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
-
-const centurionDir = path.join(root, 'centurion-engine');
-const centurionDriverPacked = path.join(centurionDir, 'centurion.py.gz.b64');
-if (!fs.existsSync(centurionDriverPacked)) {
-  throw new Error('Centurion driver package is missing: ' + centurionDriverPacked);
-}
-try {
-  const packedDriver = fs.readFileSync(centurionDriverPacked, 'utf8').trim();
-  fs.writeFileSync(
-    path.join(centurionDir, 'centurion.py'),
-    zlib.gunzipSync(Buffer.from(packedDriver, 'base64'))
-  );
-} catch (error) {
-  throw new Error('Could not unpack the Centurion driver: ' + error.message);
-}
 
 const engines = [
   {

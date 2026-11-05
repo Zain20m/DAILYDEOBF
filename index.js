@@ -2107,7 +2107,7 @@ client.on(Events.MessageCreate, async (message) => {
   }
   activeUsers.add(message.author.id);
   try {
-    await startWorkflow(message);
+    await startWorkflow(message, inlineInput || null);
   } catch (error) {
     await message.reply(`❌ ${String(error.message || error).slice(0, 1500)}`).catch(() => {});
   } finally {

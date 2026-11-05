@@ -316,12 +316,12 @@ test('.get keeps scanning after failed URLs instead of treating failures as outp
     },
   });
 
-  assert.equal(result.attempts, 6);
+  assert.equal(result.attempts, 7);
   assert.equal(result.failures.length, 5);
-  assert.equal(result.captures.length, 1);
-  assert.equal(result.discoveries.filter((item) => item.status === 'downloaded').length, 1);
+  assert.equal(result.captures.length, 2);
+  assert.equal(result.discoveries.filter((item) => item.status === 'downloaded').length, 2);
   assert.equal(result.discoveries.filter((item) => item.status === 'failed').length, 5);
-  assert.equal(result.truncated, false);
+  assert.equal(result.truncated, true);
 });
 
 test('.get returns every URL discovery with queued/downloaded/failed state', async () => {

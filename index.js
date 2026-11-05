@@ -182,11 +182,11 @@ async function inputFromAttachment(attachment) {
 }
 
 async function inputFromUrlText(text) {
-  const match = String(text || '').match(/https?:\\/\\/[^\\s"'<>]+/i);
+  const match = String(text || '').match(/https?:\/\/[^\s"'<>]+/i);
   if (!match) {
     throw new Error('Send a direct script URL or a loadstring(game:HttpGet("URL"))() expression.');
   }
-  const rawUrl = match[0].replace(/[)\\]},.;]+$/g, '');
+  const rawUrl = match[0].replace(/[)\]},.;]+$/g, '');
   let parsed;
   try {
     parsed = new URL(rawUrl);
@@ -197,7 +197,7 @@ async function inputFromUrlText(text) {
     throw new Error('Only HTTP and HTTPS URLs are supported.');
   }
   const result = await fetchPublicText(parsed.toString());
-  const filename = /\\.(lua|luau|txt)$/i.test(path.extname(result.filename))
+  const filename = /\.(lua|luau|txt)$/i.test(path.extname(result.filename))
     ? result.filename
     : 'downloaded-script.lua';
   return { source: decodeSource(result.bytes), filename, url: parsed.toString() };
@@ -798,8 +798,8 @@ async function processLuraphV14(message, prompt, input, version) {
 
     await message.reply({
       content: isLifted
-        ? '**DAILY DEOBF · Luraph v' + version + '**\n✅ Static VM-lifted Luau generated. The analysis report is attached too.'
-        : '**DAILY DEOBF · Luraph v' + version + '**\\n⚠️ The engine did not confirm a full VM lift. This may be a partial recovery or behaviour trace, not complete source.',
+        ? '**DAILY DEOBF · Luraph v' + version + '**\n✅ Static VM-lifted Luau generated.'
+        : '**DAILY DEOBF · Luraph v' + version + '**\n⚠️ Partial result only. The attached file is not confirmed as fully reconstructed source.',
       files: [
         new AttachmentBuilder(outputPath, { name: resultName }),
       ],
@@ -807,8 +807,8 @@ async function processLuraphV14(message, prompt, input, version) {
     });
 
     await progress.complete(isLifted
-      ? 'The VM-lifted Luau result and analysis report were attached.'
-      : 'The partial result and analysis report were attached and clearly labelled.');
+      ? 'The Luau output file was attached.'
+      : 'The partial Luau output file was attached and clearly labelled.');
     await prompt.edit({
       content: isLifted
         ? '✅ Luraph v' + version + ' analysis finished. Static VM-lifted Luau was generated.'

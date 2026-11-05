@@ -262,6 +262,8 @@ async function resolveWithExtractor(source, options, extractor) {
     error: null,
   }));
   const discoveryByUrl = new Map(discoveries.map((item) => [item.url, item]));
+  const recordedUrls = new Set(queue.map((item) => item.url));
+  let omittedDiscoveryCount = Math.max(0, allInitialUrls.length - maxUrls);
   const inlineSeen = new Set();
   const inlineExtractor = typeof options.inlineExtractor === 'function' ? options.inlineExtractor : null;
   let inlineTruncated = false;
@@ -329,27 +331,35 @@ async function resolveWithExtractor(source, options, extractor) {
 
       addInlineChunks(text, item.depth, item.url);
 
-      if (item.depth < maxDepth && captures.length + queue.length < maxUrls) {
-        for (const childUrl of extractor(text)) {
-          if (visited.has(childUrl) || queued.has(childUrl)) continue;
-          if (discoveries.length >= maxUrls) {
-            scanTruncated = true;
-            break;
-          }
-          const child = { url: childUrl, depth: item.depth + 1 };
-          queue.push(child);
-          queued.add(childUrl);
-          const childRecord = {
-            url: childUrl,
-            depth: child.depth,
-            status: 'queued',
-            filename: null,
-            error: null,
-          };
-          discoveries.push(childRecord);
-          discoveryByUrl.set(childUrl, childRecord);
-          discovered++;
+      for (const childUrl of extractor(text)) {
+        if (visited.has(childUrl) || recordedUrls.has(childUrl)) continue;
+        discovered++;
+        if (discoveries.length >= maxUrls) {
+          scanTruncated = true;
+          omittedDiscoveryCount++;
+          continue;
         }
+
+        const child = { url: childUrl, depth: item.depth + 1 };
+        const atDepthLimit = item.depth >= maxDepth;
+        const childRecord = {
+          url: childUrl,
+          depth: child.depth,
+          status: atDepthLimit ? 'depth-limit' : 'queued',
+          filename: null,
+          error: atDepthLimit ? 'Discovered at the configured maximum chain depth; not fetched.' : null,
+        };
+        discoveries.push(childRecord);
+        discoveryByUrl.set(childUrl, childRecord);
+        recordedUrls.add(childUrl);
+
+        if (atDepthLimit) {
+          scanTruncated = true;
+          continue;
+        }
+
+        queue.push(child);
+        queued.add(childUrl);
       }
     } catch (error) {
       const message = String(error && (error.message || error) || 'Unknown fetch error').slice(0, 500);
@@ -378,6 +388,7 @@ async function resolveWithExtractor(source, options, extractor) {
     maxAttempts,
     maxDepth,
     remaining: queue.length,
+    omittedDiscoveries: omittedDiscoveryCount,
   };
 }
 

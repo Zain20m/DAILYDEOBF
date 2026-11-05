@@ -35,6 +35,8 @@ const ENGINE_V15_DIR = path.join(__dirname, 'luraph-v15-engine');
 const ENGINE_V15_CLI = path.join(ENGINE_V15_DIR, 'deob.py');
 const ENGINE_151_DIR = path.join(__dirname, 'luraph-v15.1-engine');
 const ENGINE_151_CLI = path.join(ENGINE_151_DIR, 'deob.js');
+const ENGINE_CENT_DIR = path.join(__dirname, 'centurion-engine');
+const ENGINE_CENT_CLI = path.join(ENGINE_CENT_DIR, 'centurion.py');
 const activeUsers = new Set();
 const commandGuildId = process.env.GUILD_ID || '';
 
@@ -258,6 +260,14 @@ function formatBytes(bytes) {
   if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
   if (bytes >= 1024) return Math.round(bytes / 1024) + ' KB';
   return bytes + ' bytes';
+}
+
+const DAILY_DEOBF_HEADER = '-- deobf by daily deobf';
+
+async function prependDailyDeobfHeader(filePath) {
+  const source = (await fs.readFile(filePath, 'utf8')).replace(/^\\uFEFF/, '');
+  if (source.split(/\\r?\\n/, 1)[0].trim().toLowerCase() === DAILY_DEOBF_HEADER) return;
+  await fs.writeFile(filePath, DAILY_DEOBF_HEADER + '\\n' + source.replace(/^(?:\\r?\\n)+/, ''), 'utf8');
 }
 
 function createAnalysisProgress(prompt, filename, inputBytes, label) {
@@ -702,6 +712,7 @@ async function sendAnalysisOutput(message, input, config) {
   const candidatePath = hasLiftCandidate
     ? liftedPath
     : (traceBytes ? preferredTracePath : defaultTracePath);
+  if (await fileSize(candidatePath) > 0) await prependDailyDeobfHeader(candidatePath);
   const candidateBytes = await fileSize(candidatePath);
   if (candidateBytes > 0 && candidateBytes <= MAX_OUTPUT_BYTES) {
     const candidateName = hasLiftedSource
@@ -795,6 +806,7 @@ async function processLuraphV14(message, prompt, input, version) {
 
     const resultName = 'Luraph_v' + version.replace('.', '_') +
       (isLifted ? '_devirtualized.luau' : '_partial_result.luau');
+    await prependDailyDeobfHeader(outputPath);
 
     await message.reply({
       content: isLifted
@@ -871,6 +883,127 @@ async function processLuraphV15(message, prompt, input) {
           : '⚠️ Luraph v15 analysis finished without a full VM lift. Check the trace and analysis report.'),
       components: [],
     });
+  } catch (error) {
+    await progress.fail(error);
+    throw error;
+  } finally {
+    progress.stop();
+    await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+
+async function processCenturion(message, prompt, input) {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-centurion-'));
+  const inputPath = path.join(tempRoot, 'input.lua');
+  const outputDir = path.join(tempRoot, 'output');
+  const python = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+  const luauBin = path.join(ENGINE_V15_DIR, 'bin');
+  const centEnv = {
+    CENT_LUAU_EXE: path.join(luauBin, process.platform === 'win32' ? 'luau.exe' : 'luau'),
+    CENT_LUAU_AST: path.join(luauBin, process.platform === 'win32' ? 'luau-ast.exe' : 'luau-ast'),
+  };
+  const sandboxDir = path.join(__dirname, 'sandbox-copy-luraph');
+  const progress = createAnalysisProgress(
+    prompt, input.filename, Buffer.byteLength(input.source, 'utf8'), 'Centurion'
+  );
+
+  try {
+    await fs.mkdir(outputDir, { recursive: true });
+    await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
+    await progress.start();
+    await progress.setPhase(
+      'Fingerprinting the Centurion build',
+      'Checking whether this input matches the v6 static route or the v6.1 sandbox route.'
+    );
+
+    const fingerprintResult = await runCommand(
+      python,
+      [ENGINE_CENT_CLI, 'fingerprint', inputPath],
+      ENGINE_CENT_DIR,
+      60_000,
+      { env: centEnv }
+    );
+    let fingerprint;
+    try {
+      fingerprint = JSON.parse(fingerprintResult.stdout);
+    } catch {
+      throw new Error('Centurion returned an unreadable fingerprint result.');
+    }
+
+    if (fingerprint.route === 'v6.1-sandbox') {
+      try {
+        await fs.access(sandboxDir);
+      } catch {
+        throw new Error(
+          'This is a Centurion v6.1 build, but the ZIP did not include its required ' +
+          'sandbox-copy-luraph runtime. The v6 static route is ready; v6.1 needs that missing runtime folder.'
+        );
+      }
+      centEnv.CENT_SANDBOX = sandboxDir;
+    } else if (fingerprint.route !== 'v6-static') {
+      throw new Error(
+        'Centurion did not recognize this script as a supported v6/v6.1 build. ' +
+        'Detected route: ' + String(fingerprint.route || 'unknown') + '.'
+      );
+    }
+
+    await progress.setPhase(
+      fingerprint.route === 'v6-static' ? 'Extracting Centurion v6 factories' : 'Running Centurion v6.1 sandbox',
+      fingerprint.route === 'v6-static'
+        ? 'The static route extracts the payload factory functions and decodes string escapes. This is a stage-one result, not a complete runnable reconstruction.'
+        : 'Running the offline Centurion harness with its frozen environment packs.'
+    );
+
+    const result = await runCommand(
+      python,
+      [ENGINE_CENT_CLI, 'deobfuscate', inputPath, '--out-dir', outputDir],
+      ENGINE_CENT_DIR,
+      ENGINE_TIMEOUT_MS,
+      { env: centEnv, onProgress: progress.onLine }
+    );
+
+    const entries = await fs.readdir(outputDir);
+    const preferred = fingerprint.route === 'v6-static'
+      ? entries.find((name) => name.endsWith('_deobf_stage1.lua'))
+      : (entries.find((name) => name.endsWith('_deobf_clean.lua')) ||
+         entries.find((name) => name.endsWith('_maximal.lua')) ||
+         entries.find((name) => name.endsWith('_deobf_stage1.lua')));
+    if (!preferred) {
+      const diagnostic = String(result.stdout || result.stderr || '').slice(-1200);
+      throw new Error(
+        'Centurion finished without producing a recovered Luau file.' +
+        (diagnostic ? '\\n' + diagnostic : '')
+      );
+    }
+
+    const outputPath = path.join(outputDir, preferred);
+    const stat = await fs.stat(outputPath);
+    if (!stat.size || stat.size > MAX_OUTPUT_BYTES) {
+      throw new Error('Centurion output is empty or exceeds the 18 MB output limit.');
+    }
+    await prependDailyDeobfHeader(outputPath);
+    const outputName = fingerprint.route === 'v6-static'
+      ? 'Centurion_v6_stage1.luau'
+      : 'Centurion_v6_1_result.luau';
+    const factoryMatch = String(result.stdout || '').match(/"factories"\\s*:\\s*(\\d+)/);
+    const detail = fingerprint.route === 'v6-static'
+      ? '\\nExtracted payload factories: ' + (factoryMatch ? factoryMatch[1] : 'see file') +
+        '\\n⚠️ Stage-one static extraction only. It is not represented as complete runnable source.'
+      : '\\nCenturion v6.1 offline analysis produced a Luau candidate. Review it before treating it as complete.';
+
+    await message.reply({
+      content: '✅ **DAILY DEOBF · Centurion**\\nDetected: ' + fingerprint.tag +
+        '\\nRoute: ' + fingerprint.route + detail +
+        '\\nAttached: ' + outputName,
+      files: [new AttachmentBuilder(outputPath, { name: outputName })],
+      allowedMentions: { repliedUser: false },
+    });
+    await progress.complete('The Centurion Luau output was attached.');
+    await prompt.edit({
+      content: '✅ Centurion analysis finished. Output: ' + outputName + '.',
+      components: [],
+    }).catch(() => {});
   } catch (error) {
     await progress.fail(error);
     throw error;
@@ -1865,7 +1998,7 @@ function helpText() {
   return [
     'DAILY DEOBF commands',
     '',
-    '.deobf - upload a script or paste a direct URL, then choose a Luraph engine.',
+    '.deobf - upload a script or paste a direct URL, then choose Luraph 14.x/15/15.1 or Centurion.',
     '.idx <loadstring expression> - recover inline and nested sources into one ZIP with numbered files, a readable report, manifest, previews and SHA-256 hashes (up to 50 sources).',
     '.idx - attach a script or paste a direct URL; results arrive as idx_bundle.zip plus idx_report.txt.',
     '.idx files - re-send up to 10 extracted loadstringN.txt files as individual attachments.',
@@ -1900,11 +2033,15 @@ async function startWorkflow(message, inlineText = null) {
         .setLabel('Luraph 15.1')
         .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
+        .setCustomId(`deobf-centurion:${message.author.id}`)
+        .setLabel('Centurion')
+        .setStyle(ButtonStyle.Primary),
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
         .setCustomId(`deobf-v14.7:${message.author.id}`)
         .setLabel('Luraph 14.7')
         .setStyle(ButtonStyle.Secondary),
-    ),
-    new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`deobf-v14.8:${message.author.id}`)
         .setLabel('Luraph 14.8')
@@ -1913,6 +2050,8 @@ async function startWorkflow(message, inlineText = null) {
         .setCustomId(`deobf-v14.9:${message.author.id}`)
         .setLabel('Luraph 14.9')
         .setStyle(ButtonStyle.Secondary),
+    ),
+    new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`deobf-cancel:${message.author.id}`)
         .setLabel('Cancel')
@@ -1946,6 +2085,17 @@ async function startWorkflow(message, inlineText = null) {
           content: '**Luraph v' + v14Match[1] + ' failed**\n' + messageText.replace(/`/g, "'"),
           components: [],
         }).catch(() => {});
+      }
+      return;
+    }
+    if (interaction.customId === `deobf-centurion:${message.author.id}`) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        await processCenturion(message, prompt, input);
+      } catch (error) {
+        const messageText = String(error.message || error).slice(0, 1500);
+        await prompt.edit({ content: '❌ **Centurion failed**\\n' + messageText, components: [] }).catch(() => {});
       }
       return;
     }

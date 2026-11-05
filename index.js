@@ -265,9 +265,9 @@ function formatBytes(bytes) {
 const DAILY_DEOBF_HEADER = '-- deobf by daily deobf';
 
 async function prependDailyDeobfHeader(filePath) {
-  const source = (await fs.readFile(filePath, 'utf8')).replace(/^\\uFEFF/, '');
-  if (source.split(/\\r?\\n/, 1)[0].trim().toLowerCase() === DAILY_DEOBF_HEADER) return;
-  await fs.writeFile(filePath, DAILY_DEOBF_HEADER + '\\n' + source.replace(/^(?:\\r?\\n)+/, ''), 'utf8');
+  const source = (await fs.readFile(filePath, 'utf8')).replace(/^\uFEFF/, '');
+  if (source.split(/\r?\n/, 1)[0].trim().toLowerCase() === DAILY_DEOBF_HEADER) return;
+  await fs.writeFile(filePath, DAILY_DEOBF_HEADER + '\n' + source.replace(/^(?:\r?\n)+/, ''), 'utf8');
 }
 
 function createAnalysisProgress(prompt, filename, inputBytes, label) {
@@ -986,16 +986,16 @@ async function processCenturion(message, prompt, input) {
     const outputName = fingerprint.route === 'v6-static'
       ? 'Centurion_v6_stage1.luau'
       : 'Centurion_v6_1_result.luau';
-    const factoryMatch = String(result.stdout || '').match(/"factories"\\s*:\\s*(\\d+)/);
+    const factoryMatch = String(result.stdout || '').match(/"factories"\s*:\s*(\d+)/);
     const detail = fingerprint.route === 'v6-static'
-      ? '\\nExtracted payload factories: ' + (factoryMatch ? factoryMatch[1] : 'see file') +
-        '\\n⚠️ Stage-one static extraction only. It is not represented as complete runnable source.'
-      : '\\nCenturion v6.1 offline analysis produced a Luau candidate. Review it before treating it as complete.';
+      ? '\nExtracted payload factories: ' + (factoryMatch ? factoryMatch[1] : 'see file') +
+        '\n⚠️ Stage-one static extraction only. It is not represented as complete runnable source.'
+      : '\nCenturion v6.1 offline analysis produced a Luau candidate. Review it before treating it as complete.';
 
     await message.reply({
-      content: '✅ **DAILY DEOBF · Centurion**\\nDetected: ' + fingerprint.tag +
-        '\\nRoute: ' + fingerprint.route + detail +
-        '\\nAttached: ' + outputName,
+      content: '✅ **DAILY DEOBF · Centurion**\nDetected: ' + fingerprint.tag +
+        '\nRoute: ' + fingerprint.route + detail +
+        '\nAttached: ' + outputName,
       files: [new AttachmentBuilder(outputPath, { name: outputName })],
       allowedMentions: { repliedUser: false },
     });

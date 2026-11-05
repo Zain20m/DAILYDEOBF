@@ -262,7 +262,7 @@ function formatBytes(bytes) {
   return bytes + ' bytes';
 }
 
-const DAILY_DEOBF_HEADER = '-- deobf by daily deobf';
+const DAILY_DEOBF_HEADER = '--deobf by daily deobf';
 
 async function prependDailyDeobfHeader(filePath) {
   const source = (await fs.readFile(filePath, 'utf8')).replace(/^\uFEFF/, '');

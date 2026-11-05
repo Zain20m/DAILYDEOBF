@@ -238,46 +238,70 @@ async function resolveWithExtractor(source, options, extractor) {
   }
 
   const maxFiles = Number.isInteger(options.maxFiles) ? Math.max(1, options.maxFiles) : 10;
+  const maxUrls = Number.isInteger(options.maxUrls) ? Math.max(maxFiles, options.maxUrls) : maxFiles;
+  const maxAttempts = Number.isInteger(options.maxAttempts)
+    ? Math.max(1, options.maxAttempts)
+    : maxUrls;
   const maxDepth = Number.isInteger(options.maxDepth) ? Math.max(0, options.maxDepth) : 4;
   const namePrefix = String(options.namePrefix || 'source').replace(/[^A-Za-z0-9_-]/g, '') || 'source';
   const extension = String(options.extension || 'lua').replace(/[^A-Za-z0-9]/g, '') || 'lua';
-  const initialUrls = uniqueUrls([
+  const allInitialUrls = uniqueUrls([
     ...(Array.isArray(options.initialUrls) ? options.initialUrls : []),
     ...extractor(source),
   ]);
-  const queue = initialUrls.slice(0, maxFiles).map((url) => ({ url, depth: 0 }));
+  const queue = allInitialUrls.slice(0, maxUrls).map((url) => ({ url, depth: 0 }));
   const queued = new Set(queue.map((item) => item.url));
   const visited = new Set();
   const captures = [];
   const failures = [];
+  const discoveries = queue.map((item) => ({
+    url: item.url,
+    depth: item.depth,
+    status: 'queued',
+    filename: null,
+    error: null,
+  }));
+  const discoveryByUrl = new Map(discoveries.map((item) => [item.url, item]));
   const inlineSeen = new Set();
   const inlineExtractor = typeof options.inlineExtractor === 'function' ? options.inlineExtractor : null;
   let inlineTruncated = false;
+  let scanTruncated = allInitialUrls.length > maxUrls;
+
   const addInlineChunks = (text, depth, sourceUrl) => {
     if (!inlineExtractor) return;
     for (const chunk of inlineExtractor(text)) {
       const key = chunk;
       if (inlineSeen.has(key)) continue;
-      if (captures.length >= maxFiles) { inlineTruncated = true; continue; }
+      if (captures.length >= maxFiles) {
+        inlineTruncated = true;
+        continue;
+      }
       inlineSeen.add(key);
       captures.push({
         name: namePrefix + (captures.length + 1) + '.' + extension,
         source: chunk,
         url: sourceUrl || null,
+        finalUrl: null,
+        contentType: 'inline Luau',
+        statusCode: null,
         depth,
         inline: true,
       });
     }
   };
+
   addInlineChunks(source, 0, null);
-  let discovered = initialUrls.length;
+  let discovered = allInitialUrls.length;
   let attempts = 0;
 
-  while (queue.length && captures.length < maxFiles && attempts < maxFiles) {
+  while (queue.length && captures.length < maxFiles && attempts < maxAttempts) {
     const item = queue.shift();
     if (visited.has(item.url)) continue;
     visited.add(item.url);
     attempts++;
+
+    const discovery = discoveryByUrl.get(item.url);
+    if (discovery) discovery.status = 'downloading';
 
     try {
       const fetched = await fetchText(item.url);
@@ -286,41 +310,74 @@ async function resolveWithExtractor(source, options, extractor) {
         throw new Error('The URL returned an empty or non-text response.');
       }
 
-      captures.push({
+      const capture = {
         name: namePrefix + (captures.length + 1) + '.' + extension,
         source: text,
         url: item.url,
+        finalUrl: fetched && typeof fetched === 'object' ? (fetched.finalUrl || item.url) : item.url,
+        contentType: fetched && typeof fetched === 'object' ? (fetched.contentType || 'unknown') : 'unknown',
+        statusCode: fetched && typeof fetched === 'object' ? (fetched.status || null) : null,
         depth: item.depth,
         inline: false,
-      });
+      };
+      captures.push(capture);
+
+      if (discovery) {
+        discovery.status = 'downloaded';
+        discovery.filename = capture.name;
+      }
+
       addInlineChunks(text, item.depth, item.url);
 
-      if (item.depth < maxDepth && captures.length + queue.length < maxFiles) {
+      if (item.depth < maxDepth && captures.length + queue.length < maxUrls) {
         for (const childUrl of extractor(text)) {
           if (visited.has(childUrl) || queued.has(childUrl)) continue;
-          if (captures.length + queue.length >= maxFiles) break;
-          queue.push({ url: childUrl, depth: item.depth + 1 });
+          if (discoveries.length >= maxUrls) {
+            scanTruncated = true;
+            break;
+          }
+          const child = { url: childUrl, depth: item.depth + 1 };
+          queue.push(child);
           queued.add(childUrl);
+          const childRecord = {
+            url: childUrl,
+            depth: child.depth,
+            status: 'queued',
+            filename: null,
+            error: null,
+          };
+          discoveries.push(childRecord);
+          discoveryByUrl.set(childUrl, childRecord);
           discovered++;
         }
       }
     } catch (error) {
-      failures.push({
-        url: item.url,
-        message: String(error && (error.message || error) || 'Unknown fetch error').slice(0, 240),
-      });
+      const message = String(error && (error.message || error) || 'Unknown fetch error').slice(0, 500);
+      failures.push({ url: item.url, depth: item.depth, message });
+      if (discovery) {
+        discovery.status = 'failed';
+        discovery.error = message;
+      }
     }
   }
+
+  const truncated = inlineTruncated || scanTruncated || queue.length > 0 ||
+    discovered > discoveries.length || captures.length >= maxFiles && queue.length > 0 ||
+    attempts >= maxAttempts && queue.length > 0;
 
   return {
     captures,
     failures,
+    discoveries,
     discovered,
     visited: visited.size,
-    truncated: inlineTruncated || queue.length > 0 || discovered > visited.size,
+    truncated,
     attempts,
     maxFiles,
+    maxUrls,
+    maxAttempts,
     maxDepth,
+    remaining: queue.length,
   };
 }
 
@@ -345,7 +402,23 @@ async function resolveLoadstringSources(source, options = {}) {
 }
 
 async function resolveStaticSources(source, options = {}) {
-  return resolveWithExtractor(source, { ...options, namePrefix: 'get', extension: 'lua' }, extractStaticFetchUrls);
+  const scanNestedLoadstringText = (text, seen = new Set(), depth = 0) => {
+    if (depth > 6) return [];
+    const value = String(text || '');
+    const urls = extractStaticFetchUrls(value);
+    for (const embedded of extractInlineLoadstringSources(value)) {
+      if (seen.has(embedded)) continue;
+      seen.add(embedded);
+      urls.push(...scanNestedLoadstringText(embedded, seen, depth + 1));
+    }
+    return uniqueUrls(urls);
+  };
+
+  return resolveWithExtractor(source, {
+    ...options,
+    namePrefix: 'get',
+    extension: 'lua',
+  }, (text) => scanNestedLoadstringText(text));
 }
 
 module.exports = {

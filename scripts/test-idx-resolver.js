@@ -398,3 +398,24 @@ test('.get preserves balanced parentheses that are genuinely part of a URL path'
   const source = 'local endpoint = [=[' + url + ']=]';
   assert.deepEqual(extractStaticFetchUrls(source), [url]);
 });
+
+
+test('.get repairs malformed URL punctuation before calling the downloader', async () => {
+  const malformed = 'https://api.example.workers.dev/api/loader))()';
+  const corrected = 'https://api.example.workers.dev/api/loader';
+  const source = 'local endpoint = [=[' + malformed + ']=]';
+  const requested = [];
+  const result = await resolveStaticSources(source, {
+    fetchText: async (url) => {
+      requested.push(url);
+      assert.equal(url, corrected);
+      return 'return "downloaded"';
+    },
+  });
+
+  assert.deepEqual(requested, [corrected]);
+  assert.equal(result.captures.length, 1);
+  assert.equal(result.discoveries[0].url, corrected);
+  assert.equal(result.discoveries[0].correctedFrom, malformed);
+  assert.deepEqual(result.normalizations, [{ original: malformed, url: corrected }]);
+});

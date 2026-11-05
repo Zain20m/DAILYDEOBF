@@ -148,6 +148,16 @@ function cleanUrlCandidate(value) {
 
     const lastIndex = url.length - 1;
     const last = url[lastIndex];
+
+    // A string can contain unmatched call-closing punctuation followed by
+    // an empty invocation, such as URL))(). Strip that pair only when earlier
+    // unmatched closing delimiters prove it is source punctuation.
+    if (unmatchedClosers.size > 0 && url.endsWith('()')) {
+      url = url.slice(0, -2);
+      changed = true;
+      continue;
+    }
+
     const danglingOpen = opening.has(last) && stack.some((item) => item.index === lastIndex);
     const danglingClose = Object.prototype.hasOwnProperty.call(pairs, last) &&
       unmatchedClosers.has(lastIndex);

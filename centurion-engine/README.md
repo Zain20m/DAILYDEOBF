@@ -1,7 +1,12 @@
 # Centurion for DAILY DEOBF
 
-The Discord picker includes a Centurion option. The included driver implements the v6 static factory-extraction route and uses the existing shared Luau AST binary in `luraph-v15-engine/bin`.
+## Current support
 
-Centurion v6.1 is fingerprinted separately, but the supplied ZIP did not contain the required sibling `sandbox-copy-luraph` runtime. The bot reports this dependency clearly instead of pretending that v6.1 completed.
+- **Centurion v6:** static AST extraction of `c3` factory functions. Output is stage-one/partial, not a complete runnable reconstruction.
+- **Centurion v6.1:** detected but not supported by this adapter.
 
-Generated Luau begins with `-- deobf by daily deobf`. Centurion v6 output is deliberately labelled stage-one/partial because the VM imports and boot order are not reconstructed by the static factory extraction step.
+The original v6.1 implementation depends on a separate `sandbox-copy-luraph/harness.py` runtime and its companion frozen data. Those runtime files were not included in the supplied package. The current DAILY DEOBF adapter deliberately stops on v6.1; it does not import or execute that harness. Merely creating the folder or adding placeholder files will not enable the route. The genuine runtime implementation and its compatible dependencies must be integrated and tested before v6.1 can be enabled.
+
+The v6 route uses the shared Luau AST binary in `luraph-v15-engine/bin`. Temporary AST inputs are created uniquely per run so concurrent Discord requests do not overwrite each other.
+
+Generated Luau begins with the exact header `--deobf by daily deobf`.

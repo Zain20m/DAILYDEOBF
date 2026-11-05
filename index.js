@@ -1601,6 +1601,66 @@ async function startIdxWorkflow(message, inlineSource = null) {
   }).catch(() => {});
 }
 
+async function collectGetInput(message, prompt) {
+  const collector = message.channel.createMessageCollector({
+    filter: (reply) => reply.author.id === message.author.id && reply.channelId === message.channelId,
+    time: INPUT_WAIT_MS,
+    max: 1,
+  });
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      collector.stop('timeout');
+      reject(new Error('Input timed out. Run .get again.'));
+    }, INPUT_WAIT_MS + 1000);
+
+    collector.on('collect', async (reply) => {
+      clearTimeout(timer);
+      collector.stop('received');
+      try {
+        if (reply.content.trim().toLowerCase() === '.cancel') {
+          throw new Error('Cancelled.');
+        }
+
+        const attachment = reply.attachments.first();
+        if (attachment) {
+          resolve(await inputFromAttachment(attachment));
+          return;
+        }
+
+        const value = reply.content.trim();
+        const direct = value.match(/^https?:\/\/\S+$/i);
+        if (direct) {
+          const rawUrl = direct[0].replace(/[)\]},.;]+$/g, '');
+          const parsed = new URL(rawUrl);
+          resolve({
+            source: '',
+            filename: path.basename(parsed.pathname) || 'remote-url.lua',
+            url: parsed.toString(),
+          });
+          return;
+        }
+
+        if (!value) throw new Error('Send a script, a direct URL, or an attachment.');
+        resolve({ source: value, filename: 'get-input.lua' });
+      } catch (error) {
+        reject(error);
+      }
+    });
+
+    collector.on('end', (_collected, reason) => {
+      clearTimeout(timer);
+      if (reason === 'time' && collector.collected.size === 0) {
+        reject(new Error('Input timed out. Run .get again.'));
+      }
+    });
+
+    prompt.edit({
+      content: 'Send a Lua/Luau/TXT file, paste a direct HTTP/HTTPS URL, or paste source text. Type .cancel to stop.',
+    }).catch(() => {});
+  });
+}
+
 async function startGetWorkflow(message, inlineSource = null) {
   const prompt = await message.reply({
     content: inlineSource
@@ -1620,7 +1680,7 @@ async function startGetWorkflow(message, inlineSource = null) {
   } else if (firstAttachment) {
     input = await inputFromAttachment(firstAttachment);
   } else {
-    input = await collectInput(message, prompt);
+    input = await collectGetInput(message, prompt);
   }
 
   let sourceToScan = input.source;
@@ -1640,7 +1700,7 @@ async function startGetWorkflow(message, inlineSource = null) {
     maxAttempts: MAX_GET_ATTEMPTS,
     maxDepth: 8,
     fetchText: async (rawUrl) => {
-      if (input.url && rawUrl === input.url) {
+      if (input.url && rawUrl === input.url && input.source.trim()) {
         return {
           source: input.source,
           finalUrl: input.url,

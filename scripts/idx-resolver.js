@@ -120,36 +120,41 @@ function cleanUrlCandidate(value) {
   let url = String(value || '').trim();
   if (!url) return '';
 
-  // Remove punctuation that commonly belongs to the surrounding Luau call,
-  // while preserving balanced parentheses/brackets that are part of a path.
   while (/[.,;]$/.test(url)) url = url.slice(0, -1);
 
-  const pairs = [
-    { open: '(', close: ')' },
-    { open: '[', close: ']' },
-    { open: '{', close: '}' },
-  ];
+  const pairs = { ')': '(', ']': '[', '}': '{' };
+  const opening = new Set(['(', '[', '{']);
 
+  // Drop only unmatched trailing source delimiters. Balanced parentheses
+  // that genuinely belong to a URL path, such as /Function_(math), remain.
   let changed = true;
   while (changed && url) {
     changed = false;
-    const last = url[url.length - 1];
-    for (const pair of pairs) {
-      const opens = (url.match(new RegExp('\\' + pair.open, 'g')) || []).length;
-      const closes = (url.match(new RegExp('\\' + pair.close, 'g')) || []).length;
+    const stack = [];
+    const unmatchedClosers = new Set();
 
-      // A dangling opening delimiter, or an unmatched closing delimiter,
-      // is source syntax rather than part of the URL.
-      if (last === pair.open && opens >= closes) {
-        url = url.slice(0, -1);
-        changed = true;
-        break;
+    for (let i = 0; i < url.length; i++) {
+      const ch = url[i];
+      if (opening.has(ch)) {
+        stack.push({ char: ch, index: i });
+      } else if (Object.prototype.hasOwnProperty.call(pairs, ch)) {
+        if (stack.length && stack[stack.length - 1].char === pairs[ch]) {
+          stack.pop();
+        } else {
+          unmatchedClosers.add(i);
+        }
       }
-      if (last === pair.close && closes > opens) {
-        url = url.slice(0, -1);
-        changed = true;
-        break;
-      }
+    }
+
+    const lastIndex = url.length - 1;
+    const last = url[lastIndex];
+    const danglingOpen = opening.has(last) && stack.some((item) => item.index === lastIndex);
+    const danglingClose = Object.prototype.hasOwnProperty.call(pairs, last) &&
+      unmatchedClosers.has(lastIndex);
+
+    if (danglingOpen || danglingClose) {
+      url = url.slice(0, -1);
+      changed = true;
     }
   }
 

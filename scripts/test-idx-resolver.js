@@ -380,3 +380,21 @@ test('.get records URLs found beyond the configured chain depth', async () => {
   assert.equal(result.discoveries[1].status, 'depth-limit');
   assert.equal(result.truncated, true);
 });
+
+
+test('.get strips trailing loadstring call punctuation and deduplicates the clean URL', () => {
+  const clean = 'https://api.example.workers.dev/api/loader';
+  const source = [
+    'local first = [=[' + clean + '))[]=]',
+    'local second = [=[' + clean + '))()]=]',
+    'local third = [=[' + clean + ']=]',
+  ].join('\n');
+
+  assert.deepEqual(extractStaticFetchUrls(source), [clean]);
+});
+
+test('.get preserves balanced parentheses that are genuinely part of a URL path', () => {
+  const url = 'https://example.com/wiki/Function_(math)';
+  const source = 'local endpoint = [=[' + url + ']=]';
+  assert.deepEqual(extractStaticFetchUrls(source), [url]);
+});

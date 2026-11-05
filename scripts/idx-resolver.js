@@ -116,6 +116,46 @@ function tokenizeLua(source) {
   return tokens;
 }
 
+function cleanUrlCandidate(value) {
+  let url = String(value || '').trim();
+  if (!url) return '';
+
+  // Remove punctuation that commonly belongs to the surrounding Luau call,
+  // while preserving balanced parentheses/brackets that are part of a path.
+  while (/[.,;]$/.test(url)) url = url.slice(0, -1);
+
+  const pairs = [
+    { open: '(', close: ')' },
+    { open: '[', close: ']' },
+    { open: '{', close: '}' },
+  ];
+
+  let changed = true;
+  while (changed && url) {
+    changed = false;
+    const last = url[url.length - 1];
+    for (const pair of pairs) {
+      const opens = (url.match(new RegExp('\\' + pair.open, 'g')) || []).length;
+      const closes = (url.match(new RegExp('\\' + pair.close, 'g')) || []).length;
+
+      // A dangling opening delimiter, or an unmatched closing delimiter,
+      // is source syntax rather than part of the URL.
+      if (last === pair.open && opens >= closes) {
+        url = url.slice(0, -1);
+        changed = true;
+        break;
+      }
+      if (last === pair.close && closes > opens) {
+        url = url.slice(0, -1);
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  return url;
+}
+
 function isHttpUrl(value) {
   return typeof value === 'string' &&
     /^https?:\/\/[^\s"'<>]+$/i.test(value.trim());
@@ -125,7 +165,7 @@ function uniqueUrls(values) {
   const seen = new Set();
   const urls = [];
   for (const value of values) {
-    const url = String(value || '').trim();
+    const url = cleanUrlCandidate(value);
     if (!isHttpUrl(url) || seen.has(url)) continue;
     seen.add(url);
     urls.push(url);
@@ -176,7 +216,7 @@ function extractStaticFetchUrls(source) {
   for (const token of tokens) {
     if (token.type !== 'string') continue;
     const matches = token.value.match(/https?:\/\/[^\s"'<>\x60]+/gi) || [];
-    for (const match of matches) urls.push(match.replace(/[)\]},.;]+$/g, ''));
+    for (const match of matches) urls.push(cleanUrlCandidate(match));
   }
 
   // Resolve simple literal concatenations, including variable-backed pieces:
@@ -206,7 +246,7 @@ function extractStaticFetchUrls(source) {
     }
     if (concatenated) {
       const matches = combined.match(/https?:\/\/[^\s"'<>\x60]+/gi) || [];
-      for (const match of matches) urls.push(match.replace(/[)\]},.;]+$/g, ''));
+      for (const match of matches) urls.push(cleanUrlCandidate(match));
     }
   }
 

@@ -1801,6 +1801,8 @@ async function startGetWorkflow(message, inlineSource = null) {
     'Downloaded source files: ' + resolution.captures.length,
     'Failed URLs: ' + resolution.failures.length,
     'Remaining queued URLs: ' + (resolution.remaining || 0),
+    'Additional URLs omitted by discovery cap: ' + (resolution.omittedDiscoveries || 0),
+    'URLs found at maximum depth (not fetched): ' + (resolution.discoveries || []).filter((item) => item.status === 'depth-limit').length,
     'Output files attached: ' + attachments.length,
     'Output data attached: ' + formatBytes(totalBytes),
     'Output files omitted by combined size limit: ' + omittedNames.length,

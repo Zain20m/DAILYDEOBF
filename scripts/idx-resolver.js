@@ -179,6 +179,37 @@ function extractStaticFetchUrls(source) {
     for (const match of matches) urls.push(match.replace(/[)\]},.;]+$/g, ''));
   }
 
+  // Resolve simple literal concatenations, including variable-backed pieces:
+  // local base = "https://host/"; local url = base .. "script.lua".
+  const readLiteral = (token) => {
+    if (!token) return null;
+    if (token.type === 'string') return token.value;
+    if (token.type === 'identifier') return literalStrings.has(token.value)
+      ? literalStrings.get(token.value)
+      : null;
+    return null;
+  };
+  for (let i = 0; i < tokens.length; i++) {
+    const first = readLiteral(tokens[i]);
+    if (first === null) continue;
+    let combined = first;
+    let cursor = i;
+    let concatenated = false;
+    while (
+      tokens[cursor + 1] && tokens[cursor + 1].value === '.' &&
+      tokens[cursor + 2] && tokens[cursor + 2].value === '.' &&
+      readLiteral(tokens[cursor + 3]) !== null
+    ) {
+      combined += readLiteral(tokens[cursor + 3]);
+      cursor += 3;
+      concatenated = true;
+    }
+    if (concatenated) {
+      const matches = combined.match(/https?:\/\/[^\s"'<>\x60]+/gi) || [];
+      for (const match of matches) urls.push(match.replace(/[)\]},.;]+$/g, ''));
+    }
+  }
+
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
     const literalUrl = token.type === 'string'

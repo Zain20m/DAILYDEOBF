@@ -1344,7 +1344,7 @@ async function processLuraph151(message, prompt, input, gameId = null) {
         'deep_reconstruction_instructions.txt contains the requested behavior-preserving follow-up checklist.',
         'The checklist is an instruction for a separate reconstruction pass, not proof that every item was automatically completed.',
         ...(gameId ? ['Target Universe/GameId supplied to the sandbox: ' + gameId + '.'] : ['No target Universe/GameId was supplied; game-locked builds may stop in their bootstrap layer.']),
-        ...((/buffer access out of bounds|size out of range/i).test(dedicatedLogs + '\n' + compatibilityLogs) && !summary.hasLiftedSource
+        ...((/buffer access out of bounds|size out of range/i).test(dedicatedLogs + '\n' + compatibilityLogs)
           ? ['Runtime stopped during bootstrap with a buffer bounds/size error. This is not a recovered source result.', 'For a game-locked script, retry with its correct public Roblox Universe/GameId. A FlowAuth key-gated loader that requires a live authorization handshake will only expose its offline loader behaviour; the bot does not emulate or bypass that handshake.']
           : []),
       ],
@@ -1425,7 +1425,7 @@ async function collectFlowAuthGameId(message, prompt) {
         resolve(null);
         return;
       }
-      if (!/^\\d{1,16}$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) <= 0) {
+      if (!/^\d{1,16}$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) <= 0) {
         reject(new Error('That is not a valid Universe/GameId. Send a positive numeric universe ID, or type skip.'));
         return;
       }

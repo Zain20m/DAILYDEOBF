@@ -176,11 +176,18 @@ function isHttpUrl(value) {
     /^https?:\/\/[^\s"'<>]+$/i.test(value.trim());
 }
 
-function uniqueUrls(values) {
+function uniqueUrls(values, normalizations = null) {
   const seen = new Set();
   const urls = [];
   for (const value of values) {
-    const url = cleanUrlCandidate(value);
+    const original = String(value || '').trim();
+    const url = cleanUrlCandidate(original);
+    if (url && original !== url && Array.isArray(normalizations)) {
+      const alreadyRecorded = normalizations.some((item) => item.original === original && item.url === url);
+      if (!alreadyRecorded && normalizations.length < 250) {
+        normalizations.push({ original, url });
+      }
+    }
     if (!isHttpUrl(url) || seen.has(url)) continue;
     seen.add(url);
     urls.push(url);
@@ -188,7 +195,7 @@ function uniqueUrls(values) {
   return urls;
 }
 
-function extractLoadstringHttpGetUrls(source) {
+function extractLoadstringHttpGetUrls(source, normalizations = null) {
   const tokens = tokenizeLua(String(source || ''));
   const urls = [];
   for (let i = 0; i + 6 < tokens.length; i++) {
@@ -204,10 +211,10 @@ function extractLoadstringHttpGetUrls(source) {
       urls.push(tokens[i + 6].value);
     }
   }
-  return uniqueUrls(urls);
+  return uniqueUrls(urls, normalizations);
 }
 
-function extractStaticFetchUrls(source) {
+function extractStaticFetchUrls(source, normalizations = null) {
   const text = String(source || '');
   const tokens = tokenizeLua(text);
   const urls = [];
@@ -231,7 +238,7 @@ function extractStaticFetchUrls(source) {
   for (const token of tokens) {
     if (token.type !== 'string') continue;
     const matches = token.value.match(/https?:\/\/[^\s"'<>\x60]+/gi) || [];
-    for (const match of matches) urls.push(cleanUrlCandidate(match));
+    for (const match of matches) urls.push(match);
   }
 
   // Resolve simple literal concatenations, including variable-backed pieces:
@@ -261,7 +268,7 @@ function extractStaticFetchUrls(source) {
     }
     if (concatenated) {
       const matches = combined.match(/https?:\/\/[^\s"'<>\x60]+/gi) || [];
-      for (const match of matches) urls.push(cleanUrlCandidate(match));
+      for (const match of matches) urls.push(match);
     }
   }
 
@@ -314,7 +321,7 @@ function extractStaticFetchUrls(source) {
     }
   }
 
-  return uniqueUrls(urls);
+  return uniqueUrls(urls, normalizations);
 }
 
 async function resolveWithExtractor(source, options, extractor) {
@@ -331,10 +338,14 @@ async function resolveWithExtractor(source, options, extractor) {
   const maxDepth = Number.isInteger(options.maxDepth) ? Math.max(0, options.maxDepth) : 4;
   const namePrefix = String(options.namePrefix || 'source').replace(/[^A-Za-z0-9_-]/g, '') || 'source';
   const extension = String(options.extension || 'lua').replace(/[^A-Za-z0-9]/g, '') || 'lua';
+  const normalizations = [];
   const allInitialUrls = uniqueUrls([
     ...(Array.isArray(options.initialUrls) ? options.initialUrls : []),
-    ...extractor(source),
-  ]);
+    ...extractor(source, normalizations),
+  ], normalizations);
+  const correctedByUrl = new Map(
+    normalizations.map((item) => [item.url, item.original])
+  );
   const queue = allInitialUrls.slice(0, maxUrls).map((url) => ({ url, depth: 0 }));
   const queued = new Set(queue.map((item) => item.url));
   const visited = new Set();
@@ -346,6 +357,7 @@ async function resolveWithExtractor(source, options, extractor) {
     status: 'queued',
     filename: null,
     error: null,
+    correctedFrom: correctedByUrl.get(item.url) || null,
   }));
   const discoveryByUrl = new Map(discoveries.map((item) => [item.url, item]));
   const recordedUrls = new Set(queue.map((item) => item.url));
@@ -417,7 +429,11 @@ async function resolveWithExtractor(source, options, extractor) {
 
       addInlineChunks(text, item.depth, item.url);
 
-      for (const childUrl of extractor(text)) {
+      const childUrls = extractor(text, normalizations);
+      for (const item of normalizations) {
+        if (!correctedByUrl.has(item.url)) correctedByUrl.set(item.url, item.original);
+      }
+      for (const childUrl of childUrls) {
         if (visited.has(childUrl) || recordedUrls.has(childUrl)) continue;
         discovered++;
         if (discoveries.length >= maxUrls) {
@@ -434,6 +450,7 @@ async function resolveWithExtractor(source, options, extractor) {
           status: atDepthLimit ? 'depth-limit' : 'queued',
           filename: null,
           error: atDepthLimit ? 'Discovered at the configured maximum chain depth; not fetched.' : null,
+          correctedFrom: correctedByUrl.get(childUrl) || null,
         };
         discoveries.push(childRecord);
         discoveryByUrl.set(childUrl, childRecord);
@@ -475,20 +492,21 @@ async function resolveWithExtractor(source, options, extractor) {
     maxDepth,
     remaining: queue.length,
     omittedDiscoveries: omittedDiscoveryCount,
+    normalizations,
   };
 }
 
 async function resolveLoadstringSources(source, options = {}) {
-  const extractAllLoadstringUrls = (text) => {
+  const extractAllLoadstringUrls = (text, normalizations = null) => {
     const inlineChunks = extractInlineLoadstringSources(text);
     return uniqueUrls([
-      ...extractLoadstringHttpGetUrls(text),
-      ...extractStaticFetchUrls(text),
+      ...extractLoadstringHttpGetUrls(text, normalizations),
+      ...extractStaticFetchUrls(text, normalizations),
       ...inlineChunks.flatMap((chunk) => [
-        ...extractLoadstringHttpGetUrls(chunk),
-        ...extractStaticFetchUrls(chunk),
+        ...extractLoadstringHttpGetUrls(chunk, normalizations),
+        ...extractStaticFetchUrls(chunk, normalizations),
       ]),
-    ]);
+    ], normalizations);
   };
   return resolveWithExtractor(source, {
     ...options,
@@ -499,23 +517,23 @@ async function resolveLoadstringSources(source, options = {}) {
 }
 
 async function resolveStaticSources(source, options = {}) {
-  const scanNestedLoadstringText = (text, seen = new Set(), depth = 0) => {
+  const scanNestedLoadstringText = (text, seen = new Set(), depth = 0, normalizations = null) => {
     if (depth > 6) return [];
     const value = String(text || '');
-    const urls = extractStaticFetchUrls(value);
+    const urls = extractStaticFetchUrls(value, normalizations);
     for (const embedded of extractInlineLoadstringSources(value)) {
       if (seen.has(embedded)) continue;
       seen.add(embedded);
-      urls.push(...scanNestedLoadstringText(embedded, seen, depth + 1));
+      urls.push(...scanNestedLoadstringText(embedded, seen, depth + 1, normalizations));
     }
-    return uniqueUrls(urls);
+    return uniqueUrls(urls, normalizations);
   };
 
   return resolveWithExtractor(source, {
     ...options,
     namePrefix: 'get',
     extension: 'lua',
-  }, (text) => scanNestedLoadstringText(text));
+  }, (text, normalizations) => scanNestedLoadstringText(text, new Set(), 0, normalizations));
 }
 
 module.exports = {

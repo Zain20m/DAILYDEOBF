@@ -1034,6 +1034,137 @@ async function processLuraphV15(message, prompt, input, displayLabel = 'Luraph v
 }
 
 
+async function processIronbrew1(message, prompt, input) {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-ironbrew1-'));
+  const inputPath = path.join(tempRoot, 'input.lua');
+  const outputDir = path.join(tempRoot, 'output');
+  const tracePath = path.join(outputDir, 'ironbrew1.deobf.luau');
+  const liftedPath = path.join(outputDir, 'ironbrew1.devirt.luau');
+  const stringsPath = path.join(outputDir, 'ironbrew1.strings.txt');
+  const python = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+  const progress = createAnalysisProgress(
+    prompt, input.filename, Buffer.byteLength(input.source, 'utf8'), 'IronBrew 1'
+  );
+
+  try {
+    await fs.mkdir(outputDir, { recursive: true });
+    await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
+    await progress.start();
+    await progress.setPhase(
+      'Checking the IronBrew signature',
+      'Running the bundled detector before starting the VM trace.'
+    );
+
+    const detected = await runCommand(
+      python,
+      [ENGINE_V15_CLI, inputPath, '--detect'],
+      ENGINE_V15_DIR,
+      60_000
+    );
+    const detection = String(detected.stdout || '').trim().split(/\\r?\\n/).pop() || '';
+    const detectedName = detection.split('\\t')[0];
+    if (detectedName !== 'ironbrew1') {
+      throw new Error(
+        'The IronBrew detector did not recognize this input. Detected: ' +
+        (detectedName || 'unknown') + '.'
+      );
+    }
+
+    await progress.setPhase(
+      'Instrumenting and tracing the IronBrew VM',
+      'Capturing VM-created functions and runtime constants in the isolated Luau harness.'
+    );
+    const result = await runCommand(
+      python,
+      [
+        ENGINE_V15_CLI, inputPath, '--obfuscator', 'ironbrew1',
+        '--debug', '--strings', '--no-pypy', '--timeout', '120',
+        '-o', tracePath,
+      ],
+      ENGINE_V15_DIR,
+      ENGINE_TIMEOUT_MS,
+      { onProgress: progress.onLine }
+    );
+
+    await progress.setPhase(
+      'Lifting captured bytecode',
+      'Reconstructing Luau functions from the captured IronBrew prototypes and preparing the trace fallback.'
+    );
+
+    async function sizeOf(filePath) {
+      try { return (await fs.stat(filePath)).size; } catch { return 0; }
+    }
+    const liftedBytes = await sizeOf(liftedPath);
+    const traceBytes = await sizeOf(tracePath);
+    if (!liftedBytes && !traceBytes) {
+      const diagnostic = String(result.stderr || result.stdout || '').slice(-1400);
+      throw new Error(
+        'IronBrew finished without producing a Luau result.' +
+        (diagnostic ? '\\n' + diagnostic : '')
+      );
+    }
+
+    const useLift = liftedBytes > 0;
+    const selectedPath = useLift ? liftedPath : tracePath;
+    const selectedBytes = useLift ? liftedBytes : traceBytes;
+    if (selectedBytes > MAX_OUTPUT_BYTES || traceBytes > MAX_OUTPUT_BYTES) {
+      throw new Error('IronBrew output exceeds the 18 MB attachment limit.');
+    }
+
+    await prependDailyDeobfHeader(selectedPath);
+    if (traceBytes > 0 && useLift) await prependDailyDeobfHeader(tracePath);
+
+    const reportPath = path.join(outputDir, 'ironbrew1-report.txt');
+    const stats = String(result.stderr || '').match(/(\\d+) functions, (\\d+) unlifted blocks, (\\d+) unstructured jumps/);
+    const report = [
+      'DAILY DEOBF · IronBrew 1',
+      'Input: ' + input.filename,
+      'Detection: ironbrew1',
+      'Result: ' + (useLift ? 'VM bytecode lift produced a Luau candidate' : 'behaviour trace fallback'),
+      stats ? 'Lift statistics: ' + stats[1] + ' functions, ' + stats[2] + ' unlifted blocks, ' + stats[3] + ' unstructured jumps' : '',
+      '',
+      'Important: reconstructed output may be partial. Local names are inferred, and VM paths that were not captured may be missing.',
+    ].filter(Boolean).join('\\n');
+    await fs.writeFile(reportPath, report, 'utf8');
+
+    const files = [
+      new AttachmentBuilder(selectedPath, {
+        name: useLift ? 'IronBrew1_devirtualized.luau' : 'IronBrew1_trace.luau',
+      }),
+      new AttachmentBuilder(reportPath, { name: 'IronBrew1_report.txt' }),
+    ];
+    if (useLift && traceBytes > 0 && tracePath !== selectedPath) {
+      files.push(new AttachmentBuilder(tracePath, { name: 'IronBrew1_trace.luau' }));
+    }
+    const stringsBytes = await sizeOf(stringsPath);
+    if (stringsBytes > 0 && stringsBytes <= 7 * 1024 * 1024) {
+      files.push(new AttachmentBuilder(stringsPath, { name: 'IronBrew1_strings.txt' }));
+    }
+
+    await message.reply({
+      content: '✅ **DAILY DEOBF · IronBrew 1**\\nDetected: IronBrew 1' +
+        '\\nResult: ' + (useLift ? 'VM bytecode lift' : 'behaviour trace fallback') +
+        '\\nOutput size: ' + formatBytes(selectedBytes) +
+        (stats ? '\\nLifted functions: ' + stats[1] + ' · Unlifted blocks: ' + stats[2] : '') +
+        '\\nAttached: ' + (useLift ? 'IronBrew1_devirtualized.luau' : 'IronBrew1_trace.luau') +
+        '\\n\\nReconstruction is not guaranteed to be complete; check the report and trace.',
+      files,
+      allowedMentions: { repliedUser: false },
+    });
+    await progress.complete('IronBrew analysis finished and its result files were attached.');
+    await prompt.edit({
+      content: '✅ IronBrew 1 analysis finished. ' +
+        (useLift ? 'The VM lift was attached.' : 'Only the behaviour trace was available.'),
+      components: [],
+    }).catch(() => {});
+  } catch (error) {
+    await progress.fail(error);
+    throw error;
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 async function processCenturion(message, prompt, input) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-centurion-'));
   const inputPath = path.join(tempRoot, 'input.lua');
@@ -2439,7 +2570,7 @@ function helpText() {
   return [
     'DAILY DEOBF commands',
     '',
-    '.deobf - upload a script or paste a direct URL, then choose FlowAuth, Luraph 14.x/15/15.1, or Centurion.',
+    '.deobf - upload a script or paste a direct URL, then choose FlowAuth, Luraph 14.x/15/15.1, Centurion, or IronBrew 1.',
     '.idx <loadstring expression> - recover inline and nested sources into one ZIP with numbered files, a readable report, manifest, previews and SHA-256 hashes (up to 50 sources).',
     '.idx - attach a script or paste a direct URL; results arrive as idx_bundle.zip plus idx_report.txt.',
     '.idx files - re-send up to 10 extracted loadstringN.txt files as individual attachments.',
@@ -2481,6 +2612,10 @@ async function startWorkflow(message, inlineText = null) {
         .setCustomId(`deobf-centurion:${message.author.id}`)
         .setLabel('Centurion')
         .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`deobf-ironbrew1:${message.author.id}`)
+        .setLabel('IronBrew 1')
+        .setStyle(ButtonStyle.Success),
     ),
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -2541,6 +2676,17 @@ async function startWorkflow(message, inlineText = null) {
           content: '**Luraph v' + v14Match[1] + ' failed**\n' + messageText.replace(/`/g, "'"),
           components: [],
         }).catch(() => {});
+      }
+      return;
+    }
+    if (interaction.customId === `deobf-ironbrew1:${message.author.id}`) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        await processIronbrew1(message, prompt, input);
+      } catch (error) {
+        const messageText = String(error.message || error).slice(0, 1500);
+        await prompt.edit({ content: '❌ **IronBrew 1 failed**\\n' + messageText, components: [] }).catch(() => {});
       }
       return;
     }

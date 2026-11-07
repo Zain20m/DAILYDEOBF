@@ -1061,8 +1061,8 @@ async function processIronbrew1(message, prompt, input) {
       ENGINE_V15_DIR,
       60_000
     );
-    const detection = String(detected.stdout || '').trim().split(/\\r?\\n/).pop() || '';
-    const detectedName = detection.split('\\t')[0];
+    const detection = String(detected.stdout || '').trim().split(/\r?\n/).pop() || '';
+    const detectedName = detection.trim().split(/\s+/)[0] || '';
     if (detectedName !== 'ironbrew1') {
       throw new Error(
         'The IronBrew detector did not recognize this input. Detected: ' +

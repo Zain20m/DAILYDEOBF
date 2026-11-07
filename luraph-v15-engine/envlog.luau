@@ -714,8 +714,7 @@ local function smoothDampNumber(current, target, velocity, smoothTime, maxSpeed,
 	local temp = (velocity + omega * change) * step
 	local newVelocity = (velocity - omega * temp) * decay
 	local newValue = target + (change + temp) * decay
-	if (originalTarget - current > 0 and newValue > originalTarget)
-		or (originalTarget - current < 0 and newValue < originalTarget) then
+	if (originalTarget - current > 0) == (newValue > originalTarget) then
 		newValue = originalTarget
 		newVelocity = step ~= 0 and ((newValue - originalTarget) / step) or 0
 	end

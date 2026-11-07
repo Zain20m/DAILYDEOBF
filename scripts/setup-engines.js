@@ -158,4 +158,4 @@ for (const engine of engines) {
   }
 }
 
-console.log('Validated separate Luraph v14.7/v14.8/v14.9, v15, 15.1 and Centurion engines.');
+console.log('Validated separate Luraph v14.7/v14.8/v14.9, v15, 15.1, IronBrew 1 and Centurion engines.');

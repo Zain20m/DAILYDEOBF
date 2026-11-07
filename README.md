@@ -1,6 +1,6 @@
 # DAILY DEOBF
 
-Discord bot for Luau script analysis with two independently selectable Luraph engines.
+Discord bot for Luau script analysis with independently selectable Luraph, IronBrew 1, and Centurion engines.
 
 - **Luraph v15** uses the newest imported engine in `luraph-v15-engine/`.
 - **Luraph 15.1** uses the original bundled engine, extracted separately to `luraph-v15.1-engine/` during install.\n- **IronBrew 1** uses the bundled dynamic VM capture and bytecode lifter in `luraph-v15-engine/obfuscators/ironbrew1/`.

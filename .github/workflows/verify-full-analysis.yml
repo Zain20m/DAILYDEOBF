@@ -62,6 +62,7 @@ jobs:
           PY
           python3 -m unittest discover -s centurion-engine -p 'test_*.py' -v
           python3 scripts/test-151-loadstring-capture.py
+          python3 luraph-v15-engine/obfuscators/ironbrew1/test_smoothdamp.py
 
       - name: Verify 15.1 full-lift routing
         shell: bash

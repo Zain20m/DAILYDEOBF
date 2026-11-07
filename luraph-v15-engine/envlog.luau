@@ -669,6 +669,59 @@ local function callP(text, hint, tname, force)
 	return p
 end
 
+-- A few Roblox methods return multiple values. Keep one call statement and
+-- give each return value its own proxy so using a later result never turns
+-- into an accidental nil in the offline harness.
+local function callTupleP(text, hints, tnames)
+	local results = {}
+	local st = { call = text, results = results }
+	for i = 1, #hints do
+		local p = newP({ kind = "call", tname = tnames[i] or "Instance", hint = hints[i] })
+		INFO[p].stmt = st
+		results[i] = p
+	end
+	st.res = results[1] -- keep the first-result field for older trace consumers
+	emit(st)
+	return R.unpack(results, 1, #results)
+end
+
+-- Scalar form of Roblox TweenService:SmoothDamp. The Roblox method returns
+-- both the smoothed value and its updated velocity. Matching the critically
+-- damped spring calculation lets protected code continue through arithmetic
+-- that consumes either return value instead of seeing a missing second value.
+local function smoothDampNumber(current, target, velocity, smoothTime, maxSpeed, dt)
+	if R.type(current) ~= "number" or R.type(target) ~= "number"
+		or R.type(velocity) ~= "number" or R.type(smoothTime) ~= "number"
+		or (maxSpeed ~= nil and R.type(maxSpeed) ~= "number")
+		or (dt ~= nil and R.type(dt) ~= "number") then
+		return nil
+	end
+	local time = R.max(0.0001, smoothTime)
+	local speed = maxSpeed == nil and R.huge or R.max(0, maxSpeed)
+	local step = dt == nil and (1 / 60) or dt
+	local omega = 2 / time
+	local x = omega * step
+	local decay = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x)
+	local change = current - target
+	local originalTarget = target
+	local maxChange = speed * time
+	if change > maxChange then
+		change = maxChange
+	elseif change < -maxChange then
+		change = -maxChange
+	end
+	target = current - change
+	local temp = (velocity + omega * change) * step
+	local newVelocity = (velocity - omega * temp) * decay
+	local newValue = target + (change + temp) * decay
+	if (originalTarget - current > 0 and newValue > originalTarget)
+		or (originalTarget - current < 0 and newValue < originalTarget) then
+		newValue = originalTarget
+		newVelocity = step ~= 0 and ((newValue - originalTarget) / step) or 0
+	end
+	return newValue, newVelocity
+end
+
 ---------------------------------------------------------------------------
 -- callback capture
 ---------------------------------------------------------------------------
@@ -921,7 +974,13 @@ local function onWait()
 				for i = from, to do
 					local st = root.tape[i].stmt
 					local text = st.text or st.call or st.header or ""
-					if st.res and isP(st.res) then text = text .. " ->" .. path(st.res, 0) end
+					if st.results then
+						for _, result in st.results do
+							if isP(result) then text = text .. " ->" .. path(result, 0) end
+						end
+					elseif st.res and isP(st.res) then
+						text = text .. " ->" .. path(st.res, 0)
+					end
 					text = R.gsub(text, "\1(%d+)\2", function(id)
 						return "\1" .. path(BYID[R.tonumber(id)], 0) .. "\2"
 					end)
@@ -1455,6 +1514,29 @@ local function onCall(p, ...)
 		end
 		if R.type(svc) == "string" then serviceCache[svc] = r end
 		return r
+	end
+
+	-- SmoothDamp returns a tuple (newValue, newVelocity), not one value.
+	-- The offline model computes scalar inputs and keeps other supported
+	-- datatypes symbolic while preserving both tuple positions.
+	if name == "SmoothDamp" and isMethod and INFO[info.parent].className == "TweenService" then
+		local current, currentOk = realOf(args[1])
+		local target, targetOk = realOf(args[2])
+		local velocity, velocityOk = realOf(args[3])
+		local smoothTime, smoothTimeOk = realOf(args[4])
+		local maxSpeed, maxSpeedOk = realOf(args[5])
+		local dt, dtOk = realOf(args[6])
+		local text = calleeText .. "(" .. fmtArgs(R.unpack(args, 1, args.n)) .. ")"
+		if currentOk and targetOk and velocityOk and smoothTimeOk and maxSpeedOk and dtOk then
+			local value, nextVelocity = smoothDampNumber(current, target, velocity, smoothTime, maxSpeed, dt)
+			if value ~= nil then
+				emit({ text = text })
+				return value, nextVelocity
+			end
+		end
+		local currentType = isP(args[1]) and INFO[args[1]].tname or R.typeof(args[1])
+		local velocityType = isP(args[3]) and INFO[args[3]].tname or R.typeof(args[3])
+		return callTupleP(text, { "smoothValue", "smoothVelocity" }, { currentType, velocityType })
 	end
 
 	-- secrets don't exist on a client (Script42's key system matches this message)
@@ -4455,12 +4537,29 @@ function renderBlock(block, ind, out)
 			renderBlock(s.block, ind + 1, out)
 			R.insert(out, pad .. "end")
 		elseif s.call then
-			local p = s.res
-			local info = p and INFO[p]
-			if info and info.var then
-				R.insert(out, pad .. "local " .. info.var .. " = " .. resolve(s.call, ind))
+			if s.results then
+				local names, last = {}, 0
+				for i, p in ipairs(s.results) do
+					local info = INFO[p]
+					if info and info.var then
+						names[i] = info.var
+						last = i
+					end
+				end
+				if last > 0 then
+					for i = 1, last do names[i] = names[i] or "_" end
+					R.insert(out, pad .. "local " .. R.concat(names, ", ", 1, last) .. " = " .. resolve(s.call, ind))
+				else
+					R.insert(out, pad .. resolve(s.call, ind))
+				end
 			else
-				R.insert(out, pad .. resolve(s.call, ind))
+				local p = s.res
+				local info = p and INFO[p]
+				if info and info.var then
+					R.insert(out, pad .. "local " .. info.var .. " = " .. resolve(s.call, ind))
+				else
+					R.insert(out, pad .. resolve(s.call, ind))
+				end
 			end
 		else
 			R.insert(out, pad .. resolve(s.text, ind))

@@ -303,7 +303,7 @@ async function inputFromAttachment(attachment) {
     headers: { 'user-agent': 'DAILY-DEOBF/1.0' },
   });
   if (!response.ok) throw new Error(`Could not download the Discord attachment (HTTP ${response.status}).`);
-  const bytes = await readResponseLimited(response, MAX_INPUT_BYTES);
+  const bytes = await readResponse(response);
   return { source: decodeSource(bytes), filename };
 }
 
@@ -1736,17 +1736,13 @@ async function collectIdxFiles(message) {
     }
     if (names.has(name.toLowerCase())) throw new Error('Duplicate capture filename: ' + name);
     names.add(name.toLowerCase());
-    if (Number(attachment.size || 0) > MAX_INPUT_BYTES) {
-      throw new Error(name + ' is larger than the 2 MB per-file limit.');
-    }
-
     const response = await fetch(attachment.url, {
       redirect: 'error',
       signal: AbortSignal.timeout(15_000),
       headers: { 'user-agent': 'DAILY-DEOBF/1.0' },
     });
     if (!response.ok) throw new Error('Could not download ' + name + ' (HTTP ' + response.status + ').');
-    const data = await readResponseLimited(response, MAX_INPUT_BYTES);
+    const data = await readResponse(response);
     decodeSource(data);
     totalBytes += data.length;
     if (totalBytes > MAX_OUTPUT_BYTES) {
@@ -2364,9 +2360,6 @@ async function startExecWorkflow(message, inlineSource = null) {
 
   source = cleanLuauInput(source);
   if (!source) throw new Error('The Luau source is empty.');
-  if (Buffer.byteLength(source, 'utf8') > MAX_INPUT_BYTES) {
-    throw new Error('The Luau source exceeds the 2 MB input limit.');
-  }
 
   const configuredTimeout = Number(process.env.ROBLOX_EXEC_TIMEOUT_SECONDS || 30);
   const timeoutSeconds = Number.isInteger(configuredTimeout)
@@ -2460,17 +2453,13 @@ async function handlePureLuauCommand(interaction) {
         await interaction.editReply('Only .lua, .luau, or .txt files are supported.');
         return;
       }
-      if (Number(attachment.size || 0) > MAX_INPUT_BYTES) {
-        await interaction.editReply('The file exceeds the 2 MB input limit. Nothing was processed.');
-        return;
-      }
       const response = await fetch(attachment.url, {
         redirect: 'error',
         signal: AbortSignal.timeout(15_000),
         headers: { 'user-agent': 'DAILY-DEOBF/1.0' },
       });
       if (!response.ok) throw new Error('Discord file download returned HTTP ' + response.status + '.');
-      const buffer = await readResponseLimited(response, MAX_INPUT_BYTES);
+      const buffer = await readResponse(response);
       source = decodeSource(buffer);
     } else {
       source = pastedSource;
@@ -2759,10 +2748,6 @@ client.on(Events.MessageCreate, async (message) => {
 
   if (command === '.exec') {
     const inlineSource = content.slice(command.length).trim();
-    if (inlineSource.length > MAX_INPUT_BYTES) {
-      await message.reply('❌ The .exec source exceeds the 2 MB input limit.');
-      return;
-    }
     if (activeUsers.has(message.author.id)) {
       await message.reply('You already have an active .deobf, .idx, .get or .exec job.');
       return;
@@ -2780,10 +2765,6 @@ client.on(Events.MessageCreate, async (message) => {
 
   if (command === '.get') {
     const inlineSource = content.slice(command.length).trim();
-    if (inlineSource.length > MAX_INPUT_BYTES) {
-      await message.reply('❌ The .get input is too large. Maximum size is 2 MB.');
-      return;
-    }
     if (activeUsers.has(message.author.id)) {
       await message.reply('You already have an active .deobf, .idx or .get job. Finish it or wait for it to expire.');
       return;
@@ -2813,10 +2794,6 @@ client.on(Events.MessageCreate, async (message) => {
       return;
     }
     const inlineSource = content.slice(command.length).trim();
-    if (inlineSource.length > MAX_INPUT_BYTES) {
-      await message.reply('❌ The inline expression is too large. Maximum size is 2 MB.');
-      return;
-    }
     if (activeUsers.has(message.author.id)) {
       await message.reply('You already have an active .deobf or .idx job. Finish it or wait for it to expire.');
       return;
@@ -2834,10 +2811,6 @@ client.on(Events.MessageCreate, async (message) => {
 
   if (command !== PREFIX) return;
   const inlineInput = content.slice(command.length).trim();
-  if (inlineInput.length > MAX_INPUT_BYTES) {
-    await message.reply('❌ The .deobf input is too large. Maximum size is 2 MB.');
-    return;
-  }
   if (activeUsers.has(message.author.id)) {
     await message.reply('You already have an active .deobf or .idx job. Finish it or wait for it to expire.');
     return;

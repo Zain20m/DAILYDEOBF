@@ -27,7 +27,6 @@ const { runLuauTask } = require('./scripts/roblox-execution');
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const PREFIX = '.deobf';
-const MAX_INPUT_BYTES = 2 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 18 * 1024 * 1024;
 const MAX_PURELUA_CHARS = 1_500_000;
 const MAX_IDX_CAPTURE_FILES = 50;
@@ -172,22 +171,12 @@ async function requestPinnedAddress(url, address) {
   });
 }
 
-async function readResponseLimited(response, limit) {
-  const declared = Number(response.headers.get('content-length') || 0);
-  if (declared > limit) throw new Error(`The file is too large. Maximum size is ${Math.round(limit / 1024)} KB.`);
+async function readResponse(response) {
   const chunks = [];
   let total = 0;
   if (!response.body) return Buffer.alloc(0);
   for await (const chunk of response.body) {
     total += chunk.length;
-    if (total > limit) {
-      if (typeof response.body.cancel === 'function') {
-        await response.body.cancel().catch(() => {});
-      } else if (typeof response.body.destroy === 'function') {
-        response.body.destroy();
-      }
-      throw new Error(`The file is too large. Maximum size is ${Math.round(limit / 1024)} KB.`);
-    }
     chunks.push(Buffer.from(chunk));
   }
   return Buffer.concat(chunks, total);
@@ -275,7 +264,7 @@ async function fetchPublicText(rawUrl) {
 
     // Do not reject a response only because the host labelled it text/html.
     // Some script hosts mislabel plain Luau. decodeSource checks the body itself.
-    const bytes = await readResponseLimited(response, MAX_INPUT_BYTES);
+    const bytes = await readResponse(response);
     const contentType = String(response.headers.get('content-type') || 'unknown')
       .split(';')[0].trim().toLowerCase();
 
@@ -307,10 +296,6 @@ async function inputFromAttachment(attachment) {
   if (!/\.(lua|luau|txt)$/i.test(filename)) {
     throw new Error('Upload a `.lua`, `.luau`, or `.txt` file.');
   }
-  if (attachment.size > MAX_INPUT_BYTES) {
-    throw new Error('The file is too large. Maximum size is 2 MB.');
-  }
-
   // Discord CDN attachments are trusted HTTPS URLs; download them directly.
   const response = await fetch(attachment.url, {
     redirect: 'error',

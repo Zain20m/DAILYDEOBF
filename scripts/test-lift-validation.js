@@ -29,7 +29,7 @@ const environmentProbe = inspectLiftText([
   'local connection2 = workspace.ChildAdded:Connect(function(child) end)',
   'connection2:Disconnect()',
   'warn("JNKIE: Environment compatibility check failed (PC-R01).")',
-].join('\\n'));
+].join('\n'));
 assert.equal(environmentProbe.candidate, true);
 assert.equal(environmentProbe.complete, false);
 assert.equal(environmentProbe.metrics.environmentProbeOnly, true);

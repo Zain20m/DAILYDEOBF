@@ -193,11 +193,9 @@ function numericValue(token) {
   return Number(token.value);
 }
 
-function getFunctionBodyText(source, declarationToken) {
-  const tokens = tokenize(source).tokens;
-  const items = significant(tokens);
-  const declarationIndex = items.findIndex(item => item.token.start === declarationToken.start);
-  if (declarationIndex < 0) return source.slice(declarationToken.end, declarationToken.end + 2500);
+function getFunctionBodyText(source, declarationToken, tokens, items, itemIndexByStart) {
+  const declarationIndex = itemIndexByStart.get(declarationToken.start);
+  if (declarationIndex === undefined) return source.slice(declarationToken.end, declarationToken.end + 2500);
 
   let functionIndex = -1;
   for (let index = declarationIndex - 1; index >= Math.max(0, declarationIndex - 4); index--) {
@@ -213,10 +211,10 @@ function getFunctionBodyText(source, declarationToken) {
   return source.slice(declarationToken.end, tokens[endIndex].start);
 }
 
-function inferIdentifierName(source, token, isFunction) {
+function inferIdentifierName(source, token, isFunction, tokens, items, itemIndexByStart) {
   const lineEnd = source.indexOf('\n', token.end);
   const tail = isFunction
-    ? getFunctionBodyText(source, token)
+    ? getFunctionBodyText(source, token, tokens, items, itemIndexByStart)
     : source.slice(token.end, lineEnd < 0 ? Math.min(source.length, token.end + 800) : lineEnd);
 
   if (isFunction) {
@@ -1235,6 +1233,28 @@ function inferReadableSemanticRenames(source, tokens, declarations) {
   return { replacements, summaries: [...summaries.values()] };
 }
 
+function createLineNumberLookup(source) {
+  const starts = [0];
+  for (let index = 0; index < source.length; index++) {
+    if (source[index] === '\\r') {
+      if (source[index + 1] === '\\n') index++;
+      starts.push(index + 1);
+    } else if (source[index] === '\\n') {
+      starts.push(index + 1);
+    }
+  }
+  return (offset) => {
+    let low = 0;
+    let high = starts.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (starts[middle] <= offset) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  };
+}
+
 function formatReadableIndentation(source) {
   const lines = source.split(/(?<=\n)/);
   const tokens = tokenize(source).tokens;
@@ -1321,13 +1341,15 @@ function inspectPartialRecovery(source) {
   const symbolicFailureMatches = source.match(/devirt:\s*symbolic value store into proto array/gi) || [];
   const payloadFunctionMatches = source.match(/\bfunction\s+payload_fn_\d+\s*\(/g) || [];
   const placeholderReferenceMatches = source.match(/\bupv\d+\b/g) || [];
+  const nilConditionBranches = source.match(/\bif\s+nil\s+then\b/g) || [];
   const isLuraphPartial = /Luraph runtime function.*not lifted|devirt:\s*symbolic value store into proto array|\bpayload_fn_\d+\b/i.test(source);
   return {
     isLuraphPartial,
     runtimeStubs: runtimeStubMatches.length,
     symbolicLiftFailures: symbolicFailureMatches.length,
     generatedPayloadFunctions: payloadFunctionMatches.length,
-    unresolvedUpvalueReferences: new Set(placeholderReferenceMatches).size
+    unresolvedUpvalueReferences: new Set(placeholderReferenceMatches).size,
+    nilConditionBranches: nilConditionBranches.length
   };
 }
 
@@ -1341,6 +1363,8 @@ function convertToPureLuau(source) {
   const tokens = lexed.tokens;
   const coverage = scanSourceFeatures(source, tokens);
   const declarations = collectDeclarations(source, tokens);
+  const semanticItems = significant(tokens);
+  const semanticIndexByStart = new Map(semanticItems.map((item, index) => [item.token.start, index]));
   const parallelNames = inferParallelLocalNames(source, tokens);
   const callbackNames = inferCallbackFunctionNames(source, declarations);
   const scopedSemanticRenames = inferScopedSemanticRenames(source, tokens, declarations);
@@ -1352,7 +1376,7 @@ function convertToPureLuau(source) {
     if (entries.length !== 1) continue;
     const entry = entries[0];
     if (entry.kind === 'loop' || entry.kind === 'parameter') continue;
-    const inferred = parallelNames.get(oldName) || callbackNames.get(oldName) || inferIdentifierName(source, entry.token, entry.isFunction);
+    const inferred = parallelNames.get(oldName) || callbackNames.get(oldName) || inferIdentifierName(source, entry.token, entry.isFunction, tokens, semanticItems, semanticIndexByStart);
     if (!inferred || inferred === oldName || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(inferred)) continue;
     if (occupied.has(inferred) || KEYWORDS.has(inferred)) continue;
     renameMap.set(oldName, inferred);
@@ -1427,6 +1451,10 @@ function convertToPureLuau(source) {
   const readableConverted = readabilityFormat.source;
 
   const notes = [];
+  if (partialRecovery.nilConditionBranches) {
+    notes.push('-- REVIEW: ' + partialRecovery.nilConditionBranches +
+      ' literal "if nil then" branch(es) remain. These may represent missing symbolic conditions in partial devirtualization output.');
+  }
   if (partialRecovery.isLuraphPartial) {
     notes.push('-- PARTIAL LURAPH RECOVERY: generated recovery placeholders remain in this input.');
     notes.push('-- PureLuau can clean the recovered text, but cannot recreate missing VM functions or symbolic values.');

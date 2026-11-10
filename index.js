@@ -3,8 +3,8 @@
 // Separate Python v15 and beta 15.1 pipelines with live analysis progress.
 
 const {
-  ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle,
-  Client, Events, GatewayIntentBits, Partials,
+  ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, ChannelType,
+  Client, Events, GatewayIntentBits, Partials, PermissionFlagsBits,
   REST, Routes, SlashCommandBuilder,
 } = require('discord.js');
 const { spawn } = require('node:child_process');
@@ -573,6 +573,165 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
     },
     stop: () => { stopped = true; clearInterval(timer); },
   };
+}
+
+
+async function capturePartialArtifact(error, candidatePaths = []) {
+  if (!error || error.partialArtifact) return;
+  for (const candidatePath of candidatePaths) {
+    try {
+      const stat = await fs.stat(candidatePath);
+      if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_OUTPUT_BYTES) continue;
+      const data = await fs.readFile(candidatePath);
+      error.partialArtifact = {
+        name: path.basename(candidatePath).replace(/[^A-Za-z0-9._-]/g, '_') || 'partial-result.luau',
+        data,
+      };
+      return;
+    } catch {}
+  }
+}
+
+function fullErrorText(error) {
+  const stack = error && error.stack ? String(error.stack) : String(error && (error.message || error) || 'Unknown error');
+  const stdout = error && error.stdout ? String(error.stdout) : '';
+  const stderr = error && error.stderr ? String(error.stderr) : '';
+  return [
+    stack,
+    error && Number.isInteger(error.exitCode) ? 'Exit code: ' + error.exitCode : '',
+    error && error.signal ? 'Signal: ' + error.signal : '',
+    stdout ? '\\n--- STDOUT ---\\n' + stdout : '',
+    stderr ? '\\n--- STDERR ---\\n' + stderr : '',
+  ].filter(Boolean).join('\\n').slice(0, 900_000);
+}
+
+async function showDeobfFailure(message, prompt, title, error) {
+  const reportText = fullErrorText(error);
+  const errorBuffer = Buffer.from(reportText, 'utf8');
+  const logs = [error && error.stdout, error && error.stderr].filter(Boolean).join('\\n\\n');
+  const files = [
+    new AttachmentBuilder(errorBuffer, { name: 'error-details.txt' }),
+  ];
+  if (logs) files.push(new AttachmentBuilder(Buffer.from(String(logs).slice(0, 900_000), 'utf8'), { name: 'engine-logs.txt' }));
+  if (error && error.partialArtifact && error.partialArtifact.data) {
+    files.push(new AttachmentBuilder(error.partialArtifact.data, { name: 'partial-' + error.partialArtifact.name }));
+  }
+
+  const shortMessage = String(error && (error.message || error) || 'Unknown error').slice(0, 1100);
+  await prompt.edit({
+    content: '❌ **' + title + '**\\n' + shortMessage.replace(/`/g, "'") +
+      '\\n\\nFull diagnostic attached as `error-details.txt`.' +
+      (error && error.partialArtifact ? '\\nA partial output was recovered and attached.' : ''),
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('deobf-error-copy:' + message.author.id)
+          .setLabel('View / copy error')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('deobf-error-report:' + message.author.id)
+          .setLabel('Report error')
+          .setStyle(ButtonStyle.Danger),
+      ),
+    ],
+  }).catch(() => {});
+  await message.reply({
+    content: 'Diagnostic files for **' + title + '**:',
+    files,
+    allowedMentions: { repliedUser: false },
+  }).catch(() => {});
+
+  const collector = prompt.createMessageComponentCollector({
+    time: 15 * 60_000,
+    filter: (interaction) =>
+      interaction.user.id === message.author.id &&
+      (interaction.customId === 'deobf-error-copy:' + message.author.id ||
+       interaction.customId === 'deobf-error-report:' + message.author.id),
+  });
+
+  collector.on('collect', async (interaction) => {
+    if (interaction.customId === 'deobf-error-copy:' + message.author.id) {
+      const preview = reportText.length > 1500
+        ? reportText.slice(0, 1450) + '\\n...[truncated; full text is in error-details.txt]'
+        : reportText;
+      await interaction.reply({
+        content: 'Copy the diagnostic text below. The complete error is attached as `error-details.txt`.\\n```text\\n' +
+          preview.replace(/```/g, "'''") + '\\n```',
+        ephemeral: true,
+      }).catch(() => {});
+      return;
+    }
+
+    if (!message.guild) {
+      await interaction.reply({
+        content: 'Error reports can only be sent from a server channel.',
+        ephemeral: true,
+      }).catch(() => {});
+      return;
+    }
+
+    await interaction.deferReply({ ephemeral: true }).catch(() => {});
+    try {
+      const channelName = 'deobf-error-' + message.author.id.slice(-5) + '-' + Date.now().toString(36).slice(-5);
+      const reportChannel = await message.guild.channels.create({
+        name: channelName.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 90),
+        type: ChannelType.GuildText,
+        topic: 'Private DAILY DEOBF error report. Reporter: ' + message.author.id,
+        permissionOverwrites: [
+          {
+            id: message.guild.roles.everyone.id,
+            deny: [PermissionFlagsBits.ViewChannel],
+          },
+          {
+            id: client.user.id,
+            allow: [
+              PermissionFlagsBits.ViewChannel,
+              PermissionFlagsBits.SendMessages,
+              PermissionFlagsBits.ReadMessageHistory,
+              PermissionFlagsBits.AttachFiles,
+            ],
+          },
+          {
+            id: message.author.id,
+            allow: [
+              PermissionFlagsBits.ViewChannel,
+              PermissionFlagsBits.ReadMessageHistory,
+            ],
+          },
+        ],
+        reason: 'User requested a private DAILY DEOBF error report',
+      });
+      const reportHeader = [
+        'DAILY DEOBF error report',
+        'Engine: ' + title,
+        'Reporter: ' + message.author.tag + ' (' + message.author.id + ')',
+        'Server: ' + message.guild.name + ' (' + message.guild.id + ')',
+        'Original channel: ' + message.channelId,
+        'Timestamp: ' + new Date().toISOString(),
+        '',
+        reportText,
+      ].join('\\n');
+      const reportFiles = [
+        new AttachmentBuilder(Buffer.from(reportHeader.slice(0, 900_000), 'utf8'), { name: 'error-report.txt' }),
+      ];
+      if (error && error.partialArtifact && error.partialArtifact.data) {
+        reportFiles.push(new AttachmentBuilder(error.partialArtifact.data, {
+          name: 'partial-' + error.partialArtifact.name,
+        }));
+      }
+      await reportChannel.send({
+        content: 'Private error report submitted by <@' + message.author.id + '>.',
+        files: reportFiles,
+        allowedMentions: { users: [message.author.id] },
+      });
+      await interaction.editReply('Report sent to private channel <#' + reportChannel.id + '>. The channel is visible to you, the bot, and server administrators.');
+    } catch (reportError) {
+      await interaction.editReply(
+        'Could not create/send the private report channel. The bot needs Manage Channels, View Channel, Send Messages and Attach Files permissions. Error: ' +
+        String(reportError.message || reportError).slice(0, 700)
+      ).catch(() => {});
+    }
+  });
 }
 
 function runCommand(command, args, cwd, timeoutMs, options = {}) {

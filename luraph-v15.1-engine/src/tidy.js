@@ -17,7 +17,10 @@ function stripPreamble(text) {
 
   for (let i = 0; i < Math.min(lines.length, 120); i++) {
     const l = lines[i];
-    if (l.includes('Path2D:GetTangentOnCurveArcLength') || l.includes('ScreenGui:Destroy()')) {
+    // VM lifting may suffix locals (Path2D2, ScreenGui2, etc.).
+    // Match the API operation rather than one exact temporary variable name.
+    if (/\\bPath2D\\w*:GetTangentOnCurveArcLength\\b/.test(l) ||
+        /\\bScreenGui\\w*:Destroy\\(\\)/.test(l)) {
       cut = i + 1;
     }
   }

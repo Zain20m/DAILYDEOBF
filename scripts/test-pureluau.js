@@ -318,3 +318,90 @@ test('preserves Luau interpolated strings without renaming identifiers inside th
   assert.match(result.output, /`Player: \{playerName\}`/);
   assert.match(result.output, /local playerName = "Zain"/);
 });
+
+
+test('processes a mixed corpus of ordinary Lua, Roblox Luau, typed Luau, and generated code independently', () => {
+  const samples = [
+    { name: 'strict typed Roblox module', source: [
+      '--!strict',
+      'export type Config<T> = { value: T, enabled: boolean? }',
+      'local Players = game:GetService("Players")',
+      'local function getCharacter<T>(player: Player): Model?',
+      '  return player.Character', 'end', 'return { getCharacter = getCharacter }'
+    ].join('\n'), checks: [/--!strict/, /export type Config<T>/, /GetService\("Players"\)/, /return \{/] },
+    { name: 'Roblox events and instances', source: [
+      'local RunService = game:GetService("RunService")',
+      'local folder = Instance.new("Folder")',
+      'folder.Name = "Example"',
+      'local connection: RBXScriptConnection? = RunService.Heartbeat:Connect(function(deltaTime)',
+      '  if deltaTime > 0 then folder:SetAttribute("LastDelta", deltaTime) end',
+      'end)', 'return function() connection:Disconnect(); folder:Destroy() end'
+    ].join('\n'), checks: [/Instance\.new\("Folder"\)/, /Heartbeat:Connect/, /SetAttribute/, /Disconnect/] },
+    { name: 'Luau expressions and generalized iteration', source: [
+      'local values = { 3, 5, 8 }', 'local doubled = table.create(#values)',
+      'for index, value in values do', '  doubled[index] = value * 2', 'end',
+      'local selected = if #doubled > 0 then doubled[1] else nil',
+      'local message = "selected: " .. tostring(selected)', 'return doubled, message'
+    ].join('\n'), checks: [/for index, value in values do/, /local selected = if/, /selected: /] },
+    { name: 'buffer and bit32 data handling', source: [
+      'local bytes = buffer.create(4)',
+      'buffer.writeu32(bytes, 0, bit32.bxor(0x12345678, 0xFF00FF00))',
+      'local decoded = buffer.readu32(bytes, 0)', 'return decoded'
+    ].join('\n'), checks: [/buffer\.create\(4\)/, /buffer\.writeu32/, /buffer\.readu32/] },
+    { name: 'metatables and coroutine usage', source: [
+      'local state = setmetatable({}, { __index = function(_, key)',
+      '  return "missing:" .. tostring(key)', 'end })',
+      'local thread = coroutine.create(function() coroutine.yield(state.value) end)',
+      'local ok, value = coroutine.resume(thread)', 'return ok, value'
+    ].join('\n'), checks: [/setmetatable/, /__index/, /coroutine\.create/, /coroutine\.resume/] },
+    { name: 'ordinary Lua varargs and long strings', source: [
+      'local function pack(...) return table.pack(...) end',
+      'local text = [=[line one', 'line two]=]', 'return pack(text, ...)'
+    ].join('\n'), checks: [/table\.pack/, /\[=\[line one\nline two\]=\]/, /return pack\(text, \.\.\.\)/] }
+  ];
+
+  for (const sample of samples) {
+    const result = convertToPureLuau(sample.source);
+    assert.equal(result.partialRecovery.isLuraphPartial, false, sample.name);
+    assert.equal(result.lexicalValidationPassed, true, sample.name);
+    for (const pattern of sample.checks) {
+      assert.match(result.output, pattern, sample.name + ' lost or changed ' + pattern);
+    }
+  }
+});
+
+test('does not carry conversion state from one unrelated input into the next', () => {
+  const first = convertToPureLuau(['local function fn1(player)', '  return player.Character', 'end'].join('\n'));
+  const second = convertToPureLuau(['local function fn1(value)', '  return value + 1', 'end'].join('\n'));
+  assert.match(first.output, /Character/);
+  assert.match(second.output, /return value \+ 1/);
+  assert.doesNotMatch(second.output, /player\.Character/);
+});
+
+test('keeps Luraph recovery warnings generic across generated names and sizes', () => {
+  for (const source of [
+    'local function payload_fn_2() return 1 end',
+    'local function payload_fn_107(upv42) return upv42 end',
+    'local function luraph_runtime9() error("Luraph runtime function, not devirtualized") end',
+    'error("devirt: symbolic value store into proto array (at 9:12)")'
+  ]) {
+    const result = convertToPureLuau(source);
+    assert.equal(result.partialRecovery.isLuraphPartial, true);
+    assert.match(result.output, /PARTIAL LURAPH RECOVERY/);
+  }
+});
+
+test('preserves executor-specific and unknown globals instead of inventing Roblox replacements', () => {
+  const source = [
+    'local environment = getgenv()',
+    'local response = request({ Url = "https://example.invalid" })',
+    'local hidden = gethiddenproperty(workspace, "Gravity")',
+    'customRuntimeFunction(response, hidden, environment)'
+  ].join('\n');
+  const result = convertToPureLuau(source);
+  assert.match(result.output, /getgenv\(\)/);
+  assert.match(result.output, /request\(/);
+  assert.match(result.output, /gethiddenproperty\(/);
+  assert.match(result.output, /customRuntimeFunction\(/);
+  assert.ok(result.unsupportedDependenciesRemaining >= 3);
+});

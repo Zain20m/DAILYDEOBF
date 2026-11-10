@@ -17,6 +17,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { inspectLiftText } = require('./scripts/lift-validation');
 const { convertToPureLuau } = require('./pureluau');
+const { detectFlowAuthLuraphVersion } = require('./scripts/flowauth-version');
 const {
   resolveStaticSources,
   suggestLoadstringHttpGetCorrection,
@@ -1874,26 +1875,6 @@ async function processLuraph151(message, prompt, input, gameId = null) {
 
 
 
-function detectFlowAuthLuraphVersion(source) {
-  const text = String(source || '');
-  const banner = text.match(/Luraph(?:\s+Obfuscator)?\s+v?(14\.9|15\.1|15)(?![\d.])/i);
-  if (banner) {
-    return { version: banner[1], detectedBy: 'Luraph version banner', explicit: true };
-  }
-
-  // FlowAuth's documented macro families identify the pinned Luraph version
-  // when the original macro names are still visible in the supplied source.
-  if (/\b(?:LPH_NO_VIRTUALIZE|LPH_JIT_MAX)\b/.test(text)) {
-    return { version: '14.9', detectedBy: 'v14.9 macro markers', explicit: true };
-  }
-  if (/\b(?:LPH_ATTRIBUTES|LPH_PRECHECK|LPH_ASSUME|LPH_ENCBUF)\b/.test(text)) {
-    return { version: '15.1', detectedBy: 'v15 macro markers', explicit: true };
-  }
-
-  return { version: '15.1', detectedBy: 'FlowAuth current-version default', explicit: false };
-}
-
-
 async function collectFlowAuthGameId(message, prompt) {
   await prompt.edit({
     content: '🎮 **FlowAuth · target game**\nSend the Roblox **Universe/GameId** for the game this script belongs to, or type **skip** if it is not game-locked.\n\nUse the universe ID, not the place ID. The ID is only used as sandbox context.',
@@ -1941,7 +1922,7 @@ async function processFlowAuth(message, prompt, input) {
   const displayVersion = 'Luraph v' + detected.version;
   const versionNote = detected.explicit
     ? 'Version identified by ' + detected.detectedBy + '.'
-    : 'No Luraph version marker was found. Trying the documented current v15.1 route; older v14.9 builds may need a visible version marker.';
+    : 'No Luraph version marker was found. Trying the documented current v15.1 route; older v14.7–v14.9 builds may need a visible version marker.';
 
   await prompt.edit({
     content: '🧬 **FlowAuth selected**\n' + versionNote +
@@ -1949,8 +1930,8 @@ async function processFlowAuth(message, prompt, input) {
     components: [],
   });
 
-  if (detected.version === '14.9') {
-    return processLuraphV14(message, prompt, input, '14.9');
+  if (/^14\\./.test(detected.version)) {
+    return processLuraphV14(message, prompt, input, detected.version);
   }
 
   const gameId = await collectFlowAuthGameId(message, prompt);

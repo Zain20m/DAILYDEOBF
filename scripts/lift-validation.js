@@ -107,7 +107,7 @@ function inspectLiftText(source) {
     countMatches(withoutComments, /\b(?:ScreenGui|Frame|Folder)\w*\s*=\s*Instance\.new\s*\(/g) >= 2,
   ].filter(Boolean).length;
   const explicitCompatibilityFailure =
-    /environment compatibility check failed/i.test(withoutComments) &&
+    /warn\s*\(\s*(['"])[^'"]*Environment compatibility check failed[^'"]*\1\s*\)\s*;?\s*$/i.test(withoutComments) &&
     /\b(?:PC-R01|JNKIE)\b/i.test(withoutComments);
   const environmentProbeOnly = explicitCompatibilityFailure && probeSignals >= 2;
 

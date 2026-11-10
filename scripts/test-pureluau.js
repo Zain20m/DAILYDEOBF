@@ -312,7 +312,7 @@ test('preserves Luau interpolated strings without renaming identifiers inside th
     'local function makeLabel(playerName: string): string',
     '  return `Player: {playerName}`',
     'end'
-  ].join('\\n');
+  ].join('\n');
   const result = convertToPureLuau(source);
   assert.match(result.output, /`Hello \{playerName\}, welcome`/);
   assert.match(result.output, /`Player: \{playerName\}`/);

@@ -1354,6 +1354,118 @@ function inspectPartialRecovery(source) {
   };
 }
 
+function gapsAreWhitespaceOnly(source, items, start, end) {
+  for (let index = start; index < end; index++) {
+    const left = items[index].token;
+    const right = items[index + 1].token;
+    if (!/^\s*$/.test(source.slice(left.end, right.start))) return false;
+  }
+  return true;
+}
+
+function isSingleLocalDeclaration(declarations, name) {
+  const entries = declarations.get(name) || [];
+  return entries.length === 1 && entries[0].kind === 'local';
+}
+
+function isSimpleComparison(items, start) {
+  const left = items[start]?.token;
+  const operator = items[start + 1]?.token;
+  const right = items[start + 2]?.token;
+  return !!left && !!operator && !!right &&
+    ['identifier', 'number'].includes(left.type) &&
+    ['identifier', 'number'].includes(right.type) &&
+    ['<', '<=', '>', '>=', '==', '~='].includes(operator.value);
+}
+
+function simplifyBooleanGatingChains(source, tokens, declarations) {
+  const items = significant(tokens);
+  let simplified = 0;
+
+  for (let index = 0; index + 34 < items.length; index++) {
+    const values = items.slice(index, index + 35).map(item => item.token.value);
+    if (values[0] !== 'local' || values[2] !== '=' ||
+        values[6] !== 'local' || values[8] !== '=' || values[9] !== 'not' ||
+        values[11] !== 'local' || values[13] !== '=' ||
+        values[17] !== 'local' || values[19] !== '=' ||
+        values[23] !== values[12] || values[24] !== '=' ||
+        values[25] !== values[1] || values[26] !== 'and' ||
+        values[27] !== values[12] || values[28] !== values[12] ||
+        values[29] !== '=' || values[30] !== values[12] ||
+        values[31] !== 'or' || values[32] !== values[7] ||
+        values[33] !== 'and' || values[34] !== values[17]) continue;
+
+    const flag = values[1];
+    const inverseFlag = values[7];
+    const resultFlag = values[12];
+    const alternateFlag = values[17];
+
+    if (items[index + 1].token.type !== 'identifier' ||
+        items[index + 7].token.type !== 'identifier' ||
+        items[index + 12].token.type !== 'identifier' ||
+        items[index + 17].token.type !== 'identifier') continue;
+    if (values[10] !== flag || !isSimpleComparison(items, index + 3) ||
+        !isSimpleComparison(items, index + 14) ||
+        !isSimpleComparison(items, index + 20)) continue;
+    if (items[index + 14].token.value !== items[index + 20].token.value ||
+        items[index + 16].token.value !== items[index + 22].token.value) continue;
+
+    if (!isSingleLocalDeclaration(declarations, flag) ||
+        !isSingleLocalDeclaration(declarations, inverseFlag) ||
+        !isSingleLocalDeclaration(declarations, resultFlag) ||
+        !isSingleLocalDeclaration(declarations, alternateFlag)) continue;
+
+    const inverseUses = items.filter(item =>
+      item.token.type === 'identifier' && item.token.value === inverseFlag).length;
+    if (inverseUses !== 2 || !gapsAreWhitespaceOnly(source, items, index, index + 34)) continue;
+
+    // Keep both comparisons eager. Only combine the two assignments.
+    items[index + 30].token.value =
+      flag + ' and ' + resultFlag + ' or not ' + flag + ' and ' + alternateFlag;
+    for (const position of [6, 7, 8, 9, 10, 23, 24, 25, 26, 27, 31, 32, 33, 34]) {
+      items[index + position].token.value = '';
+    }
+    simplified++;
+    index += 34;
+  }
+
+  return simplified;
+}
+
+function simplifyNestedBit32Xor(source, tokens, declarations) {
+  if (declarations.has('bit32')) return 0;
+  const items = significant(tokens);
+  let simplified = 0;
+
+  for (let index = 0; index + 14 < items.length; index++) {
+    const window = items.slice(index, index + 15);
+    const values = window.map(item => item.token.value);
+    if (values[0] !== 'bit32' || values[1] !== '.' || values[2] !== 'bxor' ||
+        values[3] !== '(' || values[4] !== 'bit32' || values[5] !== '.' ||
+        values[6] !== 'bxor' || values[7] !== '(' || values[9] !== ',' ||
+        values[10] !== '0' || values[11] !== ')' || values[12] !== ',' ||
+        values[14] !== ')') continue;
+    if (window[8].token.type !== 'identifier' ||
+        window[13].token.type !== 'identifier' ||
+        !gapsAreWhitespaceOnly(source, items, index, index + 14)) continue;
+
+    window[0].token.value = 'bit32.bxor(' + window[8].token.value +
+      ', ' + window[13].token.value + ')';
+    for (let offset = 1; offset < 15; offset++) window[offset].token.value = '';
+    simplified++;
+    index += 14;
+  }
+
+  return simplified;
+}
+
+function applySafeSemanticSimplifications(source, tokens) {
+  const declarations = collectDeclarations(source, tokens);
+  const simplifiedBooleanChains = simplifyBooleanGatingChains(source, tokens, declarations);
+  const simplifiedBit32Expressions = simplifyNestedBit32Xor(source, tokens, declarations);
+  return { simplifiedBooleanChains, simplifiedBit32Expressions };
+}
+
 function convertToPureLuau(source) {
   if (typeof source !== 'string' || !source.trim()) throw new Error('The source file is empty.');
   const originalLineCount = source.split(/\r\n|\r|\n/).length;
@@ -1430,6 +1542,8 @@ function convertToPureLuau(source) {
     legacyCallsReplaced++;
   }
 
+  const semanticSimplifications = applySafeSemanticSimplifications(source, tokens);
+
   const executorCounts = new Map();
   const finalItems = significant(tokens);
   for (let index = 0; index < finalItems.length; index++) {
@@ -1494,6 +1608,8 @@ function convertToPureLuau(source) {
     foldedTableConcatCalls,
     foldedBit32Calls,
     foldedBase64Calls,
+    simplifiedBooleanChains: semanticSimplifications.simplifiedBooleanChains,
+    simplifiedBit32Expressions: semanticSimplifications.simplifiedBit32Expressions,
     decodedStateMachines: advancedDecode.count,
     decodedStaticStrings: advancedDecode.strings,
     decoderTypes: advancedDecode.decoderTypes,

@@ -1640,6 +1640,7 @@ async function processLuraph151(message, prompt, input, gameId = null) {
         {
           env: {
             DEVIRT_LOADERS: '1',
+            DEVIRT_FULL_ROUNDS: '1',
             DEVIRT_TIMING: '1',
             DEVIRT_ERRS: '1',
             DEVIRT_TB: '1',
@@ -1700,6 +1701,7 @@ async function processLuraph151(message, prompt, input, gameId = null) {
           {
             env: {
               DEVIRT_LOADERS: '1',
+              DEVIRT_FULL_ROUNDS: '1',
               DEVIRT_TIMING: '1',
               DEVIRT_ERRS: '1',
               DEVIRT_TB: '1',

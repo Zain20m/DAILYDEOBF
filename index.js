@@ -1405,7 +1405,7 @@ async function processIronbrew1(message, prompt, input) {
       stats ? 'Lift statistics: ' + stats[1] + ' functions, ' + stats[2] + ' unlifted blocks, ' + stats[3] + ' unstructured jumps' : '',
       '',
       'Important: reconstructed output may be partial. Local names are inferred, and VM paths that were not captured may be missing.',
-    ].filter(Boolean).join('\\n');
+    ].filter(Boolean).join('\n');
     await fs.writeFile(reportPath, report, 'utf8');
 
     const files = [

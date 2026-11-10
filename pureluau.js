@@ -61,7 +61,7 @@ function tokenize(source) {
         value = source.slice(start, index);
       }
       type = 'trivia';
-    } else if (source[index] === '"' || source[index] === "'") {
+    } else if (source[index] === '"' || source[index] === "'" || source[index] === '`') {
       const quote = source[index++];
       let closed = false;
       while (index < source.length) {

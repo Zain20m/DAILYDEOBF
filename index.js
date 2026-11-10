@@ -3,7 +3,7 @@
 // Separate Python v15 and beta 15.1 pipelines with live analysis progress.
 
 const {
-  ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, ChannelType,
+  ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder,
   Client, Events, GatewayIntentBits, Partials, PermissionFlagsBits,
   REST, Routes, SlashCommandBuilder,
 } = require('discord.js');
@@ -22,14 +22,11 @@ const {
   resolveStaticSources,
   suggestLoadstringHttpGetCorrection,
 } = require('./scripts/idx-resolver');
-const { buildIdxBundle } = require('./scripts/idx-output');
-const { runLuauTask } = require('./scripts/roblox-execution');
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const PREFIX = '.deobf';
 const MAX_OUTPUT_BYTES = 18 * 1024 * 1024;
 const MAX_PURELUA_CHARS = 1_500_000;
-const MAX_IDX_CAPTURE_FILES = 50;
 const MAX_GET_FILES = 50;
 const MAX_GET_URLS = 250;
 const MAX_GET_ATTEMPTS = 250;
@@ -365,7 +362,8 @@ async function collectInput(message, prompt) {
       }
     });
     prompt.edit({
-      content: 'Send one `.luau` or `.pureluau` file, or paste a direct script URL. Type `.cancel` to stop.',
+      content: null,
+      embeds: [dailyEmbed('Waiting for input', 'Attach a **.luau** or **.pureluau** file, or paste a direct script URL.\n\nType `.cancel` to stop.', DAILY_COLORS.primary)],
     }).catch(() => {});
   });
 }
@@ -384,6 +382,24 @@ function formatBytes(bytes) {
   if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
   if (bytes >= 1024) return Math.round(bytes / 1024) + ' KB';
   return bytes + ' bytes';
+}
+
+const DAILY_COLORS = {
+  primary: 0x8B5CF6,
+  success: 0x22C55E,
+  warning: 0xF59E0B,
+  danger: 0xEF4444,
+  muted: 0x64748B,
+};
+
+function dailyEmbed(title, description, color = DAILY_COLORS.primary) {
+  return new EmbedBuilder()
+    .setColor(color)
+    .setAuthor({ name: 'DAILY DEOBF', iconURL: 'https://cdn.discordapp.com/embed/avatars/5.png' })
+    .setTitle(String(title || 'DAILY DEOBF').slice(0, 256))
+    .setDescription(String(description || ' ').slice(0, 4000))
+    .setFooter({ text: 'DAILY DEOBF  •  Luau analysis toolkit' })
+    .setTimestamp();
 }
 
 const DAILY_DEOBF_HEADER = '--deobf by daily deobf';
@@ -454,20 +470,23 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
     const idleLine = silence >= 45_000
       ? '**Engine output:** No new log output for ' + formatDuration(silence) + '. The process may be busy or stalled; elapsed time alone cannot distinguish those states.'
       : '**Engine output:** Last log activity ' + formatDuration(silence) + ' ago.';
-    return [
-      '🧠 **' + label + ' · live engine report**',
-      '**Measured progress:** ' + metricText(),
-      phaseMetric ? bar : '',
-      '**Now:** ' + phase,
-      '**Input:** ' + safeName + ' · ' + formatBytes(inputBytes),
-      '**Elapsed:** ' + formatDuration(elapsed),
+    const frames = ['◐', '◓', '◑', '◒'];
+    const spinner = frames[Math.floor(now / 900) % frames.length];
+    const description = [
+      '**' + spinner + ' ' + phase + '**',
+      bar,
+      metricText(),
+      '',
+      '**Input**  ' + safeName + ' · ' + formatBytes(inputBytes),
+      '**Elapsed**  ' + formatDuration(elapsed),
       idleLine,
       '',
-      '**Engine activity**',
-      ...(recent.length ? recent : ['• Waiting for the engine to report its first operation.']),
+      '**Recent activity**',
+      ...(recent.length ? recent : ['Waiting for engine activity...']),
       '',
       detail,
-    ].filter((line) => line !== '').join('\n');
+    ].join('\n');
+    return dailyEmbed(label + ' · Live analysis', description, DAILY_COLORS.primary);
   }
 
   async function publish(force = false) {
@@ -477,7 +496,7 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
     if (editing) return;
     editing = true;
     lastEdit = now;
-    try { await prompt.edit({ content: render(), components: [] }); } catch {}
+    try { await prompt.edit({ content: null, embeds: [render()], components: [] }); } catch {}
     editing = false;
   }
 
@@ -1138,7 +1157,7 @@ async function sendAnalysisOutput(message, input, config) {
   }
 
   await message.reply({
-    content: summary,
+    embeds: [dailyEmbed(config.label + ' · Analysis result', summary.replace(/\*\*/g, ''), hasLiftedSource ? DAILY_COLORS.success : DAILY_COLORS.warning)],
     files: attachments,
     allowedMentions: { repliedUser: false },
   });
@@ -1937,239 +1956,6 @@ async function processFlowAuth(message, prompt, input) {
   return processLuraph151(message, prompt, input, gameId);
 }
 
-function buildIdxCaptureRunner(source) {
-  const prelude = [
-    '-- DAILY DEOBF .idx capture runner',
-    '-- Captures string chunks passed to loadstring and saves them locally.',
-    '-- The original source is appended below without being rewritten.',
-    '',
-    'local idx = 0',
-    'local old = loadstring',
-    'local environment = getgenv()',
-    '',
-    'assert(type(old) == "function", "loadstring is not available in this environment")',
-    'assert(type(environment) == "table", "getgenv() did not return an environment table")',
-    '',
-    'environment.loadstring = newcclosure(function(chunk, ...)',
-    '    if typeof(chunk) == "string" then',
-    '        idx += 1',
-    '        local filename = "loadstring" .. tostring(idx) .. ".txt"',
-    '        local ok, err = pcall(writefile, filename, chunk)',
-    '        if not ok then',
-    '            warn("[DAILY DEOBF .idx] Could not save " .. filename .. ": " .. tostring(err))',
-    '        end',
-    '    end',
-    '    return old(chunk, ...)',
-    'end)',
-    '',
-    '-- Original input starts here.',
-    '',
-  ].join('\n');
-  return prelude + source + (source.endsWith('\n') ? '' : '\n');
-}
-
-async function collectIdxFiles(message) {
-  let attachments = [...message.attachments.values()];
-  if (!attachments.length) {
-    const prompt = await message.reply({
-      content: 'Upload the generated loadstring1.txt, loadstring2.txt, and any other loadstringN.txt files in one message. I will return them as downloadable attachments.',
-      allowedMentions: { repliedUser: false },
-    });
-    const collector = message.channel.createMessageCollector({
-      filter: (reply) => reply.author.id === message.author.id && reply.channelId === message.channelId,
-      time: INPUT_WAIT_MS,
-      max: 1,
-    });
-    attachments = await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        collector.stop('timeout');
-        reject(new Error('Capture upload timed out. Run .idx files again.'));
-      }, INPUT_WAIT_MS + 1000);
-      collector.once('collect', (reply) => {
-        clearTimeout(timer);
-        collector.stop('received');
-        const received = [...reply.attachments.values()];
-        if (!received.length) reject(new Error('No capture files were attached.'));
-        else resolve(received);
-      });
-      collector.once('end', (_collected, reason) => {
-        if (reason === 'time' && collector.collected.size === 0) {
-          clearTimeout(timer);
-          reject(new Error('Capture upload timed out. Run .idx files again.'));
-        }
-      });
-    });
-    await prompt.edit({ content: 'Capture files received. Validating the filenames and contents...' }).catch(() => {});
-  }
-
-  if (attachments.length > MAX_IDX_CAPTURE_FILES) {
-    throw new Error('Upload up to ' + MAX_IDX_CAPTURE_FILES + ' capture files per .idx files request.');
-  }
-
-  const names = new Set();
-  const captures = [];
-  let totalBytes = 0;
-  for (const attachment of attachments) {
-    const name = path.basename(String(attachment.name || ''));
-    const match = /^loadstring(\d+)\.txt$/i.exec(name);
-    if (!match) {
-      throw new Error('Unexpected filename: ' + (name || '(unnamed)') +
-        '. Capture files must be named loadstringN.txt.');
-    }
-    if (names.has(name.toLowerCase())) throw new Error('Duplicate capture filename: ' + name);
-    names.add(name.toLowerCase());
-    const response = await fetch(attachment.url, {
-      redirect: 'error',
-      signal: AbortSignal.timeout(15_000),
-      headers: { 'user-agent': 'DAILY-DEOBF/1.0' },
-    });
-    if (!response.ok) throw new Error('Could not download ' + name + ' (HTTP ' + response.status + ').');
-    const data = await readResponse(response);
-    decodeSource(data);
-    totalBytes += data.length;
-    if (totalBytes > MAX_OUTPUT_BYTES) {
-      throw new Error('The combined capture files exceed the 18 MB response limit.');
-    }
-    captures.push({ name, data, index: Number(match[1]) });
-  }
-
-  captures.sort((a, b) => a.index - b.index || a.name.localeCompare(b.name));
-  return captures;
-}
-
-async function handleIdxFiles(message) {
-  const captures = await collectIdxFiles(message);
-  const files = captures.map((capture) =>
-    new AttachmentBuilder(capture.data, { name: capture.name })
-  );
-  await message.reply({
-    content: '✅ Returned ' + captures.length + ' capture file(s): ' +
-      captures.map((capture) => capture.name).join(', '),
-    files,
-    allowedMentions: { repliedUser: false },
-  });
-}
-
-async function startIdxWorkflow(message, inlineSource = null) {
-  const prompt = await message.reply({
-    content: inlineSource
-      ? '⚙️ DAILY DEOBF · .idx\nScanning for recoverable loadstring sources...'
-      : '📄 DAILY DEOBF · .idx\nAttach a script or send a direct URL. Recovered sources will be packaged into one organized ZIP.',
-    allowedMentions: { repliedUser: false },
-  });
-  const firstAttachment = message.attachments.first();
-  if (inlineSource && firstAttachment) {
-    throw new Error('Use either an inline loadstring expression or a file attachment, not both.');
-  }
-
-  let input;
-  if (inlineSource) {
-    input = { source: inlineSource, filename: 'inline-loadstring.lua' };
-  } else if (firstAttachment) {
-    input = await inputFromAttachment(firstAttachment);
-  } else {
-    input = await collectInput(message, prompt);
-  }
-
-  let sourceToScan = input.source;
-  const trimmed = sourceToScan.trim();
-  if (/^https?:\/\/\S+$/i.test(trimmed)) {
-    sourceToScan = 'loadstring(game:HttpGet(' + JSON.stringify(trimmed) + '))()';
-  }
-
-  const resolution = await resolveLoadstringSources(sourceToScan, {
-    maxFiles: MAX_IDX_CAPTURE_FILES,
-    maxDepth: 8,
-    fetchText: async (rawUrl) => {
-      const fetched = await fetchPublicText(rawUrl);
-      return { source: decodeSource(fetched.bytes), filename: fetched.filename };
-    },
-  });
-
-  if (!resolution.discovered && !resolution.captures.length) {
-    throw new Error(
-      'No statically recoverable loadstring source was found. .idx supports literal loadstring strings, ' +
-      'game:HttpGet(...), HttpGetAsync, HttpService:GetAsync, request({Url=...}), and literal URL variables. ' +
-      'Dynamically generated URLs or runtime-only chunks cannot be recovered by static inspection.'
-    );
-  }
-
-  // Reserve space for the ZIP directory, report and manifest so the final attachment
-  // stays under the bot's response limit even when the source files are incompressible.
-  const outputCaptures = [];
-  let sourceBytes = 0;
-  const omittedNames = [];
-  const sourceByteLimit = MAX_OUTPUT_BYTES - (256 * 1024);
-  for (const capture of resolution.captures) {
-    const bytes = Buffer.byteLength(capture.source, 'utf8');
-    if (sourceBytes + bytes > sourceByteLimit) {
-      omittedNames.push(capture.name);
-      continue;
-    }
-    outputCaptures.push(capture);
-    sourceBytes += bytes;
-  }
-
-  const bundleDetails = {
-    input: {
-      filename: input.filename || 'inline-loadstring.lua',
-      bytes: Buffer.byteLength(input.source, 'utf8'),
-      url: input.url || null,
-    },
-    resolution,
-    omittedNames,
-  };
-  let bundle = buildIdxBundle(outputCaptures, bundleDetails);
-
-  // Compression can expand random-looking text slightly. Drop trailing files until
-  // the archive is guaranteed to fit, while recording every omitted filename.
-  while (bundle.buffer.length + bundle.reportBuffer.length > MAX_OUTPUT_BYTES && outputCaptures.length) {
-    const removed = outputCaptures.pop();
-    omittedNames.push(removed.name);
-    bundle = buildIdxBundle(outputCaptures, { ...bundleDetails, omittedNames });
-  }
-
-  if (bundle.buffer.length + bundle.reportBuffer.length > MAX_OUTPUT_BYTES) {
-    throw new Error('The IDX report bundle exceeded the output size limit. Please try a smaller input file.');
-  }
-
-  const remoteRecovered = bundle.remoteCount;
-  const summary = [
-    '✅ **.idx collection finished**',
-    '',
-    '**Recovered:** ' + bundle.recovered + ' source(s)  ·  ' +
-      bundle.inlineCount + ' inline  ·  ' + remoteRecovered + ' downloaded',
-    '**URL scan:** ' + resolution.discovered + ' discovered  ·  ' +
-      resolution.attempts + ' attempted  ·  ' + resolution.failures.length + ' failed',
-    '**Nested depth:** ' + bundle.maxDepthFound + '  ·  **Source data:** ' + formatBytes(bundle.totalBytes),
-    '',
-    '📦 idx_bundle.zip contains every included loadstringN.txt separately, plus a readable report, manifest, SHA-256 hashes and file previews.',
-    '📄 idx_report.txt is attached separately for a quick overview. Extract the ZIP to access the source files.',
-    ...(omittedNames.length
-      ? ['', '⚠️ ' + omittedNames.length + ' file(s) were left out to stay under the output size limit. Their names are listed in the report.']
-      : []),
-    ...(resolution.truncated
-      ? ['', '⚠️ The configured ' + resolution.maxFiles + '-source / ' + resolution.maxDepth + '-depth scan limit was reached.']
-      : []),
-    '',
-    'Downloaded source is not executed. URL query strings are redacted in the report and manifest.',
-  ].join('\n');
-
-  await message.reply({
-    content: summary,
-    files: [
-      new AttachmentBuilder(bundle.buffer, { name: 'idx_bundle.zip' }),
-      new AttachmentBuilder(bundle.reportBuffer, { name: 'idx_report.txt' }),
-    ],
-    allowedMentions: { repliedUser: false },
-  });
-
-  await prompt.edit({
-    content: '✅ .idx finished. Packaged ' + bundle.recovered + ' recovered source(s) into idx_bundle.zip.',
-    components: [],
-  }).catch(() => {});
-}
-
 async function collectGetInput(message, prompt) {
   const collector = message.channel.createMessageCollector({
     filter: (reply) => reply.author.id === message.author.id && reply.channelId === message.channelId,
@@ -2533,7 +2319,7 @@ async function startGetWorkflow(message, inlineSource = null) {
       ? 'Every discovered URL failed to download. The attached report lists the exact HTTP, DNS, TLS or content error for each URL.'
       : 'URLs were found, but no readable source files were returned. The attached report lists every discovery record.';
     await message.reply({
-      content: '⚠️ **.get found ' + resolution.discovered + ' URL(s), but downloaded 0 source files.** ' + reason,
+      embeds: [dailyEmbed('Source scan complete', resolution.discovered + ' URL(s) found, but no source files downloaded.\n' + reason, DAILY_COLORS.warning)],
       files: [new AttachmentBuilder(reportBuffer, { name: 'get_report.txt' }), ...(runtimeSpyFile ? [runtimeSpyFile] : [])],
       allowedMentions: { repliedUser: false },
     });
@@ -2541,22 +2327,17 @@ async function startGetWorkflow(message, inlineSource = null) {
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       const batch = batches[batchIndex];
       await message.reply({
-        content: batchIndex === 0
-          ? '✅ **.get downloaded ' + attachments.length + ' source file(s).** Sending individual getN.lua attachments in ' +
-            batches.length + ' batch(es). Discovered ' + resolution.discovered +
-            ' URL(s); ' + resolution.failures.length + ' failed.'
-          : '**.get files · batch ' + (batchIndex + 1) + '/' + batches.length + '**',
-        files: batch.map((item) =>
-          new AttachmentBuilder(item.data, { name: item.name })
-        ),
+        embeds: [dailyEmbed(batchIndex === 0 ? 'Source files recovered' : 'Source files · Batch ' + (batchIndex + 1) + '/' + batches.length,
+          batchIndex === 0
+            ? attachments.length + ' source file(s) recovered. ' + resolution.discovered + ' URL(s) discovered; ' + resolution.failures.length + ' failed.'
+            : 'Additional recovered source files.', DAILY_COLORS.success)],
+        files: batch.map((item) => new AttachmentBuilder(item.data, { name: item.name })),
         allowedMentions: { repliedUser: false },
       });
     }
 
     await message.reply({
-      content: '📋 **.get complete report** · ' + resolution.discovered +
-        ' URL(s), ' + resolution.attempts + ' fetch attempt(s), ' +
-        resolution.failures.length + ' failed.',
+      embeds: [dailyEmbed('Source scan report', resolution.discovered + ' URL(s) · ' + resolution.attempts + ' fetch attempt(s) · ' + resolution.failures.length + ' failed.', DAILY_COLORS.primary)],
       files: [new AttachmentBuilder(reportBuffer, { name: 'get_report.txt' }), ...(runtimeSpyFile ? [runtimeSpyFile] : [])],
       allowedMentions: { repliedUser: false },
     });
@@ -2571,202 +2352,6 @@ async function startGetWorkflow(message, inlineSource = null) {
   }).catch(() => {});
 }
 
-
-function getExecAllowedUsers() {
-  return new Set(
-    String(process.env.ROBLOX_EXEC_ALLOWED_USERS || '')
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean)
-  );
-}
-
-function cleanLuauInput(source) {
-  return String(source || '').trim();
-}
-
-async function collectExecInput(message, prompt) {
-  const collector = message.channel.createMessageCollector({
-    filter: (reply) => reply.author.id === message.author.id && reply.channelId === message.channelId,
-    time: INPUT_WAIT_MS,
-    max: 1,
-  });
-
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      collector.stop('timeout');
-      reject(new Error('Input timed out. Run .exec again.'));
-    }, INPUT_WAIT_MS + 1000);
-
-    collector.once('collect', async (reply) => {
-      clearTimeout(timer);
-      collector.stop('received');
-      try {
-        if (reply.content.trim().toLowerCase() === '.cancel') {
-          throw new Error('Cancelled.');
-        }
-        const attachment = reply.attachments.first();
-        if (attachment) {
-          const input = await inputFromAttachment(attachment);
-          resolve(input.source);
-          return;
-        }
-        const source = cleanLuauInput(reply.content);
-        if (!source) throw new Error('Send Luau source or attach a .luau/.pureluau file.');
-        resolve(source);
-      } catch (error) {
-        reject(error);
-      }
-    });
-
-    collector.once('end', (_collected, reason) => {
-      if (reason === 'time' && collector.collected.size === 0) {
-        clearTimeout(timer);
-        reject(new Error('Input timed out. Run .exec again.'));
-      }
-    });
-
-    prompt.edit({
-      content: 'Send Luau source as a message or attach a .luau or .pureluau file. Type .cancel to stop.',
-    }).catch(() => {});
-  });
-}
-
-function formatExecResult(result) {
-  const task = result.task || {};
-  const lines = [
-    'DAILY DEOBF · Roblox Open Cloud Luau execution',
-    'State: ' + String(task.state || 'UNKNOWN'),
-    'Elapsed: ' + formatDuration(result.elapsedMs || 0),
-    'Polls: ' + String(result.polls || 0),
-    'Task: ' + String(result.taskPath || 'not supplied'),
-    '',
-  ];
-
-  if (task.error) {
-    lines.push(
-      'Execution error:',
-      typeof task.error === 'string' ? task.error : JSON.stringify(task.error, null, 2),
-      ''
-    );
-  }
-
-  const returnValues = task.output && task.output.results;
-  if (returnValues !== undefined) {
-    lines.push('Return values:', JSON.stringify(returnValues, null, 2), '');
-  }
-
-  lines.push(
-    'Logs:',
-    ...(result.logs && result.logs.length ? result.logs.map((line) => String(line)) : ['(No log messages returned.)'])
-  );
-
-  return lines.join('\n');
-}
-
-async function startExecWorkflow(message, inlineSource = null) {
-  const allowedUsers = getExecAllowedUsers();
-  if (!allowedUsers.has('*') && !allowedUsers.has(message.author.id)) {
-    throw new Error(
-      allowedUsers.size
-        ? 'You are not on the .exec allowlist.'
-        : '.exec is disabled. Configure ROBLOX_EXEC_ALLOWED_USERS in Railway first.'
-    );
-  }
-
-  const apiKey = process.env.ROBLOX_OPEN_CLOUD_API_KEY;
-  const universeId = process.env.ROBLOX_EXEC_UNIVERSE_ID;
-  const placeId = process.env.ROBLOX_EXEC_PLACE_ID;
-  if (!apiKey || !universeId || !placeId) {
-    throw new Error(
-      'Missing Railway variables. Set ROBLOX_OPEN_CLOUD_API_KEY, ROBLOX_EXEC_UNIVERSE_ID, and ROBLOX_EXEC_PLACE_ID.'
-    );
-  }
-
-  const prompt = await message.reply({
-    content: '🧪 DAILY DEOBF · .exec\nPreparing an Open Cloud Luau task for your configured Roblox test place...',
-    allowedMentions: { repliedUser: false },
-  });
-
-  const attachment = message.attachments.first();
-  if (inlineSource && attachment) {
-    throw new Error('Use inline Luau or an attached file, not both.');
-  }
-
-  let source = inlineSource;
-  if (!source && attachment) {
-    const input = await inputFromAttachment(attachment);
-    source = input.source;
-  } else if (!source) {
-    source = await collectExecInput(message, prompt);
-  }
-
-  source = cleanLuauInput(source);
-  if (!source) throw new Error('The Luau source is empty.');
-
-  const configuredTimeout = Number(process.env.ROBLOX_EXEC_TIMEOUT_SECONDS || 30);
-  const timeoutSeconds = Number.isInteger(configuredTimeout)
-    ? Math.max(1, Math.min(300, configuredTimeout))
-    : 30;
-
-  await prompt.edit({
-    content: '🚀 DAILY DEOBF · .exec\nSubmitting Luau to Roblox Open Cloud...\nTarget: configured Roblox test place\nTimeout: ' + timeoutSeconds + ' seconds',
-    components: [],
-  });
-
-  let result;
-  try {
-    result = await runLuauTask({
-      apiKey,
-      universeId,
-      placeId,
-      script: source,
-      timeoutSeconds,
-      onStatus: (status) => {
-        if (status.polls === 1 || status.polls % 5 === 0) {
-          prompt.edit({
-            content: '⏳ DAILY DEOBF · .exec\nRoblox task state: ' + status.state +
-              '\nElapsed: ' + formatDuration(status.elapsedMs) +
-              '\nWaiting for the Roblox runtime to finish...',
-            components: [],
-          }).catch(() => {});
-        }
-      },
-    });
-  } catch (error) {
-    await prompt.edit({
-      content: '❌ .exec stopped: ' + String(error.message || error).slice(0, 1200),
-      components: [],
-    }).catch(() => {});
-    throw error;
-  }
-
-  const output = formatExecResult(result);
-  let outputBuffer = Buffer.from(output, 'utf8');
-  if (outputBuffer.length > MAX_OUTPUT_BYTES) {
-    outputBuffer = Buffer.from(
-      output.slice(0, MAX_OUTPUT_BYTES - 500) +
-        '\n\n[Output shortened by DAILY DEOBF size limit.]',
-      'utf8'
-    );
-  }
-  const state = String(result.task.state || 'UNKNOWN').toUpperCase();
-  const succeeded = !result.task.error && ['COMPLETE', 'COMPLETED', 'SUCCESS', 'SUCCEEDED'].includes(state);
-
-  await message.reply({
-    content: (succeeded ? '✅' : '⚠️') + ' Roblox execution ' +
-      (succeeded ? 'finished.' : 'returned ' + state + '.') +
-      '\nElapsed: ' + formatDuration(result.elapsedMs) +
-      '\nFull result and logs are attached.',
-    files: [new AttachmentBuilder(outputBuffer, { name: 'roblox-execution-result.txt' })],
-    allowedMentions: { repliedUser: false },
-  });
-
-  await prompt.edit({
-    content: (succeeded ? '✅' : '⚠️') + ' .exec finished. Roblox task state: ' + state + '.',
-    components: [],
-  }).catch(() => {});
-}
 
 async function handlePureLuauCommand(interaction) {
   const attachment = interaction.options.getAttachment('file');
@@ -2885,24 +2470,22 @@ async function handlePureLuauCommand(interaction) {
 
 function helpText() {
   return [
-    'DAILY DEOBF commands',
+    'DAILY DEOBF',
     '',
-    '.deobf - upload a script or paste a direct URL, then choose FlowAuth, Luraph 14.x/15/15.1, Centurion, or IronBrew 1.',
-    '.idx <loadstring expression> - recover inline and nested sources into one ZIP with numbered files, a readable report, manifest, previews and SHA-256 hashes (up to 50 sources).',
-    '.idx - attach a script or paste a direct URL; results arrive as idx_bundle.zip plus idx_report.txt.',
-    '.idx files - re-send up to 10 extracted loadstringN.txt files as individual attachments.',
-    '.get <URL or script/expression> - fetch remote scripts using HttpGet, GetAsync and request({Url=...}) patterns, following nested static links.',
-    '.exec <Luau source> - execute Luau through Roblox Open Cloud in your configured test place (allowlist only).',
-    '.help - show this command list.',
-    '/purelua or /pureluau - run the static PureLuau readability/conversion pass and return the source plus a report.',
+    'COMMANDS',
+    '.deobf',
+    '.get',
+    '.help',
     '',
-    '.idx collects inline literal loadstrings and nested remote sources; .get discovers broader static HTTP fetches. Neither command executes Luau on the bot.'
-  ].join('\n');
+    'SLASH COMMANDS',
+    '/purelua',
+    '/pureluau',
+  ].join('\\n');
 }
 
 async function startWorkflow(message, inlineText = null) {
   const prompt = await message.reply({
-    content: '📄 **DAILY DEOBF**\nSend a `.lua`, `.luau`, `.purelua`, or `.txt` file, or paste a direct URL to your Luau script.\n\nMaximum input size: 2 MB.',
+    embeds: [dailyEmbed('New deobfuscation', 'Upload a **.luau** or **.pureluau** file, or paste a direct script URL.\n\n**Maximum input:** 2 MB', DAILY_COLORS.primary)],
     allowedMentions: { repliedUser: false },
   });
   // Accept an attachment, a URL / HttpGet expression on the command,
@@ -2956,7 +2539,8 @@ async function startWorkflow(message, inlineText = null) {
     ),
   ];
   await prompt.edit({
-    content: '⚙️ **Choose a deobfuscator**\nSelect the engine you want to use:',
+    content: null,
+    embeds: [dailyEmbed('Choose an engine', 'Select the analysis engine for this file.', DAILY_COLORS.primary)],
     components: chooseRows,
   });
 
@@ -3040,7 +2624,7 @@ async function startWorkflow(message, inlineText = null) {
 
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`DAILY DEOBF is online as ${readyClient.user.tag}`);
-  console.log('Prefix commands: .deobf, .idx, .idx files, .get, .exec, .help');
+  console.log('Prefix commands: .deobf, .get, .help');
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
     const route = commandGuildId
@@ -3073,31 +2657,14 @@ client.on(Events.MessageCreate, async (message) => {
       await message.reply('Use .help by itself.');
       return;
     }
-    await message.reply({ content: helpText(), allowedMentions: { repliedUser: false } });
-    return;
-  }
-
-  if (command === '.exec') {
-    const inlineSource = content.slice(command.length).trim();
-    if (activeUsers.has(message.author.id)) {
-      await message.reply('You already have an active .deobf, .idx, .get or .exec job.');
-      return;
-    }
-    activeUsers.add(message.author.id);
-    try {
-      await startExecWorkflow(message, inlineSource || null);
-    } catch (error) {
-      await message.reply('❌ .exec failed: ' + String(error.message || error).slice(0, 1500)).catch(() => {});
-    } finally {
-      activeUsers.delete(message.author.id);
-    }
+    await message.reply({ embeds: [dailyEmbed('Command list', helpText(), DAILY_COLORS.primary)], allowedMentions: { repliedUser: false } });
     return;
   }
 
   if (command === '.get') {
     const inlineSource = content.slice(command.length).trim();
     if (activeUsers.has(message.author.id)) {
-      await message.reply('You already have an active .deobf, .idx or .get job. Finish it or wait for it to expire.');
+      await message.reply('You already have an active .deobf or .get job. Finish it or wait for it to expire.');
       return;
     }
     activeUsers.add(message.author.id);
@@ -3111,39 +2678,10 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
-  if (command === '.idx') {
-    if (subcommand === 'files') {
-      if (parts.length > 2) {
-        await message.reply('Use .idx files and attach up to 10 loadstringN.txt files.');
-        return;
-      }
-      try {
-        await handleIdxFiles(message);
-      } catch (error) {
-        await message.reply('❌ ' + String(error.message || error).slice(0, 1200)).catch(() => {});
-      }
-      return;
-    }
-    const inlineSource = content.slice(command.length).trim();
-    if (activeUsers.has(message.author.id)) {
-      await message.reply('You already have an active .deobf or .idx job. Finish it or wait for it to expire.');
-      return;
-    }
-    activeUsers.add(message.author.id);
-    try {
-      await startIdxWorkflow(message, inlineSource || null);
-    } catch (error) {
-      await message.reply('❌ ' + String(error.message || error).slice(0, 1500)).catch(() => {});
-    } finally {
-      activeUsers.delete(message.author.id);
-    }
-    return;
-  }
-
   if (command !== PREFIX) return;
   const inlineInput = content.slice(command.length).trim();
   if (activeUsers.has(message.author.id)) {
-    await message.reply('You already have an active .deobf or .idx job. Finish it or wait for it to expire.');
+    await message.reply('You already have an active .deobf or .get job. Finish it or wait for it to expire.');
     return;
   }
   activeUsers.add(message.author.id);

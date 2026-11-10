@@ -1342,7 +1342,8 @@ function inspectPartialRecovery(source) {
   const payloadFunctionMatches = source.match(/\bfunction\s+payload_fn_\d+\s*\(/g) || [];
   const placeholderReferenceMatches = source.match(/\bupv\d+\b/g) || [];
   const nilConditionBranches = source.match(/\bif\s+nil\s+then\b/g) || [];
-  const isLuraphPartial = /Luraph runtime function.*not lifted|devirt:\s*symbolic value store into proto array|\bpayload_fn_\d+\b/i.test(source);
+  const isLuraphPartial = runtimeStubMatches.length > 0 ||
+    /Luraph runtime function.*not lifted|devirt:\s*symbolic value store into proto array|\bpayload_fn_\d+\b/i.test(source);
   return {
     isLuraphPartial,
     runtimeStubs: runtimeStubMatches.length,

@@ -2236,6 +2236,11 @@ async function startGetWorkflow(message, inlineSource = null) {
   ];
 
   const reportBuffer = Buffer.from(reportLines.join('\n'), 'utf8');
+  const runtimeSpyPath = path.join(__dirname, 'examples', 'http-spy.luau');
+  const runtimeSpyBuffer = await fs.readFile(runtimeSpyPath).catch(() => null);
+  const runtimeSpyFile = runtimeSpyBuffer
+    ? new AttachmentBuilder(runtimeSpyBuffer, { name: 'http-spy-runtime.luau' })
+    : null;
   const batches = [];
   for (let i = 0; i < attachments.length; i += 10) {
     batches.push(attachments.slice(i, i + 10));
@@ -2247,7 +2252,7 @@ async function startGetWorkflow(message, inlineSource = null) {
       : 'URLs were found, but no readable source files were returned. The attached report lists every discovery record.';
     await message.reply({
       content: '⚠️ **.get found ' + resolution.discovered + ' URL(s), but downloaded 0 source files.** ' + reason,
-      files: [new AttachmentBuilder(reportBuffer, { name: 'get_report.txt' })],
+      files: [new AttachmentBuilder(reportBuffer, { name: 'get_report.txt' }), ...(runtimeSpyFile ? [runtimeSpyFile] : [])],
       allowedMentions: { repliedUser: false },
     });
   } else {

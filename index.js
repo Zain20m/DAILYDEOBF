@@ -394,12 +394,15 @@ async function prependDailyDeobfHeader(filePath) {
   await fs.writeFile(filePath, DAILY_DEOBF_HEADER + '\n' + source.replace(/^(?:\r?\n)+/, ''), 'utf8');
 }
 
-function createAnalysisProgress(prompt, filename, inputBytes, label) {
+function createAnalysisProgress(prompt, filename, inputBytes, label, options = {}) {
   const startedAt = Date.now();
-  const safeName = String(filename || 'script.lua').replaceAll(String.fromCharCode(96), '').replace(/[\r\n]/g, ' ');
+  const safeName = String(filename || 'script.lua').replaceAll(String.fromCharCode(96), '').replace(/[\\r\\n]/g, ' ');
+  const maxTracePasses = Number.isFinite(options.maxTracePasses) ? Math.max(1, options.maxTracePasses) : 16;
+  const maxDevirtRounds = Number.isFinite(options.maxDevirtRounds) ? Math.max(1, options.maxDevirtRounds) : 200;
   let phase = 'Queued engine startup';
   let detail = 'Input accepted. Waiting for the selected engine to initialize.';
-  let percent = 1;
+  let phaseMetric = null;
+  let lastOutputAt = startedAt;
   let lastEdit = 0;
   let editing = false;
   let stopped = false;
@@ -407,40 +410,63 @@ function createAnalysisProgress(prompt, filename, inputBytes, label) {
   const MAX_ACTIVITY = 4;
 
   function recordActivity(message) {
-    const clean = String(message || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 150);
+    const clean = String(message || '').replace(/[\\r\\n]+/g, ' ').trim().slice(0, 180);
     if (!clean || (activity.length && activity[activity.length - 1].text === clean)) return;
     activity.push({ at: Date.now(), text: clean });
     while (activity.length > MAX_ACTIVITY) activity.shift();
   }
 
-  function advance(nextPercent, nextPhase, nextDetail, activityText) {
-    if (Number.isFinite(nextPercent)) percent = Math.max(percent, Math.min(100, Math.floor(nextPercent)));
+  function advance(nextPhase, nextDetail, activityText, metric = null) {
     if (nextPhase) phase = nextPhase;
     if (nextDetail) detail = nextDetail;
+    if (metric) phaseMetric = metric;
+    else if (nextPhase && nextPhase !== phase) phaseMetric = null;
     if (activityText) recordActivity(activityText);
   }
 
+  function metricText() {
+    if (!phaseMetric || !Number.isFinite(phaseMetric.current) || !Number.isFinite(phaseMetric.total) || phaseMetric.total <= 0) {
+      return 'Not measurable for this stage; waiting for an engine work counter.';
+    }
+    const current = Math.max(0, phaseMetric.current);
+    const total = Math.max(1, phaseMetric.total);
+    const ratio = Math.min(100, current / total * 100);
+    return phaseMetric.label + ': ' + current.toLocaleString('en-US') + '/' +
+      total.toLocaleString('en-US') + ' (' + ratio.toFixed(1) + '% of this stage limit)';
+  }
+
   function render() {
-    const elapsed = Date.now() - startedAt;
+    const now = Date.now();
+    const elapsed = now - startedAt;
+    const silence = now - lastOutputAt;
     const barSize = 16;
-    const filled = Math.floor((percent / 100) * barSize);
-    const bar = '▰'.repeat(filled) + '▱'.repeat(barSize - filled);
+    const filled = phaseMetric
+      ? Math.max(0, Math.min(barSize, Math.floor((Math.min(100, phaseMetric.current / phaseMetric.total * 100) / 100) * barSize)))
+      : 0;
+    const bar = phaseMetric
+      ? '▰'.repeat(filled) + '▱'.repeat(barSize - filled)
+      : '▱'.repeat(barSize);
     const recent = activity.slice(-3).map((item) => {
-      const age = formatDuration(Date.now() - item.at);
+      const age = formatDuration(now - item.at);
       return '• ' + item.text + ' · ' + age + ' ago';
     });
+    const idleLine = silence >= 45_000
+      ? '**Engine output:** No new log output for ' + formatDuration(silence) + '. The process may be busy or stalled; elapsed time alone cannot distinguish those states.'
+      : '**Engine output:** Last log activity ' + formatDuration(silence) + ' ago.';
     return [
       '🧠 **' + label + ' · live engine report**',
-      '**Progress:** ' + percent + '% ' + bar,
+      '**Measured progress:** ' + metricText(),
+      phaseMetric ? bar : '',
       '**Now:** ' + phase,
       '**Input:** ' + safeName + ' · ' + formatBytes(inputBytes),
       '**Elapsed:** ' + formatDuration(elapsed),
+      idleLine,
       '',
       '**Engine activity**',
       ...(recent.length ? recent : ['• Waiting for the engine to report its first operation.']),
       '',
       detail,
-    ].join('\n');
+    ].filter((line) => line !== '').join('\\n');
   }
 
   async function publish(force = false) {
@@ -455,40 +481,63 @@ function createAnalysisProgress(prompt, filename, inputBytes, label) {
   }
 
   function onLine(rawLine) {
-    const line = String(rawLine || '').replace(/\x1b\[[0-9;]*m/g, '').trim();
+    const line = String(rawLine || '').replace(/\\x1b\\[[0-9;]*m/g, '').trim();
     if (!line) return;
+    lastOutputAt = Date.now();
     let match;
 
-    if ((match = line.match(/obfuscator:\s*(.+)/i))) {
-      advance(4, 'Fingerprinting the input', 'Engine identified the obfuscator family: ' + match[1].slice(0, 100), 'Obfuscator fingerprint matched: ' + match[1]);
-    } else if ((match = line.match(/tracing .*?\(run\s+(\d+)\)/i))) {
+    if ((match = line.match(/obfuscator:\\s*(.+)/i))) {
+      advance('Fingerprinting the input', 'Engine identified the obfuscator family: ' + match[1].slice(0, 100), 'Obfuscator fingerprint matched: ' + match[1]);
+    } else if ((match = line.match(/tracing .*?\\(run\\s+(\\d+)\\)/i))) {
       const pass = Number(match[1]);
-      advance(5 + Math.min(20, pass / 16 * 20), 'Executing VM trace pass ' + pass, 'Observing runtime-created functions, constants, branches and VM state from this pass.', 'Runtime trace pass ' + pass + ' started; collecting VM behaviour.');
-    } else if ((match = line.match(/([\d,]+) Path2D answers computed by the offline engine model/i))) {
-      advance(27, 'Resolving Roblox API-dependent values', match[1] + ' Path2D answers were computed by the offline engine model.', 'Resolved ' + match[1] + ' offline Path2D model answers.');
-    } else if ((match = line.match(/script loadstring.d\s+(\d+)\s+new VM chunk/i))) {
-      advance(28, 'Capturing dynamically loaded chunks', 'The runtime exposed ' + match[1] + ' new VM chunk(s); the engine is adding them to the analysis set.', 'Captured ' + match[1] + ' new VM chunk(s) from dynamic loading.');
+      advance('Executing VM trace pass ' + pass, 'Observing runtime-created functions, constants, branches and VM state from this pass.', 'Runtime trace pass ' + pass + ' started; collecting VM behaviour.', {
+        label: 'Trace passes',
+        current: pass,
+        total: maxTracePasses,
+      });
+    } else if ((match = line.match(/([\\d,]+) Path2D answers computed by the offline engine model/i))) {
+      advance('Resolving Roblox API-dependent values', match[1] + ' Path2D answers were computed by the offline engine model.', 'Resolved ' + match[1] + ' offline Path2D model answers.');
+    } else if ((match = line.match(/script loadstring.d\\s+(\\d+)\\s+new VM chunk/i))) {
+      advance('Capturing dynamically loaded chunks', 'The runtime exposed ' + match[1] + ' new VM chunk(s); the engine is adding them to the analysis set.', 'Captured ' + match[1] + ' new VM chunk(s) from dynamic loading.');
     } else if (/anti-tamper trap|anti-tamper trigger|LPH_CRASH/i.test(line)) {
-      advance(29, 'Mapping protected execution paths', 'The engine reported an anti-tamper-related branch. Recording the event as an observed runtime condition.', 'Observed a protected branch / anti-tamper event in the trace.');
-    } else if ((match = line.match(/devirt round\s+(\d+):\s*([\d,]+) functions\s*\(([\d,]+) walked\),\s*([\d,]+) unlifted blocks,\s*([\d,]+) new constant requests/i))) {
+      advance('Mapping protected execution paths', 'The engine reported an anti-tamper-related branch. Recording the event as an observed runtime condition.', 'Observed a protected branch / anti-tamper event in the trace.');
+    } else if ((match = line.match(/devirt round\\s+(\\d+):\\s*([\\d,]+) functions\\s*\\(([\\d,]+) walked\\),\\s*([\\d,]+) unlifted blocks,\\s*([\\d,]+) new constant requests/i))) {
       const round = Number(match[1]);
-      const p = 30 + Math.min(54, (round / 200) * 54);
-      advance(p, 'Lifting VM functions · round ' + round + '/200', match[2] + ' functions discovered · ' + match[3] + ' walked · ' + match[4] + ' blocks still unlifted · ' + match[5] + ' new constant requests.', 'Round ' + round + ': ' + match[2] + ' functions discovered, ' + match[3] + ' walked, ' + match[4] + ' blocks still unlifted.');
-    } else if ((match = line.match(/devirtualizing\s+\(round\s+(\d+)\)/i))) {
+      advance('Lifting VM functions · round ' + round, match[2] + ' functions discovered · ' + match[3] + ' walked · ' + match[4] + ' blocks still unlifted · ' + match[5] + ' new constant requests.', 'Round ' + round + ': ' + match[2] + ' functions discovered, ' + match[3] + ' walked, ' + match[4] + ' blocks still unlifted.', {
+        label: 'Devirtualization rounds',
+        current: round,
+        total: maxDevirtRounds,
+      });
+    } else if ((match = line.match(/devirtualizing\\s+\\(round\\s+(\\d+)\\)/i))) {
       const round = Number(match[1]);
-      advance(30 + Math.min(54, (round / 200) * 54), 'Reconstructing Luau control flow · round ' + round, 'The VM lifter is processing this round. Progress is based on the engine round counter, not elapsed time.', 'Started devirtualization round ' + round + '.');
-    } else if ((match = line.match(/([\d,]+) functions,\s*([\d,]+) unlifted blocks,\s*([\d,]+) unstructured jumps/i))) {
-      advance(86, 'Measuring lift coverage', match[1] + ' functions · ' + match[2] + ' unlifted blocks · ' + match[3] + ' unstructured jumps.', 'Lift coverage report: ' + match[1] + ' functions; ' + match[2] + ' unlifted blocks; ' + match[3] + ' unstructured jumps.');
+      advance('Reconstructing Luau control flow · round ' + round, 'The VM lifter is processing this round. The ratio is against the configured round limit, not a guarantee of total-job completion.', 'Started devirtualization round ' + round + '.', {
+        label: 'Devirtualization rounds',
+        current: round,
+        total: maxDevirtRounds,
+      });
+    } else if ((match = line.match(/([\\d,]+) functions,\\s*([\\d,]+) unlifted blocks,\\s*([\\d,]+) unstructured jumps/i))) {
+      advance('Measuring lift coverage', match[1] + ' functions · ' + match[2] + ' unlifted blocks · ' + match[3] + ' unstructured jumps.', 'Lift coverage report: ' + match[1] + ' functions; ' + match[2] + ' unlifted blocks; ' + match[3] + ' unstructured jumps.');
+    } else if ((match = line.match(/constants decoded on request:\\s*calls=(\\d+)\\s+decoded=(\\d+).*?(\\d+(?:\\.\\d+)?)s,\\s*(\\d+) buffer patches/i))) {
+      const calls = Number(match[1]);
+      const decoded = Number(match[2]);
+      const patches = Number(match[4]);
+      advance(
+        'Resolving deferred constants',
+        'Latest constant pass: ' + calls + ' calls, ' + decoded + ' decoded, ' + patches + ' buffer patches in ' + match[3] + 's. No completion percentage is available for this stage.',
+        calls === 0 && decoded === 0
+          ? 'Constant pass returned zero calls and zero decoded values.'
+          : 'Constant pass decoded ' + decoded + ' value(s) from ' + calls + ' call(s).'
+      );
     } else if (/constants decoded on request|constant request run/i.test(line)) {
-      advance(87, 'Resolving deferred constants', line.replace(/^\[\*\]\s*/, '').slice(0, 150), 'Engine requested another constant-resolution pass.');
-    } else if (/corrupt\/encrypted register|symbolic value store|unlifted block|unstructured jump/i.test(line)) {
-      advance(88, 'Recording unresolved VM operations', line.replace(/^\[!\]\s*/, '').slice(0, 150), 'The engine reported an unresolved VM operation; it will be reflected in validation.');
+      advance('Resolving deferred constants', line.replace(/^\\[\\*\\]\\s*/, '').slice(0, 180), 'Engine requested another constant-resolution pass.');
+    } else if (/corrupt\\/encrypted register|symbolic value store|unlifted block|unstructured jump/i.test(line)) {
+      advance('Recording unresolved VM operations', line.replace(/^\\[!\\]\\s*/, '').slice(0, 180), 'The engine reported an unresolved VM operation; it will be reflected in validation.');
     } else if (/devirtualization failed|devirtualization produced no output|devirtualized output is broken/i.test(line)) {
-      advance(89, 'Reviewing incomplete reconstruction', line.replace(/^\[!\]\s*/, '').slice(0, 150), 'The engine reported a reconstruction issue; the candidate will not be assumed complete.');
+      advance('Reviewing incomplete reconstruction', line.replace(/^\\[!\\]\\s*/, '').slice(0, 180), 'The engine reported a reconstruction issue; the candidate will not be assumed complete.');
     } else if (/result:|run status: finished|done:.*succeeded/i.test(line)) {
-      advance(90, 'Engine pass returned', line.replace(/^\[\*\]\s*/, '').slice(0, 150), 'An engine pass returned; artifact validation is next.');
-    } else if (/^\[!\]|\bwarning\b|\berror\b/i.test(line)) {
-      advance(percent, 'Inspecting engine diagnostic', line.slice(0, 150), line.slice(0, 150));
+      advance('Engine pass returned', line.replace(/^\\[\\*\\]\\s*/, '').slice(0, 180), 'An engine pass returned; artifact validation is next.');
+    } else if (/^\\[!\\]|\\bwarning\\b|\\berror\\b/i.test(line)) {
+      advance('Inspecting engine diagnostic', line.slice(0, 180), line.slice(0, 180));
     }
 
     void publish(false);
@@ -498,27 +547,25 @@ function createAnalysisProgress(prompt, filename, inputBytes, label) {
 
   return {
     start: () => {
-      advance(2, 'Initializing selected engine', 'Preparing the engine process and analysis workspace.', 'Analysis workspace prepared; engine startup requested.');
+      advance('Initializing selected engine', 'Preparing the engine process and analysis workspace.', 'Analysis workspace prepared; engine startup requested.');
+      lastOutputAt = Date.now();
       return publish(true);
     },
     onLine,
     setPhase: async (nextPhase, nextDetail) => {
       const normalized = String(nextPhase || '');
-      let floor = percent;
-      if (/prepar/i.test(normalized)) floor = Math.max(floor, 3);
-      else if (/compatibility pass/i.test(normalized)) floor = Math.max(floor, 30);
-      else if (/validat|checking|packaging|finaliz/i.test(normalized)) floor = Math.max(floor, 91);
-      advance(floor, normalized, nextDetail || '', normalized + (nextDetail ? ': ' + nextDetail : ''));
+      advance(normalized, nextDetail || '', normalized + (nextDetail ? ': ' + nextDetail : ''), null);
       await publish(true);
     },
     complete: async (nextDetail) => {
-      advance(100, 'Finished', nextDetail || 'Engine run and output handling completed.', 'Run finished; final status is based on the output validation result.');
+      phaseMetric = null;
+      advance('Finished', nextDetail || 'Engine run and output handling completed.', 'Run finished; final status is based on the output validation result.');
       stopped = true;
       clearInterval(timer);
       await publish(true);
     },
     fail: async (error) => {
-      advance(percent, 'Stopped with an error', String(error && (error.message || error) || 'Unknown engine error').slice(0, 220), 'Run stopped before completion.');
+      advance('Stopped with an error', String(error && (error.message || error) || 'Unknown engine error').slice(0, 500), 'Run stopped before completion.');
       stopped = true;
       clearInterval(timer);
       await publish(true);

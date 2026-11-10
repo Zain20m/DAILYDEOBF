@@ -1393,17 +1393,17 @@ function simplifyBooleanGatingChains(source, tokens, declarations) {
         values[27] !== values[12] || values[28] !== values[12] ||
         values[29] !== '=' || values[30] !== values[12] ||
         values[31] !== 'or' || values[32] !== values[7] ||
-        values[33] !== 'and' || values[34] !== values[17]) continue;
+        values[33] !== 'and' || values[34] !== values[18]) continue;
 
     const flag = values[1];
     const inverseFlag = values[7];
     const resultFlag = values[12];
-    const alternateFlag = values[17];
+    const alternateFlag = values[18];
 
     if (items[index + 1].token.type !== 'identifier' ||
         items[index + 7].token.type !== 'identifier' ||
         items[index + 12].token.type !== 'identifier' ||
-        items[index + 17].token.type !== 'identifier') continue;
+        items[index + 18].token.type !== 'identifier') continue;
     if (values[10] !== flag || !isSimpleComparison(items, index + 3) ||
         !isSimpleComparison(items, index + 14) ||
         !isSimpleComparison(items, index + 20)) continue;

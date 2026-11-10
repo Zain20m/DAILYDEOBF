@@ -1081,9 +1081,9 @@ async function sendAnalysisOutput(message, input, config) {
   if (candidateBytes > 0 && candidateBytes <= MAX_OUTPUT_BYTES) {
     const candidateName = hasLiftedSource
       ? 'deobfuscated.luau'
-      : (hasLiftCandidate
-        ? (environmentProbeOnly ? 'environment_probe_partial.luau' : 'partial_result.luau')
-        : 'runtime_trace.luau');
+      : (environmentProbeOnly
+        ? 'environment_probe_partial.luau'
+        : (hasLiftCandidate ? 'partial_result.luau' : 'runtime_trace.luau'));
     attachments.push(new AttachmentBuilder(await fs.readFile(candidatePath), { name: candidateName }));
   }
   if (!attachments.length) throw new Error('The engine did not produce a Luau output file.');
@@ -1091,7 +1091,7 @@ async function sendAnalysisOutput(message, input, config) {
   const safeName = String(input.filename || 'script.lua').replaceAll(String.fromCharCode(96), '');
   let summary;
   if (environmentProbeOnly) {
-    summary = '**DAILY DEOBF · ' + config.label + '**\\n⚠️ Environment compatibility check failed (PC-R01) before payload execution.\\nThis is probe output, not deobfuscated source.\\nAttached: environment_probe_partial.luau and analysis-report.txt.';
+    summary = '**DAILY DEOBF · ' + config.label + '**\n⚠️ Environment compatibility check failed (PC-R01) before payload execution.\nThis is probe output, not deobfuscated source.\nAttached: environment_probe_partial.luau and analysis-report.txt.';
   } else if (hasLiftedSource) {
     summary = '**DAILY DEOBF · ' + config.label + '**\n✅ Luau candidate passed structural checks and syntax validation.\nProcessed: ' + safeName +
       '\nFunctions lifted: ' + (liftedFunctions === null ? 'see report' : liftedFunctions) +

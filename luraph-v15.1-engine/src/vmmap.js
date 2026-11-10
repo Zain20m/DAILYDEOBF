@@ -546,17 +546,17 @@ function formatStatements(source, tmpdir, chunkTag = 'chunk') {
       const [line, column] = loc(node);
       if (lineStarts[line] === undefined) return;
       const offset = lineStarts[line] + column;
-      if (offset > 0 && offset < source.length && source[offset - 1] !== '\\n' && source[offset] !== '\\n') {
+      if (offset > 0 && offset < source.length && source[offset - 1] !== '\n' && source[offset] !== '\n') {
         offsets.add(offset);
       }
     });
     let out = source;
     for (const offset of [...offsets].sort((a, b) => b - a)) {
-      out = out.slice(0, offset) + '\\n' + out.slice(offset);
+      out = out.slice(0, offset) + '\n' + out.slice(offset);
     }
     return out;
   } catch (e) {
-    process.stderr.write(`[!] could not format captured chunk statements (${e.message}); keeping original chunk\\n`);
+    process.stderr.write(`[!] could not format captured chunk statements (${e.message}); keeping original chunk\n`);
     return source;
   } finally {
     try { fs.unlinkSync(filePath); } catch {}

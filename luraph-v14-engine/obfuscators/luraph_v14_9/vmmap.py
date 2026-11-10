@@ -6,15 +6,44 @@ Usage: python obfuscators/luraph_v14_9/vmmap.py <protected.luau> [dispatch_index
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(os.path.dirname(HERE))     # deobf/ (bin/luau-ast)
+ROOT = os.path.dirname(os.path.dirname(HERE))     # luraph-v14-engine/
+
+
+def _ast_executable():
+    """Find the v14 parser, lazily copying the shared v15 build when needed.
+
+    Some hosts start index.js directly and skip scripts/setup-engines.js.
+    The v14 mapper still needs its own bin/ path, so repair that at first use.
+    """
+    name = "luau-ast.exe" if os.name == "nt" else "luau-ast"
+    target_dir = os.path.join(ROOT, "bin")
+    target = os.path.join(target_dir, name)
+    if os.path.isfile(target):
+        return target
+
+    shared = os.path.join(os.path.dirname(ROOT), "luraph-v15-engine", "bin", name)
+    if not os.path.isfile(shared):
+        raise FileNotFoundError(
+            "Luraph v14 requires bin/%s, but it is missing and the shared "
+            "Luraph v15 binary was not found at %s. Ensure the engine binaries "
+            "are included in the deployment and run npm start."
+            % (name, shared)
+        )
+
+    os.makedirs(target_dir, exist_ok=True)
+    shutil.copy2(shared, target)
+    if os.name != "nt":
+        os.chmod(target, 0o755)
+    return target
 
 
 def load_ast(path):
-    exe = os.path.join(ROOT, "bin", "luau-ast.exe" if os.name == "nt" else "luau-ast")
+    exe = _ast_executable()
     r = subprocess.run([exe, path], capture_output=True)
     errs = r.stderr.decode("latin-1").strip().splitlines()
     if r.returncode != 0 or (errs and errs[0].startswith("Parse errors")):

@@ -956,7 +956,7 @@ async function sendAnalysisOutput(message, input, config) {
     : null;
   const environmentProbeOnly = Boolean(
     validation.metrics.environmentProbeOnly ||
-    (!validation.candidate && traceValidation && traceValidation.metrics.environmentProbeOnly)
+    (traceValidation && traceValidation.metrics.environmentProbeOnly)
   );
   if (environmentProbeOnly && !validation.metrics.environmentProbeOnly) {
     validation.metrics.environmentProbeOnly = true;

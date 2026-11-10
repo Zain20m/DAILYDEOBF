@@ -2450,6 +2450,8 @@ async function handlePureLuauCommand(interaction) {
       'Legacy calls modernized: ' + result.legacyCallsReplaced,
       'Escaped strings decoded: ' + result.decodedEscapedStrings,
       'Numeric expressions folded: ' + result.foldedNumericExpressions,
+      'Boolean gating chains simplified: ' + result.simplifiedBooleanChains,
+      'Nested bit32 XOR identities simplified: ' + result.simplifiedBit32Expressions,
       'Static string calls folded: ' + result.foldedStringCharCalls + result.foldedStringCalls,
       'Static table/bit32/base64 calls folded: ' +
         (result.foldedTableConcatCalls + result.foldedBit32Calls + result.foldedBase64Calls),

@@ -1930,7 +1930,7 @@ async function processFlowAuth(message, prompt, input) {
     components: [],
   });
 
-  if (/^14\\./.test(detected.version)) {
+  if (/^14\./.test(detected.version)) {
     return processLuraphV14(message, prompt, input, detected.version);
   }
 

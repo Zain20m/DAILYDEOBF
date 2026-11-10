@@ -130,8 +130,16 @@ async function run(job) {
   const notes = skip.length ? [`anti-tamper trap functions disabled: ${skip.map(p => '#' + p).join(', ')}`] : [];
   const text = trace.header(job.input, notes) + body;
 
+  const preserveRuntimeDiagnostics =
+    /\bPC-R01\b|Environment compatibility check failed/i.test(body);
+
   function writeTrace() {
-    job.write(job.tracePath, tidy.tidy(text, { preamble: !args.keepPreamble }));
+    job.write(job.tracePath, tidy.tidy(text, {
+      // Keep the complete probe sequence for PC-R01 so the failed check is
+      // visible instead of deleting the very evidence needed to diagnose it.
+      preamble: !args.keepPreamble && !preserveRuntimeDiagnostics,
+      preserveDiagnostics: preserveRuntimeDiagnostics,
+    }));
   }
 
   if (!devirtOn || job.debug) {

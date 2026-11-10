@@ -13,6 +13,10 @@ const trace = [
   'ScreenGui2:Destroy()',
   'warn("JNKIE: Environment compatibility check failed (PC-R01).")',
   '-- [envlog] error: callback failed: missing method',
+  '-- condition: game:GetService("Path2D") ~= nil (false)',
+  '-- identifyexecutor() -- "Wave"',
+  '-- isfolder("workspace")',
+  '-- loadstring() of 520 bytes',
 ].join('\n');
 
 const cleaned = tidy(trace);
@@ -24,6 +28,16 @@ assert(!cleaned.includes('Path2D2:GetTangentOnCurveArcLength'), 'probe preamble 
 assert(!cleaned.includes('ScreenGui2:Destroy()'), 'probe preamble should still be removed');
 assert(cleaned.includes('warn("JNKIE: Environment compatibility check failed (PC-R01).")'), 'PC-R01 warning must remain visible');
 assert(cleaned.includes('-- [envlog] error: callback failed: missing method'), 'callback errors must remain visible');
+
+const diagnosticMode = tidy(trace, {
+  preamble: false,
+  preserveDiagnostics: true,
+});
+assert(diagnosticMode.includes('-- condition: game:GetService("Path2D") ~= nil (false)'), 'PC-R01 mode must retain branch conditions');
+assert(diagnosticMode.includes('-- identifyexecutor() -- "Wave"'), 'PC-R01 mode must retain executor checks');
+assert(diagnosticMode.includes('-- isfolder("workspace")'), 'PC-R01 mode must retain filesystem checks');
+assert(diagnosticMode.includes('-- loadstring() of 520 bytes'), 'PC-R01 mode must retain dynamic chunk notes');
+assert(diagnosticMode.includes('Path2D2:GetTangentOnCurveArcLength'), 'PC-R01 mode must retain the complete probe sequence');
 
 const noPreamble = tidy(trace, { preamble: false });
 assert(noPreamble.includes('Path2D2:GetTangentOnCurveArcLength'), 'preamble=false must keep the raw trace');

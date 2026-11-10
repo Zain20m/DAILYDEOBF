@@ -2467,6 +2467,36 @@ async function handlePureLuauCommand(interaction) {
   }
 }
 
+
+async function handlePureLuauPrefixCommand(message, pastedSource = null) {
+  let responseMessage = null;
+  const attachment = message.attachments.first() || null;
+  const adapter = {
+    options: {
+      getAttachment: () => attachment,
+      getString: () => pastedSource,
+    },
+    reply: async (payload) => message.reply({
+      content: payload.content,
+      allowedMentions: { repliedUser: false },
+    }),
+    deferReply: async () => {
+      responseMessage = await message.reply({
+        embeds: [dailyEmbed('PureLuau · Processing', 'Converting the supplied source...', DAILY_COLORS.primary)],
+        allowedMentions: { repliedUser: false },
+      });
+    },
+    editReply: async (payload) => {
+      if (!responseMessage) {
+        responseMessage = await message.reply(payload);
+        return responseMessage;
+      }
+      return responseMessage.edit(payload);
+    },
+  };
+  await handlePureLuauCommand(adapter);
+}
+
 function helpText() {
   return [
     'DAILY DEOBF',
@@ -2474,6 +2504,8 @@ function helpText() {
     'COMMANDS',
     '.deobf',
     '.get',
+    '.purelua',
+    '.pureluau',
     '.help',
     '',
     'SLASH COMMANDS',
@@ -2657,6 +2689,23 @@ client.on(Events.MessageCreate, async (message) => {
       return;
     }
     await message.reply({ embeds: [dailyEmbed('Command list', helpText(), DAILY_COLORS.primary)], allowedMentions: { repliedUser: false } });
+    return;
+  }
+
+  if (command === '.purelua' || command === '.pureluau') {
+    if (activeUsers.has(message.author.id)) {
+      await message.reply('You already have an active job. Finish it or wait for it to expire.');
+      return;
+    }
+    activeUsers.add(message.author.id);
+    try {
+      const pastedSource = content.slice(command.length).trim() || null;
+      await handlePureLuauPrefixCommand(message, pastedSource);
+    } catch (error) {
+      await message.reply('PureLuau failed: ' + String(error.message || error).slice(0, 1200)).catch(() => {});
+    } finally {
+      activeUsers.delete(message.author.id);
+    }
     return;
   }
 

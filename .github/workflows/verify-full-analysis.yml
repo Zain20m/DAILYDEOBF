@@ -42,7 +42,7 @@ jobs:
           npm install --no-audit --no-fund
           npm run check
           python3 luraph-v15-engine/build_luau.py --portable
-          cp luraph-v15-engine/bin/luau luraph-v15.1-engine/bin/luau
+          python3 luraph-v15.1-engine/build_luau.py --portable --jobs 2
           node scripts/setup-engines.js
           python3 - <<'PY'
           from pathlib import Path

@@ -1919,6 +1919,13 @@ async function collectFlowAuthGameId(message, prompt) {
 
 async function processFlowAuth(message, prompt, input) {
   const detected = detectFlowAuthLuraphVersion(input.source);
+  if (detected.unsupported) {
+    await prompt.edit({
+      content: 'FlowAuth detected Luraph v' + detected.version + ', but no matching engine is available. Supported versions are 14.7, 14.8, 14.9, 15 and 15.1.',
+      components: [],
+    });
+    return;
+  }
   const displayVersion = 'Luraph v' + detected.version;
   const versionNote = detected.explicit
     ? 'Version identified by ' + detected.detectedBy + '.'

@@ -10,12 +10,27 @@ function stripMarkers(text) {
   return text.replace(/--@\S*\n?/g, '');
 }
 
+function diagnosticPrefixLength(lines) {
+  let i = 0;
+
+  // The runtime puts the execution status and traceback before the trace body.
+  // Keep the whole multi-line status block even when the probe preamble is cut.
+  if (/^\s*-- run status:/.test(lines[i] || '')) {
+    i++;
+    while (i < lines.length && /^\s*--\s{2,}\S/.test(lines[i])) i++;
+  }
+
+  // This summary is useful when diagnosing early exits and budget exhaustion.
+  if (/^\s*--\s*\d+\s+statements recorded\b/.test(lines[i] || '')) i++;
+  return i;
+}
+
 function stripPreamble(text) {
-
   const lines = text.split('\n');
-  let cut = 0;
+  const prefixLength = diagnosticPrefixLength(lines);
+  let cut = prefixLength;
 
-  for (let i = 0; i < Math.min(lines.length, 120); i++) {
+  for (let i = prefixLength; i < Math.min(lines.length, prefixLength + 120); i++) {
     const l = lines[i];
     // VM lifting may suffix locals (Path2D2, ScreenGui2, etc.).
     // Match the API operation rather than one exact temporary variable name.
@@ -24,8 +39,11 @@ function stripPreamble(text) {
       cut = i + 1;
     }
   }
-  if (cut > 0) {
-    return lines.slice(cut).join('\n').replace(/^\n+/, '');
+  if (cut > prefixLength) {
+    return lines.slice(0, prefixLength)
+      .concat(lines.slice(cut))
+      .join('\n')
+      .replace(/^\n+/, '');
   }
   return text;
 }
@@ -66,14 +84,11 @@ function stripAnnotations(text) {
       if (trimmed.startsWith('--   ') || trimmed === '--') continue;
       inUrlList = false;
     }
-    if (trimmed.startsWith('-- [envlog]') ||
-        trimmed.startsWith('-- isfolder(') ||
+    if (trimmed.startsWith('-- isfolder(') ||
         trimmed.startsWith('-- isfile(') ||
         trimmed.startsWith('-- identifyexecutor(') ||
         trimmed.startsWith('-- condition:') ||
-        trimmed.startsWith('-- loadstring() of') ||
-        trimmed.startsWith('-- run status:') ||
-        /^--\s*\d+\s+statements recorded/.test(trimmed)) {
+        trimmed.startsWith('-- loadstring() of')) {
       continue;
     }
     clean.push(line);

@@ -167,7 +167,9 @@ async function run(job) {
       process.stderr.write(`[!] proto capture failed: ${protosJson}\n`);
     } else {
       job.write(ppath, protosJson);
-      if (devirtOn) {
+      const pcR01BeforePayload = /Environment compatibility check failed\\s*\\(PC-R01\\)/i.test(body)
+        && /attempt to get length of a number value/i.test(body);
+      if (devirtOn && !pcR01BeforePayload) {
         const cfgData = {
           input: job.input,
           source: job.source,
@@ -209,6 +211,8 @@ async function run(job) {
         } finally {
           try { fs.unlinkSync(cfgPath); } catch {}
         }
+      } else if (devirtOn && pcR01BeforePayload) {
+        process.stderr.write('[!] skipping expensive VM lifting: the Luraph bootstrap failed before payload execution; captured prototypes belong to the failed compatibility run\\n');
       }
     }
   }

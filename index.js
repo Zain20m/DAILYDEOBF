@@ -396,7 +396,7 @@ async function prependDailyDeobfHeader(filePath) {
 
 function createAnalysisProgress(prompt, filename, inputBytes, label, options = {}) {
   const startedAt = Date.now();
-  const safeName = String(filename || 'script.lua').replaceAll(String.fromCharCode(96), '').replace(/[\\r\\n]/g, ' ');
+  const safeName = String(filename || 'script.lua').replaceAll(String.fromCharCode(96), '').replace(/[\r\n]/g, ' ');
   const maxTracePasses = Number.isFinite(options.maxTracePasses) ? Math.max(1, options.maxTracePasses) : 16;
   const maxDevirtRounds = Number.isFinite(options.maxDevirtRounds) ? Math.max(1, options.maxDevirtRounds) : 200;
   let phase = 'Queued engine startup';
@@ -410,7 +410,7 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
   const MAX_ACTIVITY = 4;
 
   function recordActivity(message) {
-    const clean = String(message || '').replace(/[\\r\\n]+/g, ' ').trim().slice(0, 180);
+    const clean = String(message || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 180);
     if (!clean || (activity.length && activity[activity.length - 1].text === clean)) return;
     activity.push({ at: Date.now(), text: clean });
     while (activity.length > MAX_ACTIVITY) activity.shift();
@@ -467,7 +467,7 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
       ...(recent.length ? recent : ['• Waiting for the engine to report its first operation.']),
       '',
       detail,
-    ].filter((line) => line !== '').join('\\n');
+    ].filter((line) => line !== '').join('\n');
   }
 
   async function publish(force = false) {
@@ -482,43 +482,43 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
   }
 
   function onLine(rawLine) {
-    const line = String(rawLine || '').replace(/\\x1b\\[[0-9;]*m/g, '').trim();
+    const line = String(rawLine || '').replace(/\x1b\[[0-9;]*m/g, '').trim();
     if (!line) return;
     lastOutputAt = Date.now();
     let match;
 
-    if ((match = line.match(/obfuscator:\\s*(.+)/i))) {
+    if ((match = line.match(/obfuscator:\s*(.+)/i))) {
       advance('Fingerprinting the input', 'Engine identified the obfuscator family: ' + match[1].slice(0, 100), 'Obfuscator fingerprint matched: ' + match[1]);
-    } else if ((match = line.match(/tracing .*?\\(run\\s+(\\d+)\\)/i))) {
+    } else if ((match = line.match(/tracing .*?\(run\s+(\d+)\)/i))) {
       const pass = Number(match[1]);
       advance('Executing VM trace pass ' + pass, 'Observing runtime-created functions, constants, branches and VM state from this pass.', 'Runtime trace pass ' + pass + ' started; collecting VM behaviour.', {
         label: 'Trace passes',
         current: pass,
         total: maxTracePasses,
       });
-    } else if ((match = line.match(/([\\d,]+) Path2D answers computed by the offline engine model/i))) {
+    } else if ((match = line.match(/([\d,]+) Path2D answers computed by the offline engine model/i))) {
       advance('Resolving Roblox API-dependent values', match[1] + ' Path2D answers were computed by the offline engine model.', 'Resolved ' + match[1] + ' offline Path2D model answers.');
-    } else if ((match = line.match(/script loadstring.d\\s+(\\d+)\\s+new VM chunk/i))) {
+    } else if ((match = line.match(/script loadstring.d\s+(\d+)\s+new VM chunk/i))) {
       advance('Capturing dynamically loaded chunks', 'The runtime exposed ' + match[1] + ' new VM chunk(s); the engine is adding them to the analysis set.', 'Captured ' + match[1] + ' new VM chunk(s) from dynamic loading.');
     } else if (/anti-tamper trap|anti-tamper trigger|LPH_CRASH/i.test(line)) {
       advance('Mapping protected execution paths', 'The engine reported an anti-tamper-related branch. Recording the event as an observed runtime condition.', 'Observed a protected branch / anti-tamper event in the trace.');
-    } else if ((match = line.match(/devirt round\\s+(\\d+):\\s*([\\d,]+) functions\\s*\\(([\\d,]+) walked\\),\\s*([\\d,]+) unlifted blocks,\\s*([\\d,]+) new constant requests/i))) {
+    } else if ((match = line.match(/devirt round\s+(\d+):\s*([\d,]+) functions\s*\(([\d,]+) walked\),\s*([\d,]+) unlifted blocks,\s*([\d,]+) new constant requests/i))) {
       const round = Number(match[1]);
       advance('Lifting VM functions · round ' + round, match[2] + ' functions discovered · ' + match[3] + ' walked · ' + match[4] + ' blocks still unlifted · ' + match[5] + ' new constant requests.', 'Round ' + round + ': ' + match[2] + ' functions discovered, ' + match[3] + ' walked, ' + match[4] + ' blocks still unlifted.', {
         label: 'Devirtualization rounds',
         current: round,
         total: maxDevirtRounds,
       });
-    } else if ((match = line.match(/devirtualizing\\s+\\(round\\s+(\\d+)\\)/i))) {
+    } else if ((match = line.match(/devirtualizing\s+\(round\s+(\d+)\)/i))) {
       const round = Number(match[1]);
       advance('Reconstructing Luau control flow · round ' + round, 'The VM lifter is processing this round. The ratio is against the configured round limit, not a guarantee of total-job completion.', 'Started devirtualization round ' + round + '.', {
         label: 'Devirtualization rounds',
         current: round,
         total: maxDevirtRounds,
       });
-    } else if ((match = line.match(/([\\d,]+) functions,\\s*([\\d,]+) unlifted blocks,\\s*([\\d,]+) unstructured jumps/i))) {
+    } else if ((match = line.match(/([\d,]+) functions,\s*([\d,]+) unlifted blocks,\s*([\d,]+) unstructured jumps/i))) {
       advance('Measuring lift coverage', match[1] + ' functions · ' + match[2] + ' unlifted blocks · ' + match[3] + ' unstructured jumps.', 'Lift coverage report: ' + match[1] + ' functions; ' + match[2] + ' unlifted blocks; ' + match[3] + ' unstructured jumps.');
-    } else if ((match = line.match(/constants decoded on request:\\s*calls=(\\d+)\\s+decoded=(\\d+).*?(\\d+(?:\\.\\d+)?)s,\\s*(\\d+) buffer patches/i))) {
+    } else if ((match = line.match(/constants decoded on request:\s*calls=(\d+)\s+decoded=(\d+).*?(\d+(?:\.\d+)?)s,\s*(\d+) buffer patches/i))) {
       const calls = Number(match[1]);
       const decoded = Number(match[2]);
       const patches = Number(match[4]);
@@ -530,14 +530,14 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
           : 'Constant pass decoded ' + decoded + ' value(s) from ' + calls + ' call(s).'
       );
     } else if (/constants decoded on request|constant request run/i.test(line)) {
-      advance('Resolving deferred constants', line.replace(/^\\[\\*\\]\\s*/, '').slice(0, 180), 'Engine requested another constant-resolution pass.');
-    } else if (/corrupt\\/encrypted register|symbolic value store|unlifted block|unstructured jump/i.test(line)) {
-      advance('Recording unresolved VM operations', line.replace(/^\\[!\\]\\s*/, '').slice(0, 180), 'The engine reported an unresolved VM operation; it will be reflected in validation.');
+      advance('Resolving deferred constants', line.replace(/^\[\*\]\s*/, '').slice(0, 180), 'Engine requested another constant-resolution pass.');
+    } else if (/corrupt\/encrypted register|symbolic value store|unlifted block|unstructured jump/i.test(line)) {
+      advance('Recording unresolved VM operations', line.replace(/^\[!\]\s*/, '').slice(0, 180), 'The engine reported an unresolved VM operation; it will be reflected in validation.');
     } else if (/devirtualization failed|devirtualization produced no output|devirtualized output is broken/i.test(line)) {
-      advance('Reviewing incomplete reconstruction', line.replace(/^\\[!\\]\\s*/, '').slice(0, 180), 'The engine reported a reconstruction issue; the candidate will not be assumed complete.');
+      advance('Reviewing incomplete reconstruction', line.replace(/^\[!\]\s*/, '').slice(0, 180), 'The engine reported a reconstruction issue; the candidate will not be assumed complete.');
     } else if (/result:|run status: finished|done:.*succeeded/i.test(line)) {
-      advance('Engine pass returned', line.replace(/^\\[\\*\\]\\s*/, '').slice(0, 180), 'An engine pass returned; artifact validation is next.');
-    } else if (/^\\[!\\]|\\bwarning\\b|\\berror\\b/i.test(line)) {
+      advance('Engine pass returned', line.replace(/^\[\*\]\s*/, '').slice(0, 180), 'An engine pass returned; artifact validation is next.');
+    } else if (/^\[!\]|\bwarning\b|\berror\b/i.test(line)) {
       advance('Inspecting engine diagnostic', line.slice(0, 180), line.slice(0, 180));
     }
 
@@ -600,15 +600,15 @@ function fullErrorText(error) {
     stack,
     error && Number.isInteger(error.exitCode) ? 'Exit code: ' + error.exitCode : '',
     error && error.signal ? 'Signal: ' + error.signal : '',
-    stdout ? '\\n--- STDOUT ---\\n' + stdout : '',
-    stderr ? '\\n--- STDERR ---\\n' + stderr : '',
-  ].filter(Boolean).join('\\n').slice(0, 900_000);
+    stdout ? '\n--- STDOUT ---\n' + stdout : '',
+    stderr ? '\n--- STDERR ---\n' + stderr : '',
+  ].filter(Boolean).join('\n').slice(0, 900_000);
 }
 
 async function showDeobfFailure(message, prompt, title, error) {
   const reportText = fullErrorText(error);
   const errorBuffer = Buffer.from(reportText, 'utf8');
-  const logs = [error && error.stdout, error && error.stderr].filter(Boolean).join('\\n\\n');
+  const logs = [error && error.stdout, error && error.stderr].filter(Boolean).join('\n\n');
   const files = [
     new AttachmentBuilder(errorBuffer, { name: 'error-details.txt' }),
   ];
@@ -619,9 +619,9 @@ async function showDeobfFailure(message, prompt, title, error) {
 
   const shortMessage = String(error && (error.message || error) || 'Unknown error').slice(0, 1100);
   await prompt.edit({
-    content: '❌ **' + title + '**\\n' + shortMessage.replace(/`/g, "'") +
-      '\\n\\nFull diagnostic attached as `error-details.txt`.' +
-      (error && error.partialArtifact ? '\\nA partial output was recovered and attached.' : ''),
+    content: '❌ **' + title + '**\n' + shortMessage.replace(/`/g, "'") +
+      '\n\nFull diagnostic attached as `error-details.txt`.' +
+      (error && error.partialArtifact ? '\nA partial output was recovered and attached.' : ''),
     components: [
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -652,11 +652,11 @@ async function showDeobfFailure(message, prompt, title, error) {
   collector.on('collect', async (interaction) => {
     if (interaction.customId === 'deobf-error-copy:' + message.author.id) {
       const preview = reportText.length > 1500
-        ? reportText.slice(0, 1450) + '\\n...[truncated; full text is in error-details.txt]'
+        ? reportText.slice(0, 1450) + '\n...[truncated; full text is in error-details.txt]'
         : reportText;
       await interaction.reply({
-        content: 'Copy the diagnostic text below. The complete error is attached as `error-details.txt`.\\n```text\\n' +
-          preview.replace(/```/g, "'''") + '\\n```',
+        content: 'Copy the diagnostic text below. The complete error is attached as `error-details.txt`.\n```text\n' +
+          preview.replace(/```/g, "'''") + '\n```',
         ephemeral: true,
       }).catch(() => {});
       return;
@@ -710,7 +710,7 @@ async function showDeobfFailure(message, prompt, title, error) {
         'Timestamp: ' + new Date().toISOString(),
         '',
         reportText,
-      ].join('\\n');
+      ].join('\n');
       const reportFiles = [
         new AttachmentBuilder(Buffer.from(reportHeader.slice(0, 900_000), 'utf8'), { name: 'error-report.txt' }),
       ];

@@ -6,6 +6,7 @@ Usage: python obfuscators/luraph_v14_8/vmmap.py <protected.luau> [dispatch_index
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -14,7 +15,19 @@ ROOT = os.path.dirname(os.path.dirname(HERE))     # deobf/ (bin/luau-ast)
 
 
 def load_ast(path):
-    exe = os.path.join(ROOT, "bin", "luau-ast.exe" if os.name == "nt" else "luau-ast")
+    name = "luau-ast.exe" if os.name == "nt" else "luau-ast"
+    exe = os.path.join(ROOT, "bin", name)
+    if not os.path.isfile(exe):
+        shared = os.path.join(os.path.dirname(ROOT), "luraph-v15-engine", "bin", name)
+        if not os.path.isfile(shared):
+            raise FileNotFoundError(
+                "Luraph v14 requires %s, and shared Luau AST binary is missing: %s"
+                % (exe, shared)
+            )
+        os.makedirs(os.path.dirname(exe), exist_ok=True)
+        shutil.copy2(shared, exe)
+        if os.name != "nt":
+            os.chmod(exe, 0o755)
     r = subprocess.run([exe, path], capture_output=True)
     errs = r.stderr.decode("latin-1").strip().splitlines()
     if r.returncode != 0 or (errs and errs[0].startswith("Parse errors")):

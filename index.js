@@ -1082,7 +1082,7 @@ async function sendAnalysisOutput(message, input, config) {
     const candidateName = hasLiftedSource
       ? 'deobfuscated.luau'
       : (environmentProbeOnly
-        ? 'environment_probe_partial.luau'
+        ? 'environment_probe_partial.txt'
         : (hasLiftCandidate ? 'partial_result.luau' : 'runtime_trace.luau'));
     attachments.push(new AttachmentBuilder(await fs.readFile(candidatePath), { name: candidateName }));
   }

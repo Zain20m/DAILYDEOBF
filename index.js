@@ -2410,7 +2410,9 @@ async function handlePureLuauCommand(interaction) {
     }
 
     const result = convertToPureLuau(source);
+    const originalBufferBytes = Buffer.byteLength(source, 'utf8');
     const convertedBuffer = Buffer.from(result.output, 'utf8');
+    const byteDelta = convertedBuffer.length - originalBufferBytes;
     if (convertedBuffer.length > MAX_OUTPUT_BYTES) {
       await interaction.editReply('The converted file exceeds the 18 MB output limit. The original was left unchanged.');
       return;
@@ -2424,6 +2426,9 @@ async function handlePureLuauCommand(interaction) {
       'Original: ' + originalName,
       'Converted: ' + convertedName,
       'Lines processed: ' + result.linesProcessed.toLocaleString(),
+      'Input size: ' + originalBufferBytes.toLocaleString() + ' bytes',
+      'Output size: ' + convertedBuffer.length.toLocaleString() + ' bytes',
+      'Output size change: ' + (byteDelta > 0 ? '+' : '') + byteDelta.toLocaleString() + ' bytes',
       'Input limit: 4,000,000 characters / 8 MB',
       'Input handling: UTF-8 source text; filename extension is checked separately from source content',
       ...(result.partialRecovery?.nilConditionBranches ? [

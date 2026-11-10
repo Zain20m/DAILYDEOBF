@@ -1236,10 +1236,10 @@ function inferReadableSemanticRenames(source, tokens, declarations) {
 function createLineNumberLookup(source) {
   const starts = [0];
   for (let index = 0; index < source.length; index++) {
-    if (source[index] === '\\r') {
-      if (source[index + 1] === '\\n') index++;
+    if (source[index] === '\r') {
+      if (source[index + 1] === '\n') index++;
       starts.push(index + 1);
-    } else if (source[index] === '\\n') {
+    } else if (source[index] === '\n') {
       starts.push(index + 1);
     }
   }
@@ -1259,7 +1259,7 @@ function formatReadableIndentation(source) {
   const lines = source.split(/(?<=\n)/);
   const tokens = tokenize(source).tokens;
   const protectedLines = new Set();
-  const lineNumberAt = offset => source.slice(0, offset).split(/\r\n|\r|\n/).length;
+  const lineNumberAt = createLineNumberLookup(source);
   for (const token of tokens) {
     const longComment = token.type === 'trivia' && token.value.startsWith('--') && /\r|\n/.test(token.value);
     const longString = token.type === 'string' && /\r|\n/.test(token.value);
@@ -1531,7 +1531,7 @@ function analyzeStructure(source, tokens) {
   const blocks = [];
   const delimiters = [];
   const pairs = { ')': '(', ']': '[', '}': '{' };
-  const lineOf = token => source.slice(0, token.start).split(/\r\n|\r|\n/).length;
+  const lineOf = createLineNumberLookup(source);
 
   for (const token of tokens) {
     if (token.type === 'trivia' || token.type === 'string') continue;

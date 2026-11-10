@@ -232,7 +232,7 @@ def _communicate(cmd, timeout, stall):
     finally:
         for t in threads:
             t.join(5)
-    return b"".join(parts[1]), b"".join(parts[2])
+    return b"".join(parts[1]), b"".join(parts[2]), proc.returncode
 
 
 def run_once(luau, source, cfg, hpath, timeout, keep, chunks=None):
@@ -240,7 +240,7 @@ def run_once(luau, source, cfg, hpath, timeout, keep, chunks=None):
     with open(hpath, "w", encoding="latin-1", newline="\n") as f:
         f.write(build_harness(source, cfg, chunks))
     try:
-        out, errb = _communicate([luau, hpath], timeout, STALL if cfg.get("heartbeat") else None)
+        out, errb, return_code = _communicate([luau, hpath], timeout, STALL if cfg.get("heartbeat") else None)
     except subprocess.TimeoutExpired as e:
         return None, "timed out after %ds (script is stuck in a loop the tracer cannot see)" % e.timeout
     finally:
@@ -250,7 +250,10 @@ def run_once(luau, source, cfg, hpath, timeout, keep, chunks=None):
     LAST_RAW[0] = stdout + errb.decode("utf-8", "replace")
     m = re.search(r"\x00ENVLOG-BEGIN\n(.*?)\x00ENVLOG-END", stdout, re.S)
     if not m:
-        return None, stdout[-3000:] + "\n" + errb.decode("utf-8", "replace")[-3000:]
+        detail = stdout[-3000:] + "\n" + errb.decode("utf-8", "replace")[-3000:]
+        if not detail.strip():
+            detail = "Luau runtime exited with status %s without emitting an ENVLOG trace." % return_code
+        return None, detail
     # errors raised inside the runtime name the (temporary) harness file: drop
     # "<harness path>:<line>: " (literal: a regex would crawl the PROTOS line)
     body = m.group(1)

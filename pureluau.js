@@ -1380,6 +1380,11 @@ function isSimpleComparison(items, start) {
 
 function simplifyBooleanGatingChains(source, tokens, declarations) {
   const items = significant(tokens);
+  const identifierCounts = new Map();
+  for (const item of items) {
+    if (item.token.type !== 'identifier') continue;
+    identifierCounts.set(item.token.value, (identifierCounts.get(item.token.value) || 0) + 1);
+  }
   let simplified = 0;
 
   for (let index = 0; index + 34 < items.length; index++) {
@@ -1415,8 +1420,7 @@ function simplifyBooleanGatingChains(source, tokens, declarations) {
         !isSingleLocalDeclaration(declarations, resultFlag) ||
         !isSingleLocalDeclaration(declarations, alternateFlag)) continue;
 
-    const inverseUses = items.filter(item =>
-      item.token.type === 'identifier' && item.token.value === inverseFlag).length;
+    const inverseUses = identifierCounts.get(inverseFlag) || 0;
     if (inverseUses !== 2 || !gapsAreWhitespaceOnly(source, items, index, index + 34)) continue;
 
     // Keep both comparisons eager. Only combine the two assignments.

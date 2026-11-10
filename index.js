@@ -2480,7 +2480,7 @@ function helpText() {
     'SLASH COMMANDS',
     '/purelua',
     '/pureluau',
-  ].join('\\n');
+  ].join('\n');
 }
 
 async function startWorkflow(message, inlineText = null) {

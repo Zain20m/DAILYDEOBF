@@ -527,6 +527,42 @@ function makerInfo(root) {
   return results;
 }
 
+// Add a line break before each AST statement in a captured dynamic chunk.
+ // Luraph child chunks are commonly emitted as one 200 KB+ line. When a runtime
+ // error occurs inside one, Luau can only report line 1. Formatting at statement
+ // boundaries preserves the program while making the failing statement locatable.
+function formatStatements(source, tmpdir, chunkTag = 'chunk') {
+  const filePath = require('path').join(tmpdir, `_format_${String(chunkTag).replace(/[^a-zA-Z0-9_-]/g, '_')}.luau`);
+  fs.writeFileSync(filePath, source, 'latin1');
+  try {
+    const root = loadAst(filePath);
+    const lineStarts = [0];
+    for (let i = 0; i < source.length; i++) {
+      if (source.charCodeAt(i) === 10) lineStarts.push(i + 1);
+    }
+    const offsets = new Set();
+    walkAst(root, node => {
+      if (!node.type || !node.type.startsWith('AstStat') || node.type === 'AstStatBlock') return;
+      const [line, column] = loc(node);
+      if (lineStarts[line] === undefined) return;
+      const offset = lineStarts[line] + column;
+      if (offset > 0 && offset < source.length && source[offset - 1] !== '\\n' && source[offset] !== '\\n') {
+        offsets.add(offset);
+      }
+    });
+    let out = source;
+    for (const offset of [...offsets].sort((a, b) => b - a)) {
+      out = out.slice(0, offset) + '\\n' + out.slice(offset);
+    }
+    return out;
+  } catch (e) {
+    process.stderr.write(`[!] could not format captured chunk statements (${e.message}); keeping original chunk\\n`);
+    return source;
+  } finally {
+    try { fs.unlinkSync(filePath); } catch {}
+  }
+}
+
 function patchEntries(source, filePath, chunkTag) {
   const root = loadAst(filePath);
   const lines = source.split('\n');
@@ -613,5 +649,5 @@ function patchSpin(src) {
 module.exports = {
   loadAst, loc, textOf, walkAst, localName,
   findDispatchers, resolveOp, evalCond,
-  closureEntries, makerInfo, patchEntries, patchSpin,
+  closureEntries, makerInfo, patchEntries, patchSpin, formatStatements,
 };

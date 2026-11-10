@@ -246,7 +246,7 @@ def main(argv=None) -> int:
     if chosen == "auto":
         chosen = detect_version(source)
         if chosen is None:
-            eprint("[!] could not determine whether this is Luraph v14.7 or v14.8")
+            eprint("[!] could not determine whether this is Luraph v14.7, v14.8, or v14.9")
             eprint("    retry with --engine 14.7 or --engine 14.8")
             return 2
 

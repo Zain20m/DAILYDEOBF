@@ -1229,7 +1229,7 @@ async function processLuraphV15(message, prompt, input, displayLabel = 'Luraph v
       components: [],
     });
   } catch (error) {
-    await capturePartialArtifact(error, ["base + '.devirt.luau'","base + '.trace.luau'","base + '.luau'","outputPath"]);
+    await capturePartialArtifact(error, [base + '.devirt.luau', base + '.trace.luau', base + '.luau', outputPath]);
     await progress.fail(error);
     throw error;
   } finally {
@@ -1780,7 +1780,7 @@ async function processLuraph151(message, prompt, input, gameId = null) {
   } catch (error) {
     error.stdout = [dedicatedLogs, compatibilityLogs].filter(Boolean).join('\n\n');
     error.stderr = error.stdout;
-    await capturePartialArtifact(error, ["chosen.base + '.devirt.luau'","chosen.base + '.trace.luau'","chosen.base + '.luau'","dedicated.base + '.devirt.luau'","compatible.base + '.devirt.luau'"]);
+    await capturePartialArtifact(error, [chosen.base + '.devirt.luau', chosen.base + '.trace.luau', chosen.base + '.luau', dedicated.base + '.devirt.luau', compatible.base + '.devirt.luau']);
     await progress.fail(error);
     throw error;
   } finally {

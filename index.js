@@ -958,8 +958,8 @@ async function sendAnalysisOutput(message, input, config) {
     validation.metrics.environmentProbeOnly ||
     (!validation.candidate && traceValidation && traceValidation.metrics.environmentProbeOnly)
   );
-  if (environmentProbeOnly && !environmentProbeOnly) {
-    environmentProbeOnly = true;
+  if (environmentProbeOnly && !validation.metrics.environmentProbeOnly) {
+    validation.metrics.environmentProbeOnly = true;
     validation.issues.push(
       'The runtime trace hit an explicit environment compatibility failure (PC-R01) before payload recovery.'
     );

@@ -41,6 +41,7 @@ jobs:
           python3 --version
           npm install --no-audit --no-fund
           npm run check
+          python3 luraph-v15-engine/build_luau.py --portable
           node scripts/setup-engines.js
           python3 - <<'PY'
           from pathlib import Path

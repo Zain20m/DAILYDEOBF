@@ -416,14 +416,14 @@ test('combines redundant boolean gating assignments without skipping comparisons
     'flag3 = flag and flag3',
     'flag3 = flag3 or flag2 and flag4',
     'if flag3 then return true end'
-  ].join('\\n');
+  ].join('\n');
   const result = convertToPureLuau(source);
   assert.equal(result.simplifiedBooleanChains, 1);
   assert.match(result.output, /local flag3 = n >= v2/);
   assert.match(result.output, /local flag4 = n <= v2/);
   assert.match(result.output, /flag3 = flag and flag3 or not flag and flag4/);
   assert.doesNotMatch(result.output, /local flag2/);
-  assert.doesNotMatch(result.output, /flag3 = flag and flag3\\s*\\n/);
+  assert.doesNotMatch(result.output, /flag3 = flag and flag3\s*\n/);
 });
 
 test('removes a nested bit32 XOR with zero when bit32 is not shadowed', () => {
@@ -431,11 +431,11 @@ test('removes a nested bit32 XOR with zero when bit32 is not shadowed', () => {
     'local function combine(arg2, arg)',
     '  return bit32.bxor(bit32.bxor(arg2, 0), arg)',
     'end'
-  ].join('\\n');
+  ].join('\n');
   const result = convertToPureLuau(source);
   assert.equal(result.simplifiedBit32Expressions, 1);
-  assert.match(result.output, /bit32\\.bxor\\(arg2, arg\\)/);
-  assert.doesNotMatch(result.output, /bit32\\.bxor\\(bit32\\.bxor/);
+  assert.match(result.output, /bit32\.bxor\(arg2, arg\)/);
+  assert.doesNotMatch(result.output, /bit32\.bxor\(bit32\.bxor/);
 });
 
 test('does not simplify bit32 calls when the standard library name is shadowed', () => {
@@ -444,7 +444,7 @@ test('does not simplify bit32 calls when the standard library name is shadowed',
     'local function combine(arg2, arg)',
     '  return bit32.bxor(bit32.bxor(arg2, 0), arg)',
     'end'
-  ].join('\\n');
+  ].join('\n');
   const result = convertToPureLuau(source);
   assert.equal(result.simplifiedBit32Expressions, 0);
   assert.match(result.output, /bit32\\.bxor\\(bit32\\.bxor/);

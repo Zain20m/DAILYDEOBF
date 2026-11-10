@@ -61,6 +61,8 @@ jobs:
           subprocess.run(["python3", str(v14 / "cli.py"), "--help"], check=True, stdout=subprocess.DEVNULL)
           print("V14_FRONTENDS_OK: dedicated 14.7 / 14.8 / 14.9; no copied v15 plugin")
           PY
+          python3 -m unittest discover -s luraph-v14-engine -p 'test_detection.py' -v
+          python3 -m unittest discover -s luraph-v15-engine -p 'test_detection.py' -v
           python3 -m unittest discover -s centurion-engine -p 'test_*.py' -v
           python3 scripts/test-151-loadstring-capture.py
           python3 luraph-v15-engine/obfuscators/ironbrew1/test_smoothdamp.py

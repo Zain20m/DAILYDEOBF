@@ -19,8 +19,8 @@ function stripPreamble(text) {
     const l = lines[i];
     // VM lifting may suffix locals (Path2D2, ScreenGui2, etc.).
     // Match the API operation rather than one exact temporary variable name.
-    if (/\\bPath2D\\w*:GetTangentOnCurveArcLength\\b/.test(l) ||
-        /\\bScreenGui\\w*:Destroy\\(\\)/.test(l)) {
+    if (/\bPath2D\w*:GetTangentOnCurveArcLength\b/.test(l) ||
+        /\bScreenGui\w*:Destroy\(\)/.test(l)) {
       cut = i + 1;
     }
   }

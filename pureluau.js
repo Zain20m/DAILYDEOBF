@@ -249,16 +249,16 @@ function inferIdentifierName(source, token, isFunction) {
 
   const identifier = source.slice(token.start, token.end);
   const context = source.slice(token.end, Math.min(source.length, token.end + 6000));
-  if (new RegExp('\\b' + identifier + '\\s*\\[').test(context) &&
+  if (new RegExp('\b' + identifier + '\s*\\[').test(context) &&
       /\.character\b/.test(context) && /\.descendant\b/.test(context) &&
       /CharacterAdded|DescendantAdded/.test(context)) return 'playerConnections';
-  if (new RegExp('\\b' + identifier + '\\.character\\b').test(context) &&
-      new RegExp('\\b' + identifier + '\\.descendant\\b').test(context) &&
+  if (new RegExp('\b' + identifier + '\\.character\b').test(context) &&
+      new RegExp('\b' + identifier + '\\.descendant\b').test(context) &&
       /Disconnect\s*\(/.test(context)) return 'connections';
 
   const nearby = source.slice(Math.max(0, token.start - 300), Math.min(source.length, token.end + 1600));
-  if (new RegExp('\\]\\s*=\\s*' + identifier + '\\b').test(nearby) &&
-      new RegExp('\\b' + identifier + '\\.character\\b').test(nearby) &&
+  if (new RegExp('\\]\s*=\s*' + identifier + '\b').test(nearby) &&
+      new RegExp('\b' + identifier + '\\.character\b').test(nearby) &&
       /CharacterAdded/.test(nearby)) return 'connections';
   if (isFunction) {
     const assignment = /\bConfig\.([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(tail);
@@ -352,7 +352,7 @@ function inferParameterMappings(source, tokens, declarations) {
     const body = source.slice(closeToken.end, Math.min(source.length, closeToken.end + 3000));
     const first = parameters[0];
     const second = parameters[1];
-    const pattern = new RegExp('\\breturn\\s+' + first + '\\s*([+*/-])\\s*' + second + '\\b');
+    const pattern = new RegExp('\breturn\s+' + first + '\s*([+*/-])\s*' + second + '\b');
     const match = pattern.exec(body);
     if (!match) continue;
     const names = match[1] === '+' ? ['AddNumbers', 'firstNumber', 'secondNumber']
@@ -688,7 +688,7 @@ function parseStaticTableLiteral(source) {
 function getUniqueGeneratedName(source, baseName) {
   let name = baseName;
   let suffix = 2;
-  while (new RegExp('\\b' + name + '\\b').test(source)) name = baseName + suffix++;
+  while (new RegExp('\b' + name + '\b').test(source)) name = baseName + suffix++;
   return name;
 }
 
@@ -795,7 +795,7 @@ function decodeStaticShiftXorStateMachine(source) {
       let allLiteral = true;
       for (const argument of characterMatch[4].split(',')) {
         const part = new RegExp(
-          '^\\s*' + constantName + '\\s*\\[\\s*(\\d+)\\s*\\]\\s*(?:\\+\\s*(\\d+)\\s*)?$'
+          '^\s*' + constantName + '\s*\\[\s*(\\d+)\s*\\]\s*(?:\\+\s*(\\d+)\s*)?$'
         ).exec(argument);
         if (!part) { allLiteral = false; break; }
         const baseValue = constantTable.get(Number(part[1]));
@@ -815,13 +815,13 @@ function decodeStaticShiftXorStateMachine(source) {
     if (!functionName || !functionVariable) continue;
 
     const outputCall = new RegExp(
-      '\\(\\s*([A-Za-z_]\\w*)\\s*\\[\\s*' + functionVariable +
-      '\\s*\\]\\s+or\\s+print\\s*\\)\\s*\\(\\s*table\\s*\\.\\s*concat\\s*\\(\\s*' +
-      decodedName + '\\s*\\)\\s*\\)'
+      '\\(\s*([A-Za-z_]\\w*)\s*\\[\s*' + functionVariable +
+      '\s*\\]\s+or\s+print\s*\\)\s*\\(\s*table\s*\\.\s*concat\s*\\(\s*' +
+      decodedName + '\s*\\)\s*\\)'
     );
     if (!outputCall.test(source)) continue;
 
-    const byteAssignment = new RegExp('\\b' + t.byte + '\\s*=\\s*' + encodedName + '\\s*\\[');
+    const byteAssignment = new RegExp('\b' + t.byte + '\s*=\s*' + encodedName + '\s*\\[');
     if (!byteAssignment.test(source)) continue;
 
     const whileIndex = lexed.tokens.findIndex(token =>
@@ -984,12 +984,12 @@ function inferScopedSemanticRenames(source, tokens, declarations) {
       const first = range.parameters[0];
       const second = range.parameters[1];
       const firstAsTableKey = new RegExp(
-        '\\b[A-Za-z_]\\w*\\s*\\[\\s*' + first.value + '\\s*\\]'
+        '\b[A-Za-z_]\\w*\s*\\[\s*' + first.value + '\s*\\]'
       ).test(range.body);
       const secondAsCharacter = new RegExp(
-        '\\b' + second.value + '\\s*:\\s*GetDescendants\\s*\\('
+        '\b' + second.value + '\s*:\s*GetDescendants\s*\\('
       ).test(range.body) &&
-        new RegExp('\\b' + second.value + '\\.DescendantAdded\\b').test(range.body);
+        new RegExp('\b' + second.value + '\\.DescendantAdded\b').test(range.body);
       const managesConnections = /Disconnect\s*\(/.test(range.body);
 
       if (firstAsTableKey && secondAsCharacter && managesConnections) {
@@ -1143,7 +1143,7 @@ function inferReadableSemanticRenames(source, tokens, declarations) {
 
   for (const range of functionRanges) {
     const layoutParameter = range.parameters.find(token =>
-      new RegExp('\\b' + token.value + '\\s*\\.\\s*(?:sx|ox|sy|oy)\\b').test(range.body)
+      new RegExp('\b' + token.value + '\s*\\.\s*(?:sx|ox|sy|oy)\b').test(range.body)
     );
     const hasLayoutConversion = !!layoutParameter &&
       /UDim2\s*\.\s*new\s*\(/.test(range.body) &&
@@ -1153,7 +1153,7 @@ function inferReadableSemanticRenames(source, tokens, declarations) {
       for (const parameter of range.parameters) {
         if (parameter === layoutParameter) continue;
         const escaped = parameter.value;
-        if (new RegExp('\\breturn\\s+' + escaped + '\\b').test(range.body)) {
+        if (new RegExp('\breturn\s+' + escaped + '\b').test(range.body)) {
           addCandidate(parameter.value, parameter, 'fallbackValue', range);
           break;
         }
@@ -1164,14 +1164,14 @@ function inferReadableSemanticRenames(source, tokens, declarations) {
       const name = parameter.value;
       if (!/^(?:arg\d*|v\d+|_+[A-Za-z0-9_]*)$/i.test(name)) continue;
       const escaped = name;
-      if (new RegExp('\\b' + escaped + '\\s*:\\s*GetDescendants\\s*\\(').test(range.body) &&
-          new RegExp('\\b' + escaped + '\\.DescendantAdded\\b').test(range.body)) {
+      if (new RegExp('\b' + escaped + '\s*:\s*GetDescendants\s*\\(').test(range.body) &&
+          new RegExp('\b' + escaped + '\\.DescendantAdded\b').test(range.body)) {
         addCandidate(name, parameter, 'character', range);
-      } else if (new RegExp('\\b[A-Za-z_]\\w*\\s*\\[\\s*' + escaped + '\\s*\\]').test(range.body) &&
-          new RegExp('\\b' + escaped + '\\s*==\\s*localPlayer\\b|\\blocalPlayer\\s*==\\s*' + escaped).test(range.body)) {
+      } else if (new RegExp('\b[A-Za-z_]\\w*\s*\\[\s*' + escaped + '\s*\\]').test(range.body) &&
+          new RegExp('\b' + escaped + '\s*==\s*localPlayer\b|\blocalPlayer\s*==\s*' + escaped).test(range.body)) {
         addCandidate(name, parameter, 'player', range);
-      } else if (new RegExp('\\b' + escaped + '\\s*:\\s*IsA\\s*\\(\\s*"Accessory"\\s*\\)').test(range.body) &&
-          new RegExp('\\b' + escaped + '\\s*:\\s*Destroy\\s*\\(').test(range.body)) {
+      } else if (new RegExp('\b' + escaped + '\s*:\s*IsA\s*\\(\s*"Accessory"\s*\\)').test(range.body) &&
+          new RegExp('\b' + escaped + '\s*:\s*Destroy\s*\\(').test(range.body)) {
         addCandidate(name, parameter, 'descendant', range);
       }
     }
@@ -1317,11 +1317,11 @@ function formatReadableSource(source) {
 }
 
 function inspectPartialRecovery(source) {
-  const runtimeStubMatches = source.match(/error\\s*\\(\\s*["']Luraph runtime function, not devirtualized["']\\s*\\)/g) || [];
-  const symbolicFailureMatches = source.match(/devirt:\\s*symbolic value store into proto array/gi) || [];
-  const payloadFunctionMatches = source.match(/\\bfunction\\s+payload_fn_\\d+\\s*\\(/g) || [];
-  const placeholderReferenceMatches = source.match(/\\bupv\\d+\\b/g) || [];
-  const isLuraphPartial = /Luraph runtime function.*not lifted|devirt:\\s*symbolic value store into proto array|\\bpayload_fn_\\d+\\b/i.test(source);
+  const runtimeStubMatches = source.match(/error\s*\\(\s*["']Luraph runtime function, not devirtualized["']\s*\\)/g) || [];
+  const symbolicFailureMatches = source.match(/devirt:\s*symbolic value store into proto array/gi) || [];
+  const payloadFunctionMatches = source.match(/\bfunction\s+payload_fn_\\d+\s*\\(/g) || [];
+  const placeholderReferenceMatches = source.match(/\bupv\\d+\b/g) || [];
+  const isLuraphPartial = /Luraph runtime function.*not lifted|devirt:\s*symbolic value store into proto array|\bpayload_fn_\\d+\b/i.test(source);
   return {
     isLuraphPartial,
     runtimeStubs: runtimeStubMatches.length,
@@ -1334,6 +1334,7 @@ function inspectPartialRecovery(source) {
 function convertToPureLuau(source) {
   if (typeof source !== 'string' || !source.trim()) throw new Error('The source file is empty.');
   const originalLineCount = source.split(/\r\n|\r|\n/).length;
+  const partialRecovery = inspectPartialRecovery(source);
   const advancedDecode = decodeStaticShiftXorStateMachine(source);
   source = advancedDecode.source;
   const lexed = tokenize(source);

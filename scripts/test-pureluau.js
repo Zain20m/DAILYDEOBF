@@ -449,3 +449,27 @@ test('does not simplify bit32 calls when the standard library name is shadowed',
   assert.equal(result.simplifiedBit32Expressions, 0);
   assert.match(result.output, /bit32\.bxor\(bit32\.bxor/);
 });
+
+
+test('keeps boolean chains unchanged when an inverse flag has extra uses or comments split the pattern', () => {
+  const base = [
+    'local flag = v <= 0',
+    'local flag2 = not flag',
+    'local flag3 = n >= v2',
+    'local flag4 = n <= v2',
+    'flag3 = flag and flag3',
+    'flag3 = flag3 or flag2 and flag4'
+  ];
+  const extraUse = convertToPureLuau([...base, 'print(flag2)'].join('\n'));
+  assert.equal(extraUse.simplifiedBooleanChains, 0);
+  assert.match(extraUse.output, /local flag2 = not flag/);
+
+  const withComment = convertToPureLuau([
+    base[0],
+    base[1],
+    '-- this comment must not be swallowed',
+    ...base.slice(2)
+  ].join('\n'));
+  assert.equal(withComment.simplifiedBooleanChains, 0);
+  assert.match(withComment.output, /this comment must not be swallowed/);
+});

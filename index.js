@@ -18,7 +18,6 @@ const path = require('node:path');
 const { inspectLiftText } = require('./scripts/lift-validation');
 const { convertToPureLuau } = require('./pureluau');
 const {
-  resolveLoadstringSources,
   resolveStaticSources,
   suggestLoadstringHttpGetCorrection,
 } = require('./scripts/idx-resolver');

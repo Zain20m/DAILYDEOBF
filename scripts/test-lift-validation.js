@@ -13,6 +13,29 @@ assert.deepEqual(clean.issues, []);
 assert.equal(clean.categories.syntax.status, 'not_checked');
 assert.equal(clean.categories.behavioralConsistency.status, 'not_checked');
 
+
+const environmentProbe = inspectLiftText([
+  'task.spawn(function(...) task.wait(0) end)',
+  'task.defer(function(...) end)',
+  'task.delay(441, function(...) end)',
+  'local ScreenGui2 = Instance.new("ScreenGui")',
+  'local Frame2 = Instance.new("Frame")',
+  'local Path2D2 = Instance.new("Path2D")',
+  'Path2D2:GetLength()',
+  'Path2D2:GetPositionOnCurve(0.6)',
+  'Path2D2:GetTangentOnCurve(0.3)',
+  'local connection = game.ChildAdded:Connect(function(child) end)',
+  'connection:Disconnect()',
+  'local connection2 = workspace.ChildAdded:Connect(function(child) end)',
+  'connection2:Disconnect()',
+  'warn("JNKIE: Environment compatibility check failed (PC-R01).")',
+].join('\\n'));
+assert.equal(environmentProbe.candidate, true);
+assert.equal(environmentProbe.complete, false);
+assert.equal(environmentProbe.metrics.environmentProbeOnly, true);
+assert.equal(environmentProbe.categories.behavioralConsistency.status, 'failed_before_payload');
+assert.ok(environmentProbe.issues.some((issue) => /compatibility failure.*not recovered payload logic/i.test(issue)));
+
 const literalNoise = inspectLiftText([
   'local message = "nil + 4 bit32.band(nil, 2) data[nil]"',
   'local longMessage = [=[(nil)(3) nil + 8]=]',

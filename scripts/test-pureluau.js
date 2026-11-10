@@ -447,5 +447,5 @@ test('does not simplify bit32 calls when the standard library name is shadowed',
   ].join('\n');
   const result = convertToPureLuau(source);
   assert.equal(result.simplifiedBit32Expressions, 0);
-  assert.match(result.output, /bit32\\.bxor\\(bit32\\.bxor/);
+  assert.match(result.output, /bit32\.bxor\(bit32\.bxor/);
 });

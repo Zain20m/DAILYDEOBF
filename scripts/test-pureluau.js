@@ -262,11 +262,11 @@ test('handles ordinary Lua and Roblox Luau source without classifying it as part
     'Players.PlayerAdded:Connect(function(player)',
     '  task.defer(function() print(getPlayerName(player)) end)',
     'end)'
-  ].join('\\n');
+  ].join('\n');
   const result = convertToPureLuau(source);
   assert.equal(result.partialRecovery.isLuraphPartial, false);
   assert.match(result.output, /export type PlayerData/);
-  assert.match(result.output, /GetService\\("Players"\\)/);
+  assert.match(result.output, /GetService\("Players"\)/);
   assert.match(result.output, /PlayerAdded:Connect/);
   assert.match(result.output, /task.defer/);
 });
@@ -282,7 +282,7 @@ test('detects different partial Luraph outputs by their markers, not by one uplo
     'error("devirt: symbolic value store into proto array (at 12:45)")',
     'local upv99 = {}',
     'if nil then print("unresolved") end'
-  ].join('\\n');
+  ].join('\n');
   const result = convertToPureLuau(source);
   assert.equal(result.partialRecovery.isLuraphPartial, true);
   assert.equal(result.partialRecovery.runtimeStubs, 1);
@@ -299,7 +299,7 @@ test('does not re-tokenize the whole file for every local function name', () => 
     'local function fn' + index + '(value)',
     '  return value + ' + index,
     'end'
-  ].join('\\n')).join('\\n');
+  ].join('\n')).join('\n');
   const result = convertToPureLuau(source);
   assert.equal(result.linesProcessed, 240);
   assert.ok(result.output.includes('local function fn0(value)'));

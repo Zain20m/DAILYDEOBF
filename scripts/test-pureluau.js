@@ -304,3 +304,17 @@ test('does not re-tokenize the whole file for every local function name', () => 
   assert.equal(result.linesProcessed, 240);
   assert.ok(result.output.includes('local function fn0(value)'));
 });
+
+test('preserves Luau interpolated strings without renaming identifiers inside them', () => {
+  const source = [
+    'local playerName = "Zain"',
+    'local message = `Hello {playerName}, welcome`',
+    'local function makeLabel(playerName: string): string',
+    '  return `Player: {playerName}`',
+    'end'
+  ].join('\\n');
+  const result = convertToPureLuau(source);
+  assert.match(result.output, /`Hello \{playerName\}, welcome`/);
+  assert.match(result.output, /`Player: \{playerName\}`/);
+  assert.match(result.output, /local playerName = "Zain"/);
+});

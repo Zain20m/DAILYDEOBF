@@ -43,12 +43,12 @@ const ENGINE_CENT_CLI = path.join(ENGINE_CENT_DIR, 'centurion.py');
 const activeUsers = new Set();
 const commandGuildId = process.env.GUILD_ID || '';
 
-const slashCommands = ['purelua', 'pureluau'].map((name) => new SlashCommandBuilder()
+const slashCommands = ['purelua'].map((name) => new SlashCommandBuilder()
   .setName(name)
   .setDescription('Convert Lua/Luau source with the static PureLuau readability pass')
   .addAttachmentOption((option) => option
     .setName('file')
-    .setDescription('Upload a .luau or .pureluau source file')
+    .setDescription('Upload a .luau, .pureluau or .txt source file')
     .setRequired(false))
   .addStringOption((option) => option
     .setName('source')
@@ -289,8 +289,8 @@ function decodeSource(bytes) {
 
 async function inputFromAttachment(attachment) {
   const filename = attachment.name || 'script.txt';
-  if (!/\.(luau|pureluau)$/i.test(filename)) {
-    throw new Error('Upload a `.luau` or `.pureluau` file.');
+  if (!/\.(luau|pureluau|txt)$/i.test(filename)) {
+    throw new Error('Upload a `.luau`, `.pureluau` or `.txt` file.');
   }
   // Discord CDN attachments are trusted HTTPS URLs; download them directly.
   const response = await fetch(attachment.url, {
@@ -319,7 +319,7 @@ async function inputFromUrlText(text) {
     throw new Error('Only HTTP and HTTPS URLs are supported.');
   }
   const result = await fetchPublicText(parsed.toString());
-  const filename = /\.(luau|pureluau)$/i.test(path.extname(result.filename))
+  const filename = /\.(luau|pureluau|txt)$/i.test(path.extname(result.filename))
     ? result.filename
     : 'downloaded-script.lua';
   return { source: decodeSource(result.bytes), filename, url: parsed.toString() };
@@ -362,7 +362,7 @@ async function collectInput(message, prompt) {
     });
     prompt.edit({
       content: null,
-      embeds: [dailyEmbed('Waiting for input', 'Attach a **.luau** or **.pureluau** file, or paste a direct script URL.\n\nType `.cancel` to stop.', DAILY_COLORS.primary)],
+      embeds: [dailyEmbed('Waiting for input', 'Attach a **.luau**, **.pureluau** or **.txt** file, or paste a direct script URL.\n\nType `.cancel` to stop.', DAILY_COLORS.primary)],
     }).catch(() => {});
   });
 }
@@ -2357,7 +2357,7 @@ async function handlePureLuauCommand(interaction) {
   const pastedSource = interaction.options.getString('source');
   if (!attachment && !pastedSource) {
     await interaction.reply({
-      content: 'Upload a .luau or .pureluau file or paste source text in the source option.',
+      content: 'Upload a .luau, .pureluau or .txt file or paste source text in the source option.',
       ephemeral: true,
     });
     return;
@@ -2376,8 +2376,8 @@ async function handlePureLuauCommand(interaction) {
     let originalName = 'pasted-source.lua';
     if (attachment) {
       originalName = path.basename(String(attachment.name || 'uploaded.lua').replace(/\\/g, '/'));
-      if (!/\.(?:luau|pureluau)$/i.test(originalName)) {
-        await interaction.editReply('Only .luau and .pureluau files are supported.');
+      if (!/\.(?:luau|pureluau|txt)$/i.test(originalName)) {
+        await interaction.editReply('Only .luau, .pureluau and .txt files are supported.');
         return;
       }
       const response = await fetch(attachment.url, {
@@ -2505,18 +2505,16 @@ function helpText() {
     '.deobf',
     '.get',
     '.purelua',
-    '.pureluau',
     '.help',
     '',
     'SLASH COMMANDS',
     '/purelua',
-    '/pureluau',
   ].join('\n');
 }
 
 async function startWorkflow(message, inlineText = null) {
   const prompt = await message.reply({
-    embeds: [dailyEmbed('New deobfuscation', 'Upload a **.luau** or **.pureluau** file, or paste a direct script URL.\n\n**Maximum input:** 2 MB', DAILY_COLORS.primary)],
+    embeds: [dailyEmbed('New deobfuscation', 'Upload a **.luau**, **.pureluau** or **.txt** file, or paste a direct script URL.\n\n**Maximum input:** 2 MB', DAILY_COLORS.primary)],
     allowedMentions: { repliedUser: false },
   });
   // Accept an attachment, a URL / HttpGet expression on the command,
@@ -2662,7 +2660,7 @@ client.once(Events.ClientReady, async (readyClient) => {
       ? Routes.applicationGuildCommands(readyClient.user.id, commandGuildId)
       : Routes.applicationCommands(readyClient.user.id);
     await rest.put(route, { body: slashCommands });
-    console.log('Registered /purelua and /pureluau slash commands.');
+    console.log('Registered /purelua slash command.');
   } catch (error) {
     console.error('Slash-command registration failed:', error.message);
   }
@@ -2670,7 +2668,7 @@ client.once(Events.ClientReady, async (readyClient) => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
-  if (interaction.commandName === 'purelua' || interaction.commandName === 'pureluau') {
+  if (interaction.commandName === 'purelua') {
     await handlePureLuauCommand(interaction);
   }
 });

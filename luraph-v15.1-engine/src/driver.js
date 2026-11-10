@@ -152,9 +152,13 @@ async function run(job) {
   // Persist every captured dynamic chunk, even if the VM errors before proto
   // capture. These files are the evidence needed to inspect early child-chunk
   // failures such as [string "Luraph"]:1.
-  const chunkPaths = Object.entries(rawChunks).map(([k, src]) =>
-    job.write(job.path(`.chunk_${k}.luau`), src, 'latin1')
-  );
+  const chunkPaths = Object.entries(rawChunks).map(([k, src]) => {
+    // Keep the original program semantics, but split the minified 200 KB+
+    // child chunk at AST statement boundaries. A runtime exception will then
+    // identify its failing statement instead of reporting only [string "Luraph"]:1.
+    const readable = vmmap.formatStatements(src, job.outdir, k);
+    return job.write(job.path(`.chunk_${k}.luau`), readable, 'latin1');
+  });
 
   const dpath = job.path('.devirt.luau');
   if (protosJson) {

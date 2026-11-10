@@ -51,7 +51,7 @@ const prefixedProbe = stripPreamble([
   'local connection2 = workspace.ChildAdded:Connect(function(child) end)',
   'connection2:Disconnect()',
   'warn("JNKIE: Environment compatibility check failed (PC-R01).")',
-].join('\\n'));
+].join('\n'));
 assert.ok(!prefixedProbe.includes('Path2D2:'));
 assert.ok(prefixedProbe.startsWith('local Folder'));
 const postPreambleProbe = inspectLiftText(prefixedProbe);

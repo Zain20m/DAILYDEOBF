@@ -964,7 +964,8 @@ async function sendAnalysisOutput(message, input, config) {
       'The runtime trace hit an explicit environment compatibility failure (PC-R01) before payload recovery.'
     );
     validation.categories.behavioralConsistency = { status: 'failed_before_payload' };
-    if (!validation.details.length && traceValidation && traceValidation.details) {
+    if ((!validation.details || !validation.details.length) &&
+        traceValidation && Array.isArray(traceValidation.details)) {
       validation.details = traceValidation.details.slice(0, 8);
     }
   }

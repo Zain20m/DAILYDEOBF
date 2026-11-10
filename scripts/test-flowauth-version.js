@@ -14,11 +14,12 @@ test('routes explicit FlowAuth Luraph banners to the exact supported version', (
   }
 });
 
-test('does not partially match unsupported Luraph minor versions', () => {
-  for (const version of ['14.10', '15.2', '15.10']) {
+test('rejects explicit unsupported Luraph versions instead of defaulting to v15.1', () => {
+  for (const version of ['14.10', '14.10.1', '15.2', '15.10']) {
     const result = detectFlowAuthLuraphVersion('-- This file was protected using Luraph Obfuscator v' + version);
-    assert.equal(result.explicit, false, version);
-    assert.equal(result.version, '15.1', version);
+    assert.equal(result.explicit, true, version);
+    assert.equal(result.unsupported, true, version);
+    assert.equal(result.version, version, version);
   }
 });
 

@@ -149,6 +149,13 @@ async function run(job) {
 
   if (strings) job.write(job.path('.strings.txt'), strings);
 
+  // Persist every captured dynamic chunk, even if the VM errors before proto
+  // capture. These files are the evidence needed to inspect early child-chunk
+  // failures such as [string "Luraph"]:1.
+  const chunkPaths = Object.entries(rawChunks).map(([k, src]) =>
+    job.write(job.path(`.chunk_${k}.luau`), src, 'latin1')
+  );
+
   const dpath = job.path('.devirt.luau');
   if (protosJson) {
     const ppath = job.path('.protos.json');
@@ -157,10 +164,6 @@ async function run(job) {
     } else {
       job.write(ppath, protosJson);
       if (devirtOn) {
-        const chunkPaths = Object.entries(rawChunks).map(([k, src]) =>
-          job.write(job.path(`.chunk_${k}.luau`), src, 'latin1')
-        );
-
         const cfgData = {
           input: job.input,
           source: job.source,

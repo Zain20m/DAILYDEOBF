@@ -951,6 +951,23 @@ async function sendAnalysisOutput(message, input, config) {
     ? preservedTracePath
     : (!hasLiftedSource ? defaultTracePath : null);
   const traceBytes = preferredTracePath ? await fileSize(preferredTracePath) : 0;
+  const traceValidation = traceBytes > 0
+    ? inspectLiftText(await fs.readFile(preferredTracePath, 'utf8'))
+    : null;
+  const environmentProbeOnly = Boolean(
+    validation.metrics.environmentProbeOnly ||
+    (!validation.candidate && traceValidation && traceValidation.metrics.environmentProbeOnly)
+  );
+  if (environmentProbeOnly && !environmentProbeOnly) {
+    environmentProbeOnly = true;
+    validation.issues.push(
+      'The runtime trace hit an explicit environment compatibility failure (PC-R01) before payload recovery.'
+    );
+    validation.categories.behavioralConsistency = { status: 'failed_before_payload' };
+    if (!validation.details.length && traceValidation && traceValidation.details) {
+      validation.details = traceValidation.details.slice(0, 8);
+    }
+  }
   const protoBytes = await fileSize(protoPath);
   const stringBytes = await fileSize(stringsPath);
   const directoryEntries = await fs.readdir(outputDir);
@@ -990,7 +1007,7 @@ async function sendAnalysisOutput(message, input, config) {
   const unliftedBlocks = liftStats ? Number(liftStats[2].replaceAll(',', '')) : null;
   const unstructuredJumps = liftStats ? Number(liftStats[3].replaceAll(',', '')) : null;
 
-  const resultLabel = validation.metrics.environmentProbeOnly
+  const resultLabel = environmentProbeOnly
     ? 'ENVIRONMENT CHECK FAILED · PAYLOAD NOT REACHED'
     : (hasLiftedSource
       ? 'FULL VM LIFT VERIFIED'
@@ -1038,7 +1055,7 @@ async function sendAnalysisOutput(message, input, config) {
       : ['No additional diagnostics from the comparison engine.']),
     '',
     'Important:',
-    validation.metrics.environmentProbeOnly
+    environmentProbeOnly
       ? 'The runtime reached an explicit environment compatibility failure (PC-R01) after executing scheduler, Path2D, instance and event probes. The payload was not reached in this run. The attached candidate is diagnostic probe output, not recovered source.'
       : (hasLiftedSource
         ? 'The Luau source candidate passed structural checks and the Luau AST syntax parser. This verifies output integrity, not perfect equivalence to the original source.'
@@ -1064,7 +1081,7 @@ async function sendAnalysisOutput(message, input, config) {
     const candidateName = hasLiftedSource
       ? 'deobfuscated.luau'
       : (hasLiftCandidate
-        ? (validation.metrics.environmentProbeOnly ? 'environment_probe_partial.luau' : 'partial_result.luau')
+        ? (environmentProbeOnly ? 'environment_probe_partial.luau' : 'partial_result.luau')
         : 'runtime_trace.luau');
     attachments.push(new AttachmentBuilder(await fs.readFile(candidatePath), { name: candidateName }));
   }
@@ -1072,7 +1089,7 @@ async function sendAnalysisOutput(message, input, config) {
 
   const safeName = String(input.filename || 'script.lua').replaceAll(String.fromCharCode(96), '');
   let summary;
-  if (validation.metrics.environmentProbeOnly) {
+  if (environmentProbeOnly) {
     summary = '**DAILY DEOBF · ' + config.label + '**\\n⚠️ Environment compatibility check failed (PC-R01) before payload execution.\\nThis is probe output, not deobfuscated source.\\nAttached: environment_probe_partial.luau and analysis-report.txt.';
   } else if (hasLiftedSource) {
     summary = '**DAILY DEOBF · ' + config.label + '**\n✅ Luau candidate passed structural checks and syntax validation.\nProcessed: ' + safeName +

@@ -6,7 +6,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node scripts/setup-engines.js && node index.js",
-    "check": "node --check index.js && node --check luraph-v15.1-engine/deob.js && node --check luraph-v15.1-engine/src/driver.js && node --check scripts/luau-cleaner.js && node --check scripts/lift-validation.js && node --check scripts/test-lift-validation.js && node --check scripts/setup-engines.js && node scripts/test-lift-validation.js && node --check scripts/idx-resolver.js && node --check pureluau.js && node --check scripts/test-pureluau.js && node --test scripts/test-pureluau.js scripts/test-idx-resolver.js",
+    "check": "node --check index.js && node --check luraph-v15.1-engine/deob.js && node --check luraph-v15.1-engine/src/driver.js && node --check scripts/luau-cleaner.js && node --check scripts/lift-validation.js && node --check scripts/test-lift-validation.js && node --check scripts/setup-engines.js && node scripts/test-lift-validation.js && node luraph-v15.1-engine/test/run.js && node --check scripts/idx-resolver.js && node --check pureluau.js && node --check scripts/test-pureluau.js && node --test scripts/test-pureluau.js scripts/test-idx-resolver.js",
     "test": "node --test scripts/test-pureluau.js scripts/test-idx-resolver.js"
   },
   "engines": {

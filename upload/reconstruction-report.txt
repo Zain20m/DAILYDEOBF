@@ -1,0 +1,80 @@
+DAILY DEOBF · FULL-FILE RECONSTRUCTION REPORT
+Input: upload/message - 2026-11-10T202216.560.txt
+Analysis coverage: complete file, lines 1–4419
+
+VERDICT
+A faithful full reconstruction is not possible from this artifact alone. It is already a partial devirtualization, not the original protected file or a complete VM trace. The generated code exposes useful parts of the runtime and a Roblox API probe, but the functions that create/decrypt the missing payload and prototype constants are absent or failed during lifting.
+
+WHOLE-FILE COUNTS
+- 4,419 lines
+- 129,152 characters
+- 32 local function declarations: 27 payload_fn_* functions, 3 runtime placeholders, and 2 functions named fn
+- 3 runtime stubs that throw "Luraph runtime function, not devirtualized"
+- 8 "symbolic value store into proto array" failures
+- 125 literal "if nil then" branches
+- 1,120 bit32 member operations
+- 298 buffer member operations
+- 11 distinct upvalue placeholder names (upv1 through upv11)
+- No literal references to game, workspace, Players, RunService, or other standard service roots were found in this file.
+- The recovered code does reference Instance, Random, CFrame, Vector2, Vector3, UDim, UDim2, Enum, buffer, utf8, coroutines, and Roblox signal/property APIs.
+
+WHAT THE FILE APPEARS TO BE
+The strongest visible payload is a Roblox/Luau runtime compatibility and behavior probe, not a gameplay script:
+- payload_fn_13 exercises standard Lua/Luau globals, bit32, buffer, Random, CFrame, Vector3, Vector2, UDim, UDim2, Enum, UTF-8 normalization/graphemes, and Path2D-related objects.
+- The final top-level chunk receives varargs and treats the first value as an Instance. It checks type/typeof, Parent, Name, ClassName, tostring, AttributeChanged, Changed, Connect, Disconnect, Connected, Wait, coroutine suspension/closure, and the locked Instance metatable.
+- No game services, remote events, GUI creation, gameplay systems, or player logic are visible in the recovered text. This is evidence about this artifact only, not proof that the original protected input contained no other hidden modules.
+
+VERIFIED FUNCTION RECONSTRUCTION
+- payload_fn_2: increments a 1-based cursor and appends value % 256 to a byte table.
+- payload_fn_3: appends a requested count of least-significant bytes from an integer, least-significant byte first.
+- payload_fn_4: initializes a 256-entry byte permutation and performs RC4-like key scheduling/stream generation. The body later reaches a symbolic proto-array failure at line 392, so its complete output/state contract is unknown.
+- payload_fn_5: obtains a buffer from luraph_runtime1, applies a permutation-based XOR stream transform to a portion of it, copies transformed bytes back at offset 100, and returns the buffer. Exact key/setup behavior is blocked by the missing runtime function and upvalue state.
+- payload_fn_6: contains a large arithmetic/bitwise routine and ends in an unbounded increment loop. No direct call site by its generated name appears in the recovered text; its actual reachability through missing closure/prototype tables is unknown.
+- payload_fn_8: uses temporary table entries and nil-key handling to test/lookup values. It cannot be renamed safely without the upvalue table's identity and intended contract.
+- payload_fn_9: exercises table type and metatable operations, including setmetatable/getmetatable inside a protected call.
+- payload_fn_10: performs FNV-1a-style 32-bit hashing over a caller-specified byte prefix, followed by XOR with 178550505. The original byte count comes from a captured upvalue that is missing in this listing.
+- payload_fn_11: iterates a table and clears corresponding keys in another table through an upvalue helper; complete cleanup semantics are not known.
+- payload_fn_12: a state-machine wrapper around setfenv and debug/environment callbacks. The callback/upvalue contracts are missing.
+- payload_fn_13: a large API compatibility probe; API calls and constructor/method families are visible.
+- payload_fn_14 through payload_fn_22: mutate captured state, update linear-congruential-style state values, and/or yield/resume coroutines. The shared upvalue roles are unavailable, so exact names and scheduling semantics cannot be established.
+- payload_fn_23: wraps xpcall and validates arguments passed to its error handler. It is not safe to replace with a generic pcall wrapper because the validation side effects are part of the visible behavior.
+- payload_fn_28: assigns child.Parent = parent.
+- payload_fn_29 and payload_fn_31: parse colon-delimited numeric fields from error/trace-like strings and validate extracted positions. Their source string format is only partially visible.
+- payload_fn_33: decodes variable-length numeric fields and a table/buffer payload. It reaches several unresolved prototype stores and calls missing luraph_runtime3.
+- payload_fn_34: installs a lazy __index decoder backed by buffer data and bit32 transforms. At 1,681 lines, it is the largest function. Its type-dispatch/prototype constants are not fully recovered, so converting it into typed Luau constants would require inventing missing values.
+- Final top-level chunk: performs an Instance and RBXScriptSignal contract check, but delegates comparisons and failure reporting to missing callback upvalues.
+
+RUNTIME PLACEHOLDERS AND CALL SITES
+- luraph_runtime1 is called at lines 420, 571, and 1327 (the latter appears in payload_fn_5).
+- luraph_runtime2 is called at line 1834.
+- luraph_runtime3 is called at lines 2460, 2586, 2812, and 3676.
+The placeholder comments say these are VM functions created by LPH_ENCFUNC and not lifted. The key, encrypted buffer, return type, and captured closure environment are not available. Recreating them from call sites would be guesswork.
+
+UNRESOLVED PROTOTYPE STORES
+The eight failures are at lines 392, 2482, 2495, 2519, 2608, 2621, 2626, and 4369.
+They occur in:
+- the byte/stream transform path in payload_fn_4,
+- the binary constant/prototype decoder in payload_fn_33,
+- and the final coroutine/Instance check.
+The recovered text does not contain the symbolic values being stored, so the destination slot and subsequent dataflow cannot be restored exactly from this file.
+
+DEAD-BRANCH NOTE
+The 125 occurrences of "if nil then" have a literal-false condition in Luau. Their then-bodies are unreachable wherever those statements are actually reached; associated else branches are the reachable paths. However, blindly deleting every branch by text replacement is unsafe because nested branches, else-if structures, and the additional expressions involving nil must be parsed and simplified as syntax trees. The partial reconstruction avoids carrying those generated branches forward.
+
+PARTIAL RECONSTRUCTION FILE
+reconstruction_partial.luau contains only:
+- exact byte append and little-endian integer-byte helpers,
+- the recovered FNV-1a-style hash helper with its unresolved byte count made explicit,
+- the one-line Parent assignment,
+- a readable grouped version of the visible Roblox API surface probe,
+- an assertion-based expression of the final Instance/signal checks.
+
+BEHAVIOR DIFFERENCES IN THAT FILE
+- The API probe isolates groups with pcall so one missing API does not stop later groups. The original function's exact error/report behavior is governed by missing upvalues.
+- The Instance helper uses assert and explicit arguments instead of the original comparison, method-validation, and failure callbacks.
+- Path2D/Path2DControlPoint constructor identities and object provenance are not guessed; their method family is reported but omitted from the executable probe.
+- The file does not reproduce the missing decryption, proto construction, Luraph VM dispatch, runtime closure creation, or error-reporting machinery.
+- It is therefore a verified partial analysis/reconstruction aid, not a behaviorally equivalent replacement for the original program.
+
+WHAT IS REQUIRED FOR FULL RECOVERY
+The original protected input, complete LPH_ENCFUNC runtime implementations, or a full execution trace that captures the three runtime closures and their decoded prototype/constant arrays is required. Another formatting/renaming pass cannot recover data that is absent from this partial listing.

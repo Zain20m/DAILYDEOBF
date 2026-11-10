@@ -3229,8 +3229,21 @@ E.loadstring = function(src, chunkname)
         if isP(src) then
                 return exprP("loadstring(" .. tok(src) .. ")", "function")
         end
+        local sourceType = R.type(src)
+        if sourceType ~= "string" then
+                -- Keep the original loadstring type error, but record the bad
+                -- argument before it happens; never run #src or string.sub on it.
+                comment("loadstring() received non-string source (type " .. sourceType
+                        .. ", chunkname " .. fmt(chunkname) .. ")")
+                local f, err = R.loadstring(src, chunkname)
+                if not f then return nil, err end
+                R.setfenv(f, ENV)
+                return f
+        end
+        local sourceLength = #src
+        local captureNamedLuraph = chunkname == "Luraph"
         local patched = nil
-        if R.type(src) == "string" and #src >= PROTO.chunk_min then
+        if sourceLength >= PROTO.chunk_min or captureNamedLuraph then
                 local key = srcKey(src)
                 patched = __CHUNKS and __CHUNKS[key]
                 if not patched and not NEWCHUNKS[key] then
@@ -3251,10 +3264,11 @@ E.loadstring = function(src, chunkname)
         local f, err = R.loadstring(patched or src, chunkname)
         if not f then return nil, err end
         R.setfenv(f, ENV)
-        if R.type(src) == "string" and #src > 0 and #src <= 65536 then
+        if sourceLength > 0 and sourceLength <= 65536 then
                 CHAIN.__LSRC[f] = src
         end
-        comment("loadstring() of " .. #src .. " bytes: " .. quote(R.sub(src, 1, 200)))
+        comment("loadstring(" .. fmt(chunkname) .. ") of " .. sourceLength
+                .. " bytes: " .. quote(R.sub(src, 1, 200)))
         return f
 end
 E.require = function(m)

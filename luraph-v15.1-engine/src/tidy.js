@@ -98,7 +98,11 @@ function stripAnnotations(text) {
 
 function tidy(text, options = {}) {
   let res = stripMarkers(text);
-  res = stripAnnotations(res);
+  // Compatibility-failure traces are forensic artifacts: retain condition,
+  // environment-call, loadstring, and envlog comments instead of normal cleanup.
+  if (options.preserveDiagnostics !== true) {
+    res = stripAnnotations(res);
+  }
   if (options.preamble !== false) {
     res = stripPreamble(res);
   }

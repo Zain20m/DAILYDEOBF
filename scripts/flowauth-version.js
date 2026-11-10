@@ -2,9 +2,14 @@
 
 function detectFlowAuthLuraphVersion(source) {
   const text = String(source || '');
-  const banner = text.match(/Luraph(?:\s+Obfuscator)?\s+v?(14\.7|14\.8|14\.9|15\.1|15)(?![\d.])/i);
+  const banner = text.match(/Luraph(?:\s+Obfuscator)?\s+v?(\d+(?:\.\d+)*)/i);
   if (banner) {
-    return { version: banner[1], detectedBy: 'Luraph version banner', explicit: true };
+    const version = banner[1];
+    const supported = new Set(['14.7', '14.8', '14.9', '15', '15.1']);
+    if (!supported.has(version)) {
+      return { version, detectedBy: 'unsupported Luraph version banner', explicit: true, unsupported: true };
+    }
+    return { version, detectedBy: 'Luraph version banner', explicit: true, unsupported: false };
   }
 
   // FlowAuth's documented macro families identify the pinned Luraph version

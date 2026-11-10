@@ -1427,6 +1427,12 @@ function convertToPureLuau(source) {
   const readableConverted = readabilityFormat.source;
 
   const notes = [];
+  if (partialRecovery.isLuraphPartial) {
+    notes.push('-- PARTIAL LURAPH RECOVERY: generated recovery placeholders remain in this input.');
+    notes.push('-- PureLuau can clean the recovered text, but cannot recreate missing VM functions or symbolic values.');
+    notes.push('-- Unresolved markers: ' + partialRecovery.runtimeStubs + ' runtime stub(s), ' +
+      partialRecovery.symbolicLiftFailures + ' symbolic lifting failure(s).');
+  }
   if (unsupportedNames.length) {
     notes.push('-- Executor-only dependencies preserved for manual Roblox redesign: ' + unsupportedNames.join(', '));
     notes.push('-- These calls were NOT deleted or falsely mapped to Roblox APIs.');
@@ -1440,6 +1446,7 @@ function convertToPureLuau(source) {
   const bracketCheck = checkBalancedDelimiters(tokenize(readableConverted).tokens);
   return {
     output,
+    partialRecovery,
     identifiersRenamed: renameMap.size + scopedSemanticRenames.summaries.length + readabilitySemanticRenames.summaries.length,
     renamedIdentifiers: [
       ...[...renameMap.entries()].map(([from, to]) => from + ' -> ' + to),

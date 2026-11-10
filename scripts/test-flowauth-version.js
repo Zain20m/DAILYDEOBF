@@ -8,7 +8,7 @@ test('routes explicit FlowAuth Luraph banners to the exact supported version', (
   for (const version of ['14.7', '14.8', '14.9', '15', '15.1']) {
     assert.deepEqual(
       detectFlowAuthLuraphVersion('-- This file was protected using Luraph Obfuscator v' + version),
-      { version, detectedBy: 'Luraph version banner', explicit: true },
+      { version, detectedBy: 'Luraph version banner', explicit: true, unsupported: false },
       'version ' + version
     );
   }

@@ -1078,20 +1078,50 @@ async function sendAnalysisOutput(message, input, config) {
     : (traceBytes ? preferredTracePath : defaultTracePath);
   if (await fileSize(candidatePath) > 0) await prependDailyDeobfHeader(candidatePath);
   const candidateBytes = await fileSize(candidatePath);
+  let attachedCandidateName = null;
   if (candidateBytes > 0 && candidateBytes <= MAX_OUTPUT_BYTES) {
-    const candidateName = hasLiftedSource
+    attachedCandidateName = hasLiftedSource
       ? 'deobfuscated.luau'
       : (environmentProbeOnly
         ? 'environment_probe_partial.txt'
         : (hasLiftCandidate ? 'partial_result.luau' : 'runtime_trace.luau'));
-    attachments.push(new AttachmentBuilder(await fs.readFile(candidatePath), { name: candidateName }));
+    attachments.push(new AttachmentBuilder(await fs.readFile(candidatePath), { name: attachedCandidateName }));
   }
+
+  // The report is part of the result, not merely a file written and left behind.
+  // Keep a total attachment budget so diagnostic chunks cannot crowd out the trace.
+  let attachmentBytes = candidateBytes > 0 ? candidateBytes : 0;
+  const reportBytes = await fileSize(reportPath);
+  if (reportBytes > 0 && attachmentBytes + reportBytes <= MAX_OUTPUT_BYTES) {
+    attachments.push(new AttachmentBuilder(reportPath, { name: 'analysis-report.txt' }));
+    attachmentBytes += reportBytes;
+  }
+
+  // Attach the largest captured dynamic chunks first. The short/small Luraph
+  // child chunk is now captured too; larger nested chunks are often the useful
+  // context when the VM fails before it can write a prototype dump.
+  const chunkCandidates = [];
+  for (const name of chunkFiles) {
+    const chunkPath = path.join(outputDir, name);
+    const bytes = await fileSize(chunkPath);
+    if (bytes > 0 && bytes <= MAX_OUTPUT_BYTES) chunkCandidates.push({ name, path: chunkPath, bytes });
+  }
+  chunkCandidates.sort((a, b) => b.bytes - a.bytes);
+  let attachedChunkCount = 0;
+  for (const chunk of chunkCandidates) {
+    if (attachedChunkCount >= 8) break;
+    if (attachmentBytes + chunk.bytes > MAX_OUTPUT_BYTES) continue;
+    attachments.push(new AttachmentBuilder(chunk.path, { name: chunk.name }));
+    attachmentBytes += chunk.bytes;
+    attachedChunkCount++;
+  }
+
   if (!attachments.length) throw new Error('The engine did not produce a Luau output file.');
 
   const safeName = String(input.filename || 'script.lua').replaceAll(String.fromCharCode(96), '');
   let summary;
   if (environmentProbeOnly) {
-    summary = '**DAILY DEOBF · ' + config.label + '**\n⚠️ Environment compatibility check failed (PC-R01) before payload execution.\nThis is probe output, not deobfuscated source.\nAttached: environment_probe_partial.luau and analysis-report.txt.';
+    summary = '**DAILY DEOBF · ' + config.label + '**\n⚠️ Environment compatibility check failed (PC-R01) before payload execution.\nThis is probe output, not deobfuscated source.\nAttached: environment_probe_partial.txt and analysis-report.txt.';
   } else if (hasLiftedSource) {
     summary = '**DAILY DEOBF · ' + config.label + '**\n✅ Luau candidate passed structural checks and syntax validation.\nProcessed: ' + safeName +
       '\nFunctions lifted: ' + (liftedFunctions === null ? 'see report' : liftedFunctions) +
@@ -1103,7 +1133,8 @@ async function sendAnalysisOutput(message, input, config) {
       '\nAttached: partial_result.luau';
   } else {
     summary = '**DAILY DEOBF · ' + config.label + '**\n⚠️ Trace-only result. The full VM lift did not complete.\nProcessed: ' + safeName +
-      '\nAttached: runtime_trace.luau (trace only, not reconstructed source).';
+      '\nAttached: runtime_trace.luau (trace only, not reconstructed source), analysis-report.txt, and ' +
+      attachedChunkCount + ' dynamic VM chunk(s).';
   }
 
   await message.reply({

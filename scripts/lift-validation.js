@@ -80,6 +80,7 @@ function collectDetails(source, code, withoutComments, maxPerKind = 4) {
     ['nil bit32 input', code, /\bbit32\.\w+\s*\(\s*nil\s*(?:,|\))/gi],
     ['nil comparison', code, /\bnil\s*(?:==|~=|<=|>=|<|>)\s*-?\d|\d\s*(?:==|~=|<=|>=|<|>)\s*nil\b/g],
     ['runtime placeholder', withoutComments, /\blocal\s+function\s+(luraph_runtime\d+)\s*\(/g],
+    ['environment compatibility failure', withoutComments, /Environment compatibility check failed[^\r\n]*/gi],
   ];
   for (const [label, input, pattern] of patterns) {
     for (const match of input.matchAll(pattern)) add(label, match);
@@ -94,6 +95,21 @@ function inspectLiftText(source) {
   const nonCommentLines = withoutComments.split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean).length;
+
+  // Syntactically valid VM output can still be only an environment self-test.
+  // Require both an explicit compatibility failure and multiple independent
+  // probe signatures before classifying it as probe-only.
+  const probeSignals = [
+    countMatches(withoutComments, /\btask\.(?:spawn|defer|delay)\s*\(/g) >= 2,
+    countMatches(withoutComments, /\bPath2D\w*:(?:GetLength|GetPositionOnCurve|GetTangentOnCurve)(?:ArcLength)?\s*\(/g) >= 3,
+    countMatches(withoutComments, /\b[A-Za-z_]\w*\.ChildAdded\s*:\s*Connect\s*\(/g) >= 2,
+    countMatches(withoutComments, /\b[A-Za-z_]\w*:Disconnect\s*\(/g) >= 2,
+    countMatches(withoutComments, /\b(?:ScreenGui|Frame|Folder)\w*\s*=\s*Instance\.new\s*\(/g) >= 2,
+  ].filter(Boolean).length;
+  const explicitCompatibilityFailure =
+    /environment compatibility check failed/i.test(withoutComments) &&
+    /\b(?:PC-R01|JNKIE)\b/i.test(withoutComments);
+  const environmentProbeOnly = explicitCompatibilityFailure && probeSignals >= 2;
 
   const runtimeNames = new Set(
     [...code.matchAll(/\blocal\s+function\s+(luraph_runtime\d+)\s*\(/g)].map((match) => match[1])
@@ -118,10 +134,16 @@ function inspectLiftText(source) {
     nilComparisons: countMatches(code, /\bnil\s*(?:==|~=|<=|>=|<|>)\s*-?\d|\d\s*(?:==|~=|<=|>=|<|>)\s*nil\b/g),
     runtimeStubDefinitions: countMatches(withoutComments, /error\s*\(\s*(['"])Luraph runtime function, not devirtualized\1\s*\)/g),
     unresolvedRuntimeCalls,
+    explicitCompatibilityFailure: explicitCompatibilityFailure ? 1 : 0,
+    environmentProbeSignals: probeSignals,
+    environmentProbeOnly,
   };
 
   const issues = [];
   if (!metrics.nonCommentLines) issues.push('No executable source statements were generated.');
+  if (metrics.environmentProbeOnly) {
+    issues.push('The runtime hit an explicit environment compatibility failure (PC-R01). This output is a compatibility-probe trace, not recovered payload logic.');
+  }
   if (metrics.devirtErrors) issues.push(metrics.devirtErrors + ' explicit devirtualization error stub(s) remain.');
   if (metrics.registerErrors) issues.push(metrics.registerErrors + ' invalid or encrypted register index error(s) remain.');
   if (metrics.controlFlowStubs) issues.push(metrics.controlFlowStubs + ' unresolved control-flow marker(s) remain.');
@@ -139,6 +161,7 @@ function inspectLiftText(source) {
 
   const complete = metrics.nonCommentLines > 0 && issues.length === 0;
   const penalty =
+    (metrics.environmentProbeOnly ? 30000 : 0) +
     metrics.devirtErrors * 5000 +
     metrics.registerErrors * 4000 +
     metrics.controlFlowStubs * 2500 +
@@ -176,7 +199,7 @@ function inspectLiftText(source) {
       status: metrics.controlFlowStubs ? 'incomplete' : 'not_proven',
       unresolved: metrics.controlFlowStubs,
     },
-    behavioralConsistency: { status: 'not_checked' },
+    behavioralConsistency: { status: environmentProbeOnly ? 'failed_before_payload' : 'not_checked' },
   };
   return { candidate: metrics.nonCommentLines > 0, complete, issues, metrics, categories, score, details };
 }

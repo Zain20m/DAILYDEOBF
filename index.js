@@ -1095,7 +1095,7 @@ async function processLuraphV14(message, prompt, input, version, gameId = null) 
   const inputPath = path.join(tempRoot, 'input.lua');
   const outputPath = path.join(tempRoot, 'deobfuscated.luau');
   const inputBytes = Buffer.byteLength(input.source, 'utf8');
-  const progress = createAnalysisProgress(prompt, input.filename, inputBytes, 'Luraph v' + version);
+  const progress = createAnalysisProgress(prompt, input.filename, inputBytes, 'Luraph v' + version, { maxTracePasses: 12 });
   const startedAt = Date.now();
 
   try {
@@ -1778,7 +1778,7 @@ async function processLuraph151(message, prompt, input, gameId = null) {
       components: [],
     });
   } catch (error) {
-    error.stdout = [dedicatedLogs, compatibilityLogs].filter(Boolean).join('\\n\\n');
+    error.stdout = [dedicatedLogs, compatibilityLogs].filter(Boolean).join('\n\n');
     error.stderr = error.stdout;
     await capturePartialArtifact(error, ["chosen.base + '.devirt.luau'","chosen.base + '.trace.luau'","chosen.base + '.luau'","dedicated.base + '.devirt.luau'","compatible.base + '.devirt.luau'"]);
     await progress.fail(error);
@@ -2917,8 +2917,7 @@ async function startWorkflow(message, inlineText = null) {
       try {
         await processFlowAuth(message, prompt, input);
       } catch (error) {
-        const messageText = String(error.message || error).slice(0, 1500);
-        await prompt.edit({ content: '❌ **FlowAuth analysis failed**\n' + messageText.replace(/`/g, "'"), components: [] }).catch(() => {});
+        await showDeobfFailure(message, prompt, 'FlowAuth analysis failed', error);
       }
       return;
     }
@@ -2929,11 +2928,7 @@ async function startWorkflow(message, inlineText = null) {
       try {
         await processLuraphV14(message, prompt, input, v14Match[1]);
       } catch (error) {
-        const messageText = String(error.message || error).slice(0, 1500);
-        await prompt.edit({
-          content: '**Luraph v' + v14Match[1] + ' failed**\n' + messageText.replace(/`/g, "'"),
-          components: [],
-        }).catch(() => {});
+        await showDeobfFailure(message, prompt, 'Luraph v' + v14Match[1] + ' failed', error);
       }
       return;
     }
@@ -2943,8 +2938,7 @@ async function startWorkflow(message, inlineText = null) {
       try {
         await processIronbrew1(message, prompt, input);
       } catch (error) {
-        const messageText = String(error.message || error).slice(0, 1500);
-        await prompt.edit({ content: '❌ **IronBrew 1 failed**\\n' + messageText, components: [] }).catch(() => {});
+        await showDeobfFailure(message, prompt, 'IronBrew 1 failed', error);
       }
       return;
     }
@@ -2954,8 +2948,7 @@ async function startWorkflow(message, inlineText = null) {
       try {
         await processCenturion(message, prompt, input);
       } catch (error) {
-        const messageText = String(error.message || error).slice(0, 1500);
-        await prompt.edit({ content: '❌ **Centurion failed**\n' + messageText, components: [] }).catch(() => {});
+        await showDeobfFailure(message, prompt, 'Centurion failed', error);
       }
       return;
     }
@@ -2965,8 +2958,7 @@ async function startWorkflow(message, inlineText = null) {
       try {
         await processLuraph151(message, prompt, input);
       } catch (error) {
-        const messageText = String(error.message || error).slice(0, 1500);
-        await prompt.edit({ content: `❌ **Luraph 15.1 failed**\\n${messageText.replace(/\\`/g, "'")}`, components: [] }).catch(() => {});
+        await showDeobfFailure(message, prompt, 'Luraph 15.1 failed', error);
       }
       return;
     }
@@ -2976,11 +2968,7 @@ async function startWorkflow(message, inlineText = null) {
       try {
         await processLuraphV15(message, prompt, input);
       } catch (error) {
-        const messageText = String(error.message || error).slice(0, 1500);
-        await prompt.edit({
-          content: `❌ **Deobfuscation failed**\n${messageText.replace(/\`/g, "'")}`,
-          components: [],
-        }).catch(() => {});
+        await showDeobfFailure(message, prompt, 'Luraph v15 failed', error);
       }
     }
   });

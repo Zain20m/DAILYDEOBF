@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const { inspectLiftText } = require('./lift-validation');
+const { stripPreamble } = require('../luraph-v15.1-engine/src/tidy');
 
 const clean = inspectLiftText([
   'local Players = game:GetService("Players")',
@@ -35,6 +36,27 @@ assert.equal(environmentProbe.complete, false);
 assert.equal(environmentProbe.metrics.environmentProbeOnly, true);
 assert.equal(environmentProbe.categories.behavioralConsistency.status, 'failed_before_payload');
 assert.ok(environmentProbe.issues.some((issue) => /compatibility failure.*not recovered payload logic/i.test(issue)));
+
+
+const prefixedProbe = stripPreamble([
+  'task.spawn(function(...) end)',
+  'local Path2D2 = Instance.new("Path2D")',
+  'Path2D2:GetTangentOnCurveArcLength(0.8)',
+  'local ScreenGui2 = Instance.new("ScreenGui")',
+  'ScreenGui2:Destroy()',
+  'local Folder = Instance.new("Folder")',
+  'local Folder2 = Instance.new("Folder", Folder)',
+  'local connection = game.ChildAdded:Connect(function(child) end)',
+  'connection:Disconnect()',
+  'local connection2 = workspace.ChildAdded:Connect(function(child) end)',
+  'connection2:Disconnect()',
+  'warn("JNKIE: Environment compatibility check failed (PC-R01).")',
+].join('\\n'));
+assert.ok(!prefixedProbe.includes('Path2D2:'));
+assert.ok(prefixedProbe.startsWith('local Folder'));
+const postPreambleProbe = inspectLiftText(prefixedProbe);
+assert.equal(postPreambleProbe.metrics.environmentProbeOnly, true);
+assert.equal(postPreambleProbe.complete, false);
 
 const literalNoise = inspectLiftText([
   'local message = "nil + 4 bit32.band(nil, 2) data[nil]"',

@@ -1,4 +1,8 @@
+import subprocess
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 from cli import detect_version
 
@@ -27,6 +31,21 @@ class LuraphV14DetectionTests(unittest.TestCase):
             detect_version("local init = (function(...)\nreturn({})"),
             "14.8",
         )
+
+    def test_ambiguous_cli_error_lists_all_supported_versions(self):
+        cli = Path(__file__).resolve().parent / "cli.py"
+        with tempfile.TemporaryDirectory(prefix="v14-detect-") as directory:
+            source = Path(directory) / "ambiguous.lua"
+            source.write_text("return({[1] = bit32.bxor})", encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(cli), str(source)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("v14.7, v14.8, or v14.9", result.stderr)
+        self.assertIn("--engine 14.9", result.stderr)
 
     def test_ambiguous_headerless_return_table_requires_explicit_engine(self):
         self.assertIsNone(detect_version("return({[1] = bit32.bxor})"))

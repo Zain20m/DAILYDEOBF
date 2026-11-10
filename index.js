@@ -52,7 +52,7 @@ const slashCommands = ['purelua', 'pureluau'].map((name) => new SlashCommandBuil
   .setDescription('Convert Lua/Luau source with the static PureLuau readability pass')
   .addAttachmentOption((option) => option
     .setName('file')
-    .setDescription('Upload a .lua, .luau, or .txt source file')
+    .setDescription('Upload a .lua, .luau, .purelua, or .txt source file')
     .setRequired(false))
   .addStringOption((option) => option
     .setName('source')
@@ -293,8 +293,8 @@ function decodeSource(bytes) {
 
 async function inputFromAttachment(attachment) {
   const filename = attachment.name || 'script.txt';
-  if (!/\.(lua|luau|txt)$/i.test(filename)) {
-    throw new Error('Upload a `.lua`, `.luau`, or `.txt` file.');
+  if (!/\.(lua|luau|purelua|txt)$/i.test(filename)) {
+    throw new Error('Upload a `.lua`, `.luau`, `.purelua`, or `.txt` file.');
   }
   // Discord CDN attachments are trusted HTTPS URLs; download them directly.
   const response = await fetch(attachment.url, {
@@ -323,7 +323,7 @@ async function inputFromUrlText(text) {
     throw new Error('Only HTTP and HTTPS URLs are supported.');
   }
   const result = await fetchPublicText(parsed.toString());
-  const filename = /\.(lua|luau|txt)$/i.test(path.extname(result.filename))
+  const filename = /\.(lua|luau|purelua|txt)$/i.test(path.extname(result.filename))
     ? result.filename
     : 'downloaded-script.lua';
   return { source: decodeSource(result.bytes), filename, url: parsed.toString() };
@@ -365,7 +365,7 @@ async function collectInput(message, prompt) {
       }
     });
     prompt.edit({
-      content: 'Send one `.lua`, `.luau`, or `.txt` file, or paste a direct script URL. Type `.cancel` to stop.',
+      content: 'Send one `.lua`, `.luau`, `.purelua`, or `.txt` file, or paste a direct script URL. Type `.cancel` to stop.',
     }).catch(() => {});
   });
 }
@@ -2612,7 +2612,7 @@ async function collectExecInput(message, prompt) {
           return;
         }
         const source = cleanLuauInput(reply.content);
-        if (!source) throw new Error('Send Luau source or attach a .lua/.luau/.txt file.');
+        if (!source) throw new Error('Send Luau source or attach a .lua/.luau/.purelua/.txt file.');
         resolve(source);
       } catch (error) {
         reject(error);
@@ -2627,7 +2627,7 @@ async function collectExecInput(message, prompt) {
     });
 
     prompt.edit({
-      content: 'Send Luau source as a message or attach a .lua, .luau, or .txt file. Type .cancel to stop.',
+      content: 'Send Luau source as a message or attach a .lua, .luau, .purelua, or .txt file. Type .cancel to stop.',
     }).catch(() => {});
   });
 }
@@ -2792,8 +2792,8 @@ async function handlePureLuauCommand(interaction) {
     let originalName = 'pasted-source.lua';
     if (attachment) {
       originalName = path.basename(String(attachment.name || 'uploaded.lua').replace(/\\/g, '/'));
-      if (!/\.(?:lua|luau|txt)$/i.test(originalName)) {
-        await interaction.editReply('Only .lua, .luau, or .txt files are supported.');
+      if (!/\.(?:lua|luau|purelua|txt)$/i.test(originalName)) {
+        await interaction.editReply('Only .lua, .luau, .purelua, or .txt files are supported.');
         return;
       }
       const response = await fetch(attachment.url, {
@@ -2902,7 +2902,7 @@ function helpText() {
 
 async function startWorkflow(message, inlineText = null) {
   const prompt = await message.reply({
-    content: '📄 **DAILY DEOBF**\nSend a `.lua`, `.luau`, or `.txt` file, or paste a direct URL to your Luau script.\n\nMaximum input size: 2 MB.',
+    content: '📄 **DAILY DEOBF**\nSend a `.lua`, `.luau`, `.purelua`, or `.txt` file, or paste a direct URL to your Luau script.\n\nMaximum input size: 2 MB.',
     allowedMentions: { repliedUser: false },
   });
   // Accept an attachment, a URL / HttpGet expression on the command,

@@ -990,9 +990,11 @@ async function sendAnalysisOutput(message, input, config) {
   const unliftedBlocks = liftStats ? Number(liftStats[2].replaceAll(',', '')) : null;
   const unstructuredJumps = liftStats ? Number(liftStats[3].replaceAll(',', '')) : null;
 
-  const resultLabel = hasLiftedSource
-    ? 'FULL VM LIFT VERIFIED'
-    : (hasLiftCandidate ? 'PARTIAL VM LIFT · VALIDATION FAILED' : 'BEHAVIOUR TRACE ONLY · VM LIFT NOT COMPLETED');
+  const resultLabel = validation.metrics.environmentProbeOnly
+    ? 'ENVIRONMENT CHECK FAILED · PAYLOAD NOT REACHED'
+    : (hasLiftedSource
+      ? 'FULL VM LIFT VERIFIED'
+      : (hasLiftCandidate ? 'PARTIAL VM LIFT · VALIDATION FAILED' : 'BEHAVIOUR TRACE ONLY · VM LIFT NOT COMPLETED'));
 
   const reportLines = [
     'DAILY DEOBF · ' + config.label + ' analysis report',
@@ -1036,11 +1038,13 @@ async function sendAnalysisOutput(message, input, config) {
       : ['No additional diagnostics from the comparison engine.']),
     '',
     'Important:',
-    hasLiftedSource
-      ? 'The Luau source candidate passed structural checks and the Luau AST syntax parser. This verifies output integrity, not perfect equivalence to the original source.'
-      : (hasLiftCandidate
-        ? 'The source candidate is incomplete and is attached only for inspection. Do not treat it as recovered source. The separate behaviour trace records observed runtime behaviour.'
-        : 'The attached trace records observed runtime behaviour. It is not the original source or a complete devirtualization.'),
+    validation.metrics.environmentProbeOnly
+      ? 'The runtime reached an explicit environment compatibility failure (PC-R01) after executing scheduler, Path2D, instance and event probes. The payload was not reached in this run. The attached candidate is diagnostic probe output, not recovered source.'
+      : (hasLiftedSource
+        ? 'The Luau source candidate passed structural checks and the Luau AST syntax parser. This verifies output integrity, not perfect equivalence to the original source.'
+        : (hasLiftCandidate
+          ? 'The source candidate is incomplete and is attached only for inspection. Do not treat it as recovered source. The separate behaviour trace records observed runtime behaviour.'
+          : 'The attached trace records observed runtime behaviour. It is not the original source or a complete devirtualization.')),
     '',
     'Engine diagnostics:',
     ...(notableLogs.length ? notableLogs : ['No additional engine warnings were reported.']),
@@ -1059,14 +1063,18 @@ async function sendAnalysisOutput(message, input, config) {
   if (candidateBytes > 0 && candidateBytes <= MAX_OUTPUT_BYTES) {
     const candidateName = hasLiftedSource
       ? 'deobfuscated.luau'
-      : (hasLiftCandidate ? 'partial_result.luau' : 'runtime_trace.luau');
+      : (hasLiftCandidate
+        ? (validation.metrics.environmentProbeOnly ? 'environment_probe_partial.luau' : 'partial_result.luau')
+        : 'runtime_trace.luau');
     attachments.push(new AttachmentBuilder(await fs.readFile(candidatePath), { name: candidateName }));
   }
   if (!attachments.length) throw new Error('The engine did not produce a Luau output file.');
 
   const safeName = String(input.filename || 'script.lua').replaceAll(String.fromCharCode(96), '');
   let summary;
-  if (hasLiftedSource) {
+  if (validation.metrics.environmentProbeOnly) {
+    summary = '**DAILY DEOBF · ' + config.label + '**\\n⚠️ Environment compatibility check failed (PC-R01) before payload execution.\\nThis is probe output, not deobfuscated source.\\nAttached: environment_probe_partial.luau and analysis-report.txt.';
+  } else if (hasLiftedSource) {
     summary = '**DAILY DEOBF · ' + config.label + '**\n✅ Luau candidate passed structural checks and syntax validation.\nProcessed: ' + safeName +
       '\nFunctions lifted: ' + (liftedFunctions === null ? 'see report' : liftedFunctions) +
       ' · Unlifted blocks: ' + (unliftedBlocks === null ? 'see report' : unliftedBlocks) +

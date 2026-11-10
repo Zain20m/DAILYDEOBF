@@ -1948,6 +1948,45 @@ async function collectGetInput(message, prompt) {
   });
 }
 
+
+function extractHttpSpyEntries(source, filename = 'input.lua') {
+  const text = String(source || '');
+  const patterns = [
+    [/\b(?:game\s*[:.]\s*)?HttpGetAsync\s*\(/gi, 'GET'],
+    [/\b(?:game\s*[:.]\s*)?HttpGet\s*\(/gi, 'GET'],
+    [/\b(?:HttpService\s*[:.]\s*)?GetAsync\s*\(/gi, 'GET'],
+    [/\b(?:HttpService\s*[:.]\s*)?PostAsync\s*\(/gi, 'POST'],
+    [/\b(?:HttpService\s*[:.]\s*)?RequestAsync\s*\(/gi, 'REQUEST'],
+    [/\b(?:syn\s*\.\s*request|http_request|http\s*\.\s*request|request)\s*\(/gi, 'REQUEST'],
+    [/\b(?:fetch|http_fetch)\s*\(/gi, 'FETCH'],
+  ];
+  const entries = [];
+  const seen = new Set();
+  for (const [re, method] of patterns) {
+    re.lastIndex = 0;
+    let match;
+    while ((match = re.exec(text))) {
+      const start = match.index;
+      const callText = text.slice(start, Math.min(text.length, start + 1200)).split(/[\n;]/, 1)[0];
+      const literal = callText.match(/["'](https?:\/\/[^"'\s]+)["']/i);
+      const url = literal ? literal[1] : '<dynamic URL>';
+      const line = text.slice(0, start).split('\n').length;
+      const key = [filename, line, method, url].join('|');
+      if (!seen.has(key)) { seen.add(key); entries.push({ filename, line, method, url }); }
+    }
+  }
+  return entries;
+}
+
+function redactSpyUrl(raw) {
+  try {
+    const url = new URL(raw);
+    url.username = ''; url.password = ''; url.hash = '';
+    url.search = url.search ? '?[query redacted]' : '';
+    return url.toString();
+  } catch { return String(raw || '<dynamic URL>').slice(0, 500); }
+}
+
 async function startGetWorkflow(message, inlineSource = null) {
   const prompt = await message.reply({
     content: inlineSource
@@ -2125,6 +2164,18 @@ async function startGetWorkflow(message, inlineSource = null) {
     ' | ' + String(failure.message || 'Unknown error').replace(/[\r\n]+/g, ' ').slice(0, 700)
   );
 
+  const httpSpyEntries = extractHttpSpyEntries(input.source, input.filename || 'input.lua');
+  for (const capture of resolution.captures) {
+    if (capture.source) httpSpyEntries.push(...extractHttpSpyEntries(capture.source, capture.name));
+  }
+  const uniqueSpyEntries = [...new Map(httpSpyEntries.map((entry) =>
+    [[entry.filename, entry.line, entry.method, entry.url].join('|'), entry]
+  )).values()];
+  const httpSpyLines = uniqueSpyEntries.map((entry, index) =>
+    String(index + 1).padStart(3, '0') + '. ' + entry.filename +
+    ':' + entry.line + ' | ' + entry.method + ' | ' + redactSpyUrl(entry.url)
+  );
+
   const reportLines = [
     'DAILY DEOBF · .get COMPLETE STATIC DISCOVERY REPORT',
     'Input: ' + String(input.filename || 'get-input.lua'),
@@ -2150,6 +2201,11 @@ async function startGetWorkflow(message, inlineSource = null) {
       ', max discovered URLs=' + resolution.maxUrls +
       ', max attempts=' + resolution.maxAttempts +
       ', max depth=' + resolution.maxDepth,
+    '',
+    'HTTP SPY · STATIC CALL SITES',
+    'Calls found: ' + uniqueSpyEntries.length,
+    ...(httpSpyLines.length ? httpSpyLines : ['No recognizable HTTP call sites found.']),
+    'Static mode does not execute the script; dynamic URLs are shown as <dynamic URL>.',
     '',
     'DISCOVERED URLS (including queued and failed URLs)',
     ...(discoveryLines.length ? discoveryLines : ['None.']),

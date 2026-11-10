@@ -1317,11 +1317,11 @@ function formatReadableSource(source) {
 }
 
 function inspectPartialRecovery(source) {
-  const runtimeStubMatches = source.match(/error\s*\\(\s*["']Luraph runtime function, not devirtualized["']\s*\\)/g) || [];
+  const runtimeStubMatches = source.match(/error\s*\(\s*["']Luraph runtime function, not devirtualized["']\s*\)/g) || [];
   const symbolicFailureMatches = source.match(/devirt:\s*symbolic value store into proto array/gi) || [];
-  const payloadFunctionMatches = source.match(/\bfunction\s+payload_fn_\\d+\s*\\(/g) || [];
-  const placeholderReferenceMatches = source.match(/\bupv\\d+\b/g) || [];
-  const isLuraphPartial = /Luraph runtime function.*not lifted|devirt:\s*symbolic value store into proto array|\bpayload_fn_\\d+\b/i.test(source);
+  const payloadFunctionMatches = source.match(/\bfunction\s+payload_fn_\d+\s*\(/g) || [];
+  const placeholderReferenceMatches = source.match(/\bupv\d+\b/g) || [];
+  const isLuraphPartial = /Luraph runtime function.*not lifted|devirt:\s*symbolic value store into proto array|\bpayload_fn_\d+\b/i.test(source);
   return {
     isLuraphPartial,
     runtimeStubs: runtimeStubMatches.length,

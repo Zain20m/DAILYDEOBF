@@ -1316,6 +1316,21 @@ function formatReadableSource(source) {
   };
 }
 
+function inspectPartialRecovery(source) {
+  const runtimeStubMatches = source.match(/error\\s*\\(\\s*["']Luraph runtime function, not devirtualized["']\\s*\\)/g) || [];
+  const symbolicFailureMatches = source.match(/devirt:\\s*symbolic value store into proto array/gi) || [];
+  const payloadFunctionMatches = source.match(/\\bfunction\\s+payload_fn_\\d+\\s*\\(/g) || [];
+  const placeholderReferenceMatches = source.match(/\\bupv\\d+\\b/g) || [];
+  const isLuraphPartial = /Luraph runtime function.*not lifted|devirt:\\s*symbolic value store into proto array|\\bpayload_fn_\\d+\\b/i.test(source);
+  return {
+    isLuraphPartial,
+    runtimeStubs: runtimeStubMatches.length,
+    symbolicLiftFailures: symbolicFailureMatches.length,
+    generatedPayloadFunctions: payloadFunctionMatches.length,
+    unresolvedUpvalueReferences: new Set(placeholderReferenceMatches).size
+  };
+}
+
 function convertToPureLuau(source) {
   if (typeof source !== 'string' || !source.trim()) throw new Error('The source file is empty.');
   const originalLineCount = source.split(/\r\n|\r|\n/).length;
@@ -1616,4 +1631,4 @@ function scanSourceFeatures(source, tokens) {
   };
 }
 
-module.exports = { convertToPureLuau };
+module.exports = { convertToPureLuau, inspectPartialRecovery };

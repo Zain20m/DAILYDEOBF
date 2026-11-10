@@ -417,10 +417,11 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
   }
 
   function advance(nextPhase, nextDetail, activityText, metric = null) {
+    const phaseChanged = Boolean(nextPhase && nextPhase !== phase);
     if (nextPhase) phase = nextPhase;
     if (nextDetail) detail = nextDetail;
     if (metric) phaseMetric = metric;
-    else if (nextPhase && nextPhase !== phase) phaseMetric = null;
+    else if (phaseChanged) phaseMetric = null;
     if (activityText) recordActivity(activityText);
   }
 

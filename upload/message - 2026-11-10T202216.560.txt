@@ -1,0 +1,4418 @@
+-- function created 2-th by the script at run time
+-- Luraph runtime function (from the VM object, not part of the script: not lifted).
+-- LPH_ENCFUNC decrypts a function this way: (key, encrypted buffer, ...) -> function.
+local function luraph_runtime1(...)
+	error("Luraph runtime function, not devirtualized")
+end
+
+-- Luraph runtime function (from the VM object, not part of the script: not lifted).
+-- LPH_ENCFUNC decrypts a function this way: (key, encrypted buffer, ...) -> function.
+local function luraph_runtime2(...)
+	error("Luraph runtime function, not devirtualized")
+end
+
+-- Luraph runtime function (from the VM object, not part of the script: not lifted).
+-- LPH_ENCFUNC decrypts a function this way: (key, encrypted buffer, ...) -> function.
+local function luraph_runtime3(...)
+	error("Luraph runtime function, not devirtualized")
+end
+
+local function payload_fn_2(arg, arg2)
+	upv1 += 1
+	upv2[upv1] = arg2 % 256
+end
+
+-- function created 3-th by the script at run time
+local function payload_fn_3(arg, arg2)
+	local tbl = { 1, 0, arg2 + 0, nil, nil }
+
+	while true do
+		local v = tbl[1]
+		local v2 = tbl[3]
+		local n = tbl[2] + v
+		local flag = v <= 0
+		local flag2 = not flag
+		local flag3 = n >= v2
+		local flag4 = n <= v2
+		flag3 = flag and flag3
+		flag3 = flag3 or flag2 and flag4
+		tbl[2] = n
+
+		if flag3 then
+			local n2 = arg % 256
+			arg = (arg - n2) / 256
+			upv1 += 1
+			upv2[upv1] = n2
+			continue
+		end
+
+		break
+	end
+end
+
+-- function created 4-th by the script at run time
+local function payload_fn_4(arg, arg2)
+	local n = 293927628
+	local n2 = 378616909
+	local v = upv2
+	local v2 = upv1
+	local tbl = {}
+	bit32.bxor(bit32.bxor(arg2, 0), arg)
+	local tbl2 = { nil, nil, 255, -1, 1 }
+
+	while true do
+		local v3 = tbl2[5]
+		local v4 = tbl2[3]
+		local n3 = tbl2[4] + v3
+		local flag = v3 <= 0
+		local flag2 = not flag
+		local flag3 = n3 >= v4
+		local flag4 = n3 <= v4
+		flag3 = flag and flag3
+		flag3 = flag3 or flag2 and flag4
+		tbl2[4] = n3
+
+		if flag3 then
+			local v5 = n3
+			tbl[v5] = v5
+			continue
+		end
+
+		break
+	end
+
+	local v3 = tbl2[1]
+	local n3
+
+	if v2 < 256 then
+		n3 = 256
+	else
+		n3 = v2
+	end
+
+	local tbl3 = { 1, n3 - 1 + 0, nil, v3, -1 }
+	local n4 = 0
+	local v4 = tbl3
+
+	while true do
+		local v5 = v4[1]
+		local v6 = v4[2]
+		local n5 = v4[5] + v5
+		local flag = v5 <= 0
+		local flag2 = not flag
+		local flag3 = n5 >= v6
+		local flag4 = n5 <= v6
+		flag3 = flag and flag3
+		flag4 = flag2 and flag4
+		flag4 = flag3 or flag4
+		v4[5] = n5
+
+		if flag4 then
+			local v7 = n5
+			local v8 = bit32.band(v7, 255)
+			n4 = bit32.band(n4 + tbl[v8] + v[v7 % v2 + 1], 255)
+			local v9 = tbl[v8]
+			tbl[v8] = tbl[n4]
+			tbl[n4] = v9
+			continue
+		end
+
+		break
+	end
+
+	local tbl4 = {}
+	local tbl5 = { 0, 32, 1, nil, v4[4] }
+	local n5 = 0
+	local n6 = 0
+
+	while true do
+		local v5 = tbl5[3]
+		local v6 = tbl5[2]
+		local n7 = tbl5[1] + v5
+		local flag = v5 <= 0
+		local flag2 = not flag
+		local flag3 = n7 >= v6
+		local flag4 = n7 <= v6
+		flag3 = flag and flag3
+		flag3 = flag3 or flag2 and flag4
+		tbl5[1] = n7
+
+		if flag3 then
+			local v7 = n7
+			n5 = bit32.band(n5 + 1, 255)
+			n6 = bit32.band(n6 + tbl[n5], 255)
+			local v8 = tbl[n5]
+			tbl[n5] = tbl[n6]
+			tbl[n6] = v8
+			tbl4[v7] = tbl[bit32.band(tbl[n5] + tbl[n6], 255)]
+			continue
+		end
+
+		break
+	end
+
+	local v5 = tbl5[5]
+	upv1 += 1
+	upv2[upv1] = 133
+	local v6 = upv2
+	local v7 = upv1
+	local tbl6 = {}
+	local v8 = bit32.bor(n, 184987519)
+	local tbl7 = { 255, nil, 1, v5, -1 }
+	local n7 = 32
+
+	while true do
+		local v9 = tbl7[3]
+		local v10 = tbl7[1]
+		local n8 = tbl7[5] + v9
+		local flag = v9 <= 0
+		local flag2 = not flag
+		local flag3 = n8 >= v10
+		local flag4 = n8 <= v10
+		flag3 = flag and flag3
+		flag3 = flag3 or flag2 and flag4
+		tbl7[5] = n8
+
+		if flag3 then
+			local v11 = n8
+			tbl6[v11] = v11
+			continue
+		end
+
+		break
+	end
+
+	local v9 = tbl7[4]
+	local n8
+
+	if v7 < 256 then
+		if arg ~= 461726555 then
+			local n9 = 256
+
+			while true do
+				local v10 = v9[4]
+				local v11 = v9[3]
+				local n10 = v9[5] + v10
+				local flag = v10 <= 0
+				local flag2 = not flag
+				local flag3 = n10 >= v11
+				local flag4 = n10 <= v11
+				flag = flag and flag3
+				flag4 = flag2 and flag4
+				flag4 = flag or flag4
+				v9[5] = n10
+				if flag4 then
+					tbl6[n10] = n10
+					continue
+				end
+				break
+			end
+
+			local v10 = v9[2]
+			local n10
+
+			if v6 < 256 then
+				bit32.bxor(v8 + 2138065625, 2171712807)
+				n10 = 256
+			else
+				n10 = v6
+			end
+
+			local tbl8 = { n10 - 1 + 0, nil, v10, 1, -1 }
+			local n11 = 0
+			local v11 = tbl8
+
+			while true do
+				local v12 = v11[4]
+				local v13 = v11[1]
+				local n12 = v11[5] + v12
+				local flag = v12 <= 0
+				local flag2 = not flag
+				local flag3 = n12 >= v13
+				local flag4 = n12 <= v13
+				flag3 = flag and flag3
+				flag4 = flag2 and flag4
+				flag4 = flag3 or flag4
+				v11[5] = n12
+
+				if flag4 then
+					local v14 = bit32.band(n12, 255)
+					n11 = bit32.band(n11 + tbl6[v14] + n9[n12 % v6 + 1], 255)
+					local v15 = tbl6[v14]
+					tbl6[v14] = tbl6[n11]
+					tbl6[n11] = v15
+					continue
+				end
+
+				break
+			end
+
+			local tbl9 = { 0, nil, v11[3], 1, n7 + 0 }
+
+			while true do
+				local v12 = tbl9[4]
+				local v13 = tbl9[5]
+				local n12 = tbl9[1] + v12
+				local flag = v12 <= 0
+				local flag2 = not flag
+				local flag3 = n12 >= v13
+				local flag4 = n12 <= v13
+				flag3 = flag and flag3
+				flag3 = flag3 or flag2 and flag4
+				tbl9[1] = n12
+				if flag3 then
+					tbl4[n12] = 0
+					continue
+				end
+				break
+			end
+
+			local tbl10 = { v6 + 0, 1, tbl9[3], nil, 0 }
+
+			while true do
+				local v12 = tbl10[2]
+				local v13 = tbl10[1]
+				local n12 = tbl10[5] + v12
+				local flag = v12 <= 0
+				local flag2 = not flag
+				local flag3 = n12 >= v13
+				local flag4 = n12 <= v13
+				flag3 = flag and flag3
+				flag3 = flag3 or flag2 and flag4
+				tbl10[5] = n12
+				if flag3 then
+					n9[n12] = 0
+					continue
+				end
+				break
+			end
+
+			local tbl11 = { tbl10[3], nil, 0, upv1 + 0, 1 }
+
+			while true do
+				local v12 = tbl11[5]
+				local v13 = tbl11[4]
+				local n12 = tbl11[3] + v12
+				local flag = v12 <= 0
+				local flag2 = not flag
+				local flag3 = n12 >= v13
+				local flag4 = n12 <= v13
+				flag3 = flag and flag3
+				flag3 = flag3 or flag2 and flag4
+				tbl11[3] = n12
+				if flag3 then
+					upv2[n12] = 0
+					continue
+				end
+				break
+			end
+
+			local tbl12 = { 1, 0, nil, upv3 + 0, tbl11[1] }
+
+			while true do
+				local v12 = tbl12[1]
+				local v13 = tbl12[4]
+				local n12 = tbl12[2] + v12
+				local flag = v12 <= 0
+				local flag2 = not flag
+				local flag3 = n12 >= v13
+				local flag4 = n12 <= v13
+				flag3 = flag and flag3
+				flag3 = flag3 or flag2 and flag4
+				tbl12[2] = n12
+				if flag3 then
+					upv4[n12] = 0
+					continue
+				end
+				break
+			end
+
+			local tbl13 = { 1, 0, upv5 + 0, tbl12[5], nil }
+
+			while true do
+				local v12 = tbl13[1]
+				local v13 = tbl13[3]
+				local n12 = tbl13[2] + v12
+				local flag = v12 <= 0
+				local flag2 = not flag
+				local flag3 = n12 >= v13
+				local flag4 = n12 <= v13
+				flag3 = flag and flag3
+				flag4 = flag2 and flag4
+				flag4 = flag3 or flag4
+				tbl13[2] = n12
+				if flag4 then
+					upv6[n12] = 0
+					continue
+				end
+				break
+			end
+
+			upv1 = 0
+			upv3 = 0
+			upv5 = 0
+			return v7, tbl6
+		end
+
+		n8 = 256
+	else
+		n8 = v7
+	end
+
+	local tbl8 = { -1, nil, n8 - 1 + 0, 1, v9 }
+	local n9 = 0
+	local v10 = tbl8
+
+	while true do
+		local v11 = v10[4]
+		local v12 = v10[3]
+		local n10 = v10[1] + v11
+		local flag = v11 <= 0
+		local flag2 = not flag
+		local flag3 = n10 >= v12
+		local flag4 = n10 <= v12
+		flag3 = flag and flag3
+		flag3 = flag3 or flag2 and flag4
+		v10[1] = n10
+
+		if flag3 then
+			local v13 = bit32.band(n10, 255)
+			n9 = bit32.band(n9 + tbl6[v13] + v6[n10 % v7 + 1], 255)
+			local v14 = tbl6[v13]
+			tbl6[v13] = tbl6[n9]
+			tbl6[n9] = v14
+			continue
+		end
+
+		break
+	end
+
+	local v11 = v10[5]
+	local n10 = n2 // bit32.bxor(arg, 0)
+	error("devirt: symbolic value store into proto array (at 192:227)")
+end
+
+-- function created 5-th by the script at run time
+local function payload_fn_5(arg, arg2, arg3, arg4)
+	type(arg2)
+	local n = 219152597
+	local n2, v, n3, v2, n4, v3, v4, v5, v6, tbl, v7, v8, n5, flag, flag2, flag3, flag4, v9, n6, v10, v11, n7, n8, n9, n10, tbl2, v12, v13, n11, flag5, flag6, flag7, flag8, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, tbl3, v33, v34, n12, v35, v36, v37, v38, v39, tbl4, v40, v41, n13, flag9, flag10, flag11, flag12
+
+	if nil then
+		bit32.bxor(n, 3910904193)
+
+		if arg + 268052197 ~= 335370175 then
+			local v42 = table.pack(bit32.band(n, 4294967295))
+			local v43 = table.pack(bit32.band(v42[1], 65535))
+			n2 = bit32.band(39668 * v43[1] + bit32.lshift(bit32.band(39668 * bit32.rshift(v42[1], 16) + 13630 * v43[1], 65535), 16), 4294967295) + 2500330876
+			local v44 = table.pack(bit32.band(bit32.bor(n, 403916875), 4294967295))
+			local v45 = table.pack(bit32.band(v44[1], 65535))
+			v = bit32.band(51736 * v45[1] + bit32.lshift(bit32.band(51736 * bit32.rshift(v44[1], 16) + 38274 * v45[1], 65535), 16), 4294967295)
+			local v46 = table.pack(bit32.band(bit32.bxor(n, 403916875), 4294967295))
+			local v47 = table.pack(bit32.band(v46[1], 65535))
+			n3 = n2 + v + bit32.band(39669 * v47[1] + bit32.lshift(bit32.band(39669 * bit32.rshift(v46[1], 16) + 13630 * v47[1], 65535), 16), 4294967295)
+			v2 = bit32.bxor(arg2, 0)
+			n4 = 683670164
+			bit32.bxor(n3, 287390522)
+			local v48
+			v3, v48 = upv1(461726555, arg2)
+			v4 = v48
+			v5 = luraph_runtime1(table.pack(arg3, arg4, r10, n3), nil)()
+			v6 = v3
+			tbl = { nil, 1, -1, nil, 255 }
+
+			while true do
+				v7 = tbl[2]
+				v8 = tbl[5]
+				n5 = tbl[3] + v7
+				flag = v7 <= 0
+				flag2 = not flag
+				flag3 = n5 >= v8
+				flag4 = n5 <= v8
+				flag3 = flag and flag3
+				flag4 = flag2 and flag4
+				flag3 = flag3 or flag4
+				tbl[3] = n5
+				if flag3 then
+					v6[n5] = 0
+					continue
+				end
+				break
+			end
+
+			v9 = tbl[1]
+			n6 = buffer.len(v5) - 100 - 142
+
+			if upv2 < n6 then
+				v10 = upv2
+			else
+				v10 = n6
+			end
+
+			v11 = buffer.create(v10)
+			n7 = v10 - v10 % 4
+			bit32.lshift(n4, 14)
+			n8 = 0
+			n9 = 0
+			n10 = 100
+			tbl2 = { v9, 4, -4, n7 - 1 + 0, nil }
+
+			while true do
+				v12 = tbl2[2]
+				v13 = tbl2[4]
+				n11 = tbl2[3] + v12
+				flag5 = v12 <= 0
+				flag6 = not flag5
+				flag7 = n11 >= v13
+				flag8 = n11 <= v13
+				flag7 = flag5 and flag7
+				flag8 = flag6 and flag8
+				flag8 = flag7 or flag8
+				tbl2[3] = n11
+
+				if flag8 then
+					v14 = n11
+					v15 = bit32.band(n8 + 1, 255)
+					v16 = bit32.band(n9 + v4[v15], 255)
+					v17 = v4[v15]
+					v4[v15] = v4[v16]
+					v4[v16] = v17
+					v18 = bit32.lshift(v4[bit32.band(v4[v15] + v4[v16], 255)], 0)
+					v19 = bit32.band(v15 + 1, 255)
+					v20 = bit32.band(v16 + v4[v19], 255)
+					v21 = v4[v19]
+					v4[v19] = v4[v20]
+					v4[v20] = v21
+					v22 = bit32.lshift(v4[bit32.band(v4[v19] + v4[v20], 255)], 8)
+					v23 = bit32.band(v19 + 1, 255)
+					v24 = bit32.band(v20 + v4[v23], 255)
+					v25 = v4[v23]
+					v4[v23] = v4[v24]
+					v4[v24] = v25
+					v26 = bit32.lshift(v4[bit32.band(v4[v23] + v4[v24], 255)], 16)
+					v27 = bit32.band(v23 + 1, 255)
+					v28 = bit32.band(v24 + v4[v27], 255)
+					v29 = v4[v27]
+					v4[v27] = v4[v28]
+					v4[v28] = v29
+					v30 = bit32.lshift(v4[bit32.band(v4[v27] + v4[v28], 255)], 24)
+					v31 = bit32.bor(0, v18, v22, v26, v30)
+					v32 = bit32.bxor(buffer.readu32(v5, n10 + v14), v31)
+					buffer.writeu32(v11, v14, v32)
+					n8 = v27
+					n9 = v28
+					continue
+				end
+
+				break
+			end
+
+			tbl3 = { nil, n7 - 1, tbl2[1], v10 - 1 + 0, 1 }
+
+			while true do
+				v33 = tbl3[5]
+				v34 = tbl3[4]
+				n12 = tbl3[2] + v33
+				tbl3[2] = n12
+
+				if n12 <= v34 then
+					v35 = n12
+					n8 = bit32.band(n8 + 1, 255)
+					n9 = bit32.band(n9 + v4[n8], 255)
+					v36 = v4[n8]
+					v4[n8] = v4[n9]
+					v4[n9] = v36
+					v37 = v4[bit32.band(v4[n8] + v4[n9], 255)]
+					v38 = bit32.bxor(buffer.readu8(v5, n10 + v35), v37)
+					buffer.writeu8(v11, v35, v38)
+				else
+					break
+				end
+			end
+
+			v39 = tbl3[3]
+			buffer.copy(v5, n10, v11, 0, v10)
+			bit32.bxor(v2, arg2)
+			tbl4 = { v39, 255, nil, 1, -1 }
+
+			while true do
+				v40 = tbl4[4]
+				v41 = tbl4[2]
+				n13 = tbl4[5] + v40
+				flag9 = v40 <= 0
+				flag10 = not flag9
+				flag11 = n13 >= v41
+				flag12 = n13 <= v41
+				flag11 = flag9 and flag11
+				flag12 = flag10 and flag12
+				flag11 = flag11 or flag12
+				tbl4[5] = n13
+				if flag11 then
+					v4[n13] = 0
+					continue
+				end
+				break
+			end
+		end
+	else
+		local v42 = table.pack(bit32.band(n, 4294967295))
+		local v43 = table.pack(bit32.band(v42[1], 65535))
+		n2 = bit32.band(39668 * v43[1] + bit32.lshift(bit32.band(39668 * bit32.rshift(v42[1], 16) + 13630 * v43[1], 65535), 16), 4294967295) + 2500330876
+		local v44 = table.pack(bit32.band(bit32.bor(n, 403916875), 4294967295))
+		local v45 = table.pack(bit32.band(v44[1], 65535))
+		v = bit32.band(51736 * v45[1] + bit32.lshift(bit32.band(51736 * bit32.rshift(v44[1], 16) + 38274 * v45[1], 65535), 16), 4294967295)
+		local v46 = table.pack(bit32.band(bit32.bxor(n, 403916875), 4294967295))
+		local v47 = table.pack(bit32.band(v46[1], 65535))
+		n3 = n2 + v + bit32.band(39669 * v47[1] + bit32.lshift(bit32.band(39669 * bit32.rshift(v46[1], 16) + 13630 * v47[1], 65535), 16), 4294967295)
+		v2 = bit32.bxor(arg2, 0)
+		n4 = 683670164
+		bit32.bxor(n3, 287390522)
+		v3, v4 = upv1(461726555, arg2)
+		v5 = luraph_runtime1(table.pack(arg3, arg4, r10, n3), nil)()
+		v6 = v3
+		tbl = { nil, 1, -1, nil, 255 }
+
+		while true do
+			v7 = tbl[2]
+			v8 = tbl[5]
+			n5 = tbl[3] + v7
+			flag = v7 <= 0
+			flag2 = not flag
+			flag3 = n5 >= v8
+			flag4 = n5 <= v8
+			flag3 = flag and flag3
+			flag3 = flag3 or flag2 and flag4
+			tbl[3] = n5
+			if flag3 then
+				v6[n5] = 0
+				continue
+			end
+			break
+		end
+
+		v9 = tbl[1]
+		n6 = buffer.len(v5) - 100 - 142
+
+		if upv2 < n6 then
+			v10 = upv2
+		else
+			v10 = n6
+		end
+
+		v11 = buffer.create(v10)
+		n7 = v10 - v10 % 4
+		bit32.lshift(n4, 14)
+		n8 = 0
+		n9 = 0
+		n10 = 100
+		tbl2 = { v9, 4, -4, n7 - 1 + 0, nil }
+
+		while true do
+			v12 = tbl2[2]
+			v13 = tbl2[4]
+			n11 = tbl2[3] + v12
+			flag5 = v12 <= 0
+			flag6 = not flag5
+			flag7 = n11 >= v13
+			flag8 = n11 <= v13
+			flag7 = flag5 and flag7
+			flag8 = flag6 and flag8
+			flag8 = flag7 or flag8
+			tbl2[3] = n11
+
+			if flag8 then
+				v14 = n11
+				v15 = bit32.band(n8 + 1, 255)
+				v16 = bit32.band(n9 + v4[v15], 255)
+				v17 = v4[v15]
+				v4[v15] = v4[v16]
+				v4[v16] = v17
+				v18 = bit32.lshift(v4[bit32.band(v4[v15] + v4[v16], 255)], 0)
+				v19 = bit32.band(v15 + 1, 255)
+				v20 = bit32.band(v16 + v4[v19], 255)
+				v21 = v4[v19]
+				v4[v19] = v4[v20]
+				v4[v20] = v21
+				v22 = bit32.lshift(v4[bit32.band(v4[v19] + v4[v20], 255)], 8)
+				v23 = bit32.band(v19 + 1, 255)
+				v24 = bit32.band(v20 + v4[v23], 255)
+				v25 = v4[v23]
+				v4[v23] = v4[v24]
+				v4[v24] = v25
+				v26 = bit32.lshift(v4[bit32.band(v4[v23] + v4[v24], 255)], 16)
+				v27 = bit32.band(v23 + 1, 255)
+				v28 = bit32.band(v24 + v4[v27], 255)
+				v29 = v4[v27]
+				v4[v27] = v4[v28]
+				v4[v28] = v29
+				v30 = bit32.lshift(v4[bit32.band(v4[v27] + v4[v28], 255)], 24)
+				v31 = bit32.bor(0, v18, v22, v26, v30)
+				v32 = bit32.bxor(buffer.readu32(v5, n10 + v14), v31)
+				buffer.writeu32(v11, v14, v32)
+				n8 = v27
+				n9 = v28
+				continue
+			end
+
+			break
+		end
+
+		tbl3 = { nil, n7 - 1, tbl2[1], v10 - 1 + 0, 1 }
+
+		while true do
+			v33 = tbl3[5]
+			v34 = tbl3[4]
+			n12 = tbl3[2] + v33
+			tbl3[2] = n12
+
+			if n12 <= v34 then
+				v35 = n12
+				n8 = bit32.band(n8 + 1, 255)
+				n9 = bit32.band(n9 + v4[n8], 255)
+				v36 = v4[n8]
+				v4[n8] = v4[n9]
+				v4[n9] = v36
+				v37 = v4[bit32.band(v4[n8] + v4[n9], 255)]
+				v38 = bit32.bxor(buffer.readu8(v5, n10 + v35), v37)
+				buffer.writeu8(v11, v35, v38)
+			else
+				break
+			end
+		end
+
+		v39 = tbl3[3]
+		buffer.copy(v5, n10, v11, 0, v10)
+		bit32.bxor(v2, arg2)
+		tbl4 = { v39, 255, nil, 1, -1 }
+
+		while true do
+			v40 = tbl4[4]
+			v41 = tbl4[2]
+			n13 = tbl4[5] + v40
+			flag9 = v40 <= 0
+			flag10 = not flag9
+			flag11 = n13 >= v41
+			flag12 = n13 <= v41
+			flag11 = flag9 and flag11
+			flag11 = flag11 or flag10 and flag12
+			tbl4[5] = n13
+			if flag11 then
+				v4[n13] = 0
+				continue
+			end
+			break
+		end
+	end
+
+	return v5
+end
+
+-- function created 6-th by the script at run time
+local function payload_fn_6()
+	local n = 8918089009
+
+	local function fn(arg, arg2, arg3, arg4, arg5, arg6, arg7)
+		bit32.bxor(n, 2205901915)
+		local tbl = { arg4, arg5, arg6, arg7 }
+		local n2 = 351191280
+		local tbl2 = { 4, 1, nil, 0, nil }
+		local v = tbl
+
+		while true do
+			local v2 = tbl2[2]
+			local v3 = tbl2[1]
+			local n3 = tbl2[4] + v2
+			local flag = v2 <= 0
+			local flag2 = not flag
+			local flag3 = n3 >= v3
+			local flag4 = n3 <= v3
+			flag3 = flag and flag3
+			flag3 = flag3 or flag2 and flag4
+			tbl2[4] = n3
+
+			if flag3 then
+				local v4 = v[n3]
+				local tbl3 = { 0, tbl2, nil, 1, #v4 + 0 }
+
+				while true do
+					local v5 = tbl3[4]
+					local v6 = tbl3[5]
+					local n4 = tbl3[1] + v5
+					local flag5 = v5 <= 0
+					local flag6 = not flag5
+					local flag7 = n4 >= v6
+					local flag8 = n4 <= v6
+					flag7 = flag5 and flag7
+					flag8 = flag6 and flag8
+					flag8 = flag7 or flag8
+					tbl3[1] = n4
+
+					if flag8 then
+						local v7 = n4
+						local v8 = bit32.lshift(bit32.band(n2, v7), 1)
+						local v9 = table.pack(bit32.band(v7, 4294967295))
+						local v10 = table.pack(bit32.band(v9[1], 65535))
+						local n5 = v8 + bit32.band(14823 * v10[1] + bit32.lshift(bit32.band(14823 * bit32.rshift(v9[1], 16) + 29438 * v10[1], 65535), 16), 4294967295)
+						local v11 = table.pack(bit32.band(n2, 4294967295))
+						local v12 = table.pack(bit32.band(v11[1], 65535))
+						local v13 = bit32.band(4941 * v12[1] + bit32.lshift(bit32.band(4941 * bit32.rshift(v11[1], 16) + 31658 * v12[1], 65535), 16), 4294967295)
+						local v14 = bit32.bxor(n2, v7)
+						local v15 = table.pack(bit32.band(n2, 4294967295))
+						local v16 = table.pack(bit32.band(v14, 4294967295))
+						local v17 = table.pack(bit32.band(v15[1], 65535))
+						local v18 = table.pack(bit32.rshift(v15[1], 16))
+						local v19 = table.pack(bit32.band(v16[1], 65535))
+						local v20 = table.pack(bit32.band(bit32.band(v17[1] * v19[1] + bit32.lshift(bit32.band(v17[1] * bit32.rshift(v16[1], 16) + v18[1] * v19[1], 65535), 16), 4294967295), 4294967295))
+						local v21 = table.pack(bit32.band(v20[1], 65535))
+						local n6 = n5 + v13 + bit32.band(26012 * v21[1] + bit32.lshift(bit32.band(26012 * bit32.rshift(v20[1], 16) + 32384 * v21[1], 65535), 16), 4294967295) + 145480038
+						local v22 = table.pack(bit32.band(v14, 4294967295))
+						local v23 = table.pack(bit32.band(v22[1], 65535))
+						local v24 = bit32.band(30954 * v23[1] + bit32.lshift(bit32.band(30954 * bit32.rshift(v22[1], 16) + 64042 * v23[1], 65535), 16), 4294967295)
+						local v25 = bit32.bor(v8, v7)
+						local v26 = table.pack(bit32.band(bit32.bnot(v25), 4294967295))
+						local v27 = table.pack(bit32.band(v26[1], 65535))
+						local n7 = v24 + bit32.band(55654 * v27[1] + bit32.lshift(bit32.band(55654 * bit32.rshift(v26[1], 16) + 2219 * v27[1], 65535), 16), 4294967295)
+						local v28 = table.pack(bit32.band(bit32.bnot(n2), 4294967295))
+						local v29 = table.pack(bit32.band(v14, 4294967295))
+						local v30 = table.pack(bit32.band(v28[1], 65535))
+						local v31 = table.pack(bit32.rshift(v28[1], 16))
+						local v32 = table.pack(bit32.band(v29[1], 65535))
+						local v33 = table.pack(bit32.band(bit32.band(v30[1] * v32[1] + bit32.lshift(bit32.band(v30[1] * bit32.rshift(v29[1], 16) + v31[1] * v32[1], 65535), 16), 4294967295), 4294967295))
+						local v34 = table.pack(bit32.band(v33[1], 65535))
+						local v35 = bit32.band(26012 * v34[1] + bit32.lshift(bit32.band(26012 * bit32.rshift(v33[1], 16) + 32384 * v34[1], 65535), 16), 4294967295)
+						local v36 = bit32.bxor(v8, n2)
+						local v37 = table.pack(bit32.band(bit32.bor(v7, v36), 4294967295))
+						local v38 = table.pack(bit32.band(v37[1], 65535))
+						local v39 = bit32.band(55654 * v38[1] + bit32.lshift(bit32.band(55654 * bit32.rshift(v37[1], 16) + 2219 * v38[1], 65535), 16), 4294967295)
+						local v40 = table.pack(bit32.band(bit32.band(bit32.bor(n2, v7), v25), 4294967295))
+						local v41 = table.pack(bit32.band(v40[1], 65535))
+						local n8 = n6 + n7 + v35 + v39 + bit32.band(45772 * v41[1] + bit32.lshift(bit32.band(45772 * bit32.rshift(v40[1], 16) + 4439 * v41[1], 65535), 16), 4294967295)
+						local n9 = bit32.band(bit32.bxor(n8, 409107392), 2147483647) + 1861456216
+						local v42 = table.pack(bit32.band(n8, 4294967295))
+						local v43 = table.pack(bit32.band(v42[1], 65535))
+						local v44 = bit32.band(51372 * v43[1] + bit32.lshift(bit32.band(51372 * bit32.rshift(v42[1], 16) + 14201 * v43[1], 65535), 16), 4294967295)
+						local v45 = bit32.band(409107392, n8)
+						local v46 = table.pack(bit32.band(bit32.bnot(v45), 4294967295))
+						local v47 = table.pack(bit32.band(v46[1], 65535))
+						local v48 = bit32.band(51372 * v47[1] + bit32.lshift(bit32.band(51372 * bit32.rshift(v46[1], 16) + 14201 * v47[1], 65535), 16), 4294967295)
+						local v49 = bit32.bnot(n8)
+						local v50 = table.pack(bit32.band(bit32.bor(v49, 409107392), 4294967295))
+						local v51 = table.pack(bit32.band(v50[1], 65535))
+						local n10 = n9 + v44 + v48 + bit32.band(51372 * v51[1] + bit32.lshift(bit32.band(51372 * bit32.rshift(v50[1], 16) + 14201 * v51[1], 65535), 16), 4294967295)
+						local v52 = bit32.band(bit32.bxor(n8, 409107392), 2147483647)
+						local v53 = table.pack(bit32.band(n8, 4294967295))
+						local v54 = table.pack(bit32.band(v53[1], 65535))
+						local n11 = v52 + bit32.band(55731 * v54[1] + bit32.lshift(bit32.band(55731 * bit32.rshift(v53[1], 16) + 41209 * v54[1], 65535), 16), 4294967295)
+						local v55 = table.pack(bit32.band(bit32.bxor(n8, 409107392), 4294967295))
+						local v56 = table.pack(bit32.band(v55[1], 65535))
+						local v57 = bit32.band(55731 * v56[1] + bit32.lshift(bit32.band(55731 * bit32.rshift(v55[1], 16) + 41209 * v56[1], 65535), 16), 4294967295)
+						local v58 = table.pack(bit32.band(bit32.bor(n8, 409107392), 4294967295))
+						local v59 = table.pack(bit32.band(v58[1], 65535))
+						local v60 = table.pack(bit32.band(n10 - n11 + 3850520384 + v57 + bit32.band(19610 * v59[1] + bit32.lshift(bit32.band(19610 * bit32.rshift(v58[1], 16) + 48652 * v59[1], 65535), 16), 4294967295), 4294967295))
+						local v61 = table.pack(bit32.band(v60[1], 65535))
+						local v62 = bit32.band(822 * v61[1] + bit32.lshift(bit32.band(822 * bit32.rshift(v60[1], 16) + 547 * v61[1], 65535), 16), 4294967295)
+						local v63 = table.pack(bit32.band(bit32.bor(v49, 2147483647), 4294967295))
+						local v64 = table.pack(bit32.band(v63[1], 65535))
+						local v65 = table.pack(bit32.band(bit32.band(65535 * v64[1] + bit32.lshift(bit32.band(65535 * bit32.rshift(v63[1], 16) + 32767 * v64[1], 65535), 16), 4294967295), 4294967295))
+						local v66 = table.pack(bit32.band(v65[1], 65535))
+						local n12 = 3205408642 + bit32.band(22656 * v66[1] + bit32.lshift(bit32.band(22656 * bit32.rshift(v65[1], 16) + 16625 * v66[1], 65535), 16), 4294967295)
+						local v67 = bit32.bxor(bit32.bor(2147483647, n8), 2147483647)
+						local v68 = table.pack(bit32.band(n8, 4294967295))
+						local v69 = table.pack(bit32.band(v67, 4294967295))
+						local v70 = table.pack(bit32.band(v68[1], 65535))
+						local v71 = table.pack(bit32.rshift(v68[1], 16))
+						local v72 = table.pack(bit32.band(v69[1], 65535))
+						local v73 = table.pack(bit32.band(bit32.band(v70[1] * v72[1] + bit32.lshift(bit32.band(v70[1] * bit32.rshift(v69[1], 16) + v71[1] * v72[1], 65535), 16), 4294967295), 4294967295))
+						local v74 = table.pack(bit32.band(v73[1], 65535))
+						local n13 = n12 + 2379154368 + bit32.band(42880 * v74[1] + bit32.lshift(bit32.band(42880 * bit32.rshift(v73[1], 16) + 48910 * v74[1], 65535), 16), 4294967295) + 2584307807
+						local v75 = table.pack(bit32.band(bit32.bor(v49, 2147483647), 4294967295))
+						local v76 = table.pack(bit32.band(v75[1], 65535))
+						local v77 = table.pack(bit32.band(bit32.band(31680 * v76[1] + bit32.lshift(bit32.band(31680 * bit32.rshift(v75[1], 16) + 6242 * v76[1], 65535), 16), 4294967295), 4294967295))
+						local v78 = table.pack(bit32.band(v77[1], 65535))
+						local v79 = bit32.band(42880 * v78[1] + bit32.lshift(bit32.band(42880 * bit32.rshift(v77[1], 16) + 48910 * v78[1], 65535), 16), 4294967295)
+						local v80 = table.pack(bit32.band(n8, 4294967295))
+						local v81 = table.pack(bit32.band(v80[1], 65535))
+						local v82 = bit32.band(42882 * v81[1] + bit32.lshift(bit32.band(42882 * bit32.rshift(v80[1], 16) + 48910 * v81[1], 65535), 16), 4294967295)
+						local v83 = table.pack(bit32.band(bit32.bxor(bit32.bor(2147483647, n8), 2147483647), 4294967295))
+						local v84 = table.pack(bit32.band(v83[1], 65535))
+						local v85 = table.pack(bit32.band(bit32.band(65535 * v84[1] + bit32.lshift(bit32.band(65535 * bit32.rshift(v83[1], 16) + 32767 * v84[1], 65535), 16), 4294967295), 4294967295))
+						local v86 = table.pack(bit32.band(v85[1], 65535))
+						local n14 = v79 + v82 + bit32.band(22656 * v86[1] + bit32.lshift(bit32.band(22656 * bit32.rshift(v85[1], 16) + 16625 * v86[1], 65535), 16), 4294967295)
+						local v87 = bit32.bor(v49, 2147483647)
+						local v88 = table.pack(bit32.band(n8, 4294967295))
+						local v89 = table.pack(bit32.band(v87, 4294967295))
+						local v90 = table.pack(bit32.band(v88[1], 65535))
+						local v91 = table.pack(bit32.rshift(v88[1], 16))
+						local v92 = table.pack(bit32.band(v89[1], 65535))
+						local v93 = table.pack(bit32.band(bit32.band(v90[1] * v92[1] + bit32.lshift(bit32.band(v90[1] * bit32.rshift(v89[1], 16) + v91[1] * v92[1], 65535), 16), 4294967295), 4294967295))
+						local v94 = table.pack(bit32.band(v93[1], 65535))
+						local v95 = bit32.band(42880 * v94[1] + bit32.lshift(bit32.band(42880 * bit32.rshift(v93[1], 16) + 48910 * v94[1], 65535), 16), 4294967295)
+						local v96 = table.pack(bit32.band(bit32.bor(2147483647, 409107392, n8), 4294967295))
+						local v97 = table.pack(bit32.band(v96[1], 65535))
+						local n15 = n13 + n14 + 2103749473 + v95 + bit32.band(44095 * v97[1] + bit32.lshift(bit32.band(44095 * bit32.rshift(v96[1], 16) + 8312 * v97[1], 65535), 16), 4294967295)
+						local v98 = table.pack(bit32.band(bit32.bxor(bit32.bor(2147483647, n8), 2147483647), 4294967295))
+						local v99 = table.pack(bit32.band(v98[1], 65535))
+						local v100 = table.pack(bit32.band(bit32.band(31680 * v99[1] + bit32.lshift(bit32.band(31680 * bit32.rshift(v98[1], 16) + 6242 * v99[1], 65535), 16), 4294967295), 4294967295))
+						local v101 = table.pack(bit32.band(v100[1], 65535))
+						local v102 = bit32.band(42880 * v101[1] + bit32.lshift(bit32.band(42880 * bit32.rshift(v100[1], 16) + 48910 * v101[1], 65535), 16), 4294967295)
+						local v103 = table.pack(bit32.band(bit32.bxor(bit32.bor(2147483647, n8), 2147483647), 4294967295))
+						local v104 = table.pack(bit32.band(v103[1], 65535))
+						local v105 = bit32.band(1213 * v104[1] + bit32.lshift(bit32.band(1213 * bit32.rshift(v103[1], 16) + 24938 * v104[1], 65535), 16), 4294967295)
+						local v106 = bit32.bor(2147483647, 409107392, n8)
+						local v107 = bit32.bor(v49, 2147483647)
+						local v108 = table.pack(bit32.band(v106, 4294967295))
+						local v109 = table.pack(bit32.band(v107, 4294967295))
+						local v110 = table.pack(bit32.band(v108[1], 65535))
+						local v111 = table.pack(bit32.rshift(v108[1], 16))
+						local v112 = table.pack(bit32.band(v109[1], 65535))
+						local v113 = table.pack(bit32.band(bit32.band(v110[1] * v112[1] + bit32.lshift(bit32.band(v110[1] * bit32.rshift(v109[1], 16) + v111[1] * v112[1], 65535), 16), 4294967295), 4294967295))
+						local v114 = table.pack(bit32.band(v113[1], 65535))
+						local n16 = v102 + v105 + bit32.band(44096 * v114[1] + bit32.lshift(bit32.band(44096 * bit32.rshift(v113[1], 16) + 8312 * v114[1], 65535), 16), 4294967295)
+						local v115 = bit32.bxor(n8, 409107392)
+						local v116 = bit32.band(2147483647, n8)
+						local v117 = table.pack(bit32.band(bit32.bor(v115, v116), 4294967295))
+						local v118 = table.pack(bit32.band(v117[1], 65535))
+						local v119 = bit32.band(44095 * v118[1] + bit32.lshift(bit32.band(44095 * bit32.rshift(v117[1], 16) + 8312 * v118[1], 65535), 16), 4294967295)
+						local v120 = bit32.bxor(bit32.bor(2147483647, n8), 2147483647)
+						local v121 = bit32.bxor(bit32.bor(2147483647, n8), 2147483647)
+						local v122 = table.pack(bit32.band(v120, 4294967295))
+						local v123 = table.pack(bit32.band(v121, 4294967295))
+						local v124 = table.pack(bit32.band(v122[1], 65535))
+						local v125 = table.pack(bit32.rshift(v122[1], 16))
+						local v126 = table.pack(bit32.band(v123[1], 65535))
+						local v127 = table.pack(bit32.band(bit32.band(v124[1] * v126[1] + bit32.lshift(bit32.band(v124[1] * bit32.rshift(v123[1], 16) + v125[1] * v126[1], 65535), 16), 4294967295), 4294967295))
+						local v128 = table.pack(bit32.band(v127[1], 65535))
+						local v129 = bit32.band(1216 * v128[1] + bit32.lshift(bit32.band(1216 * bit32.rshift(v127[1], 16) + 24938 * v128[1], 65535), 16), 4294967295)
+						local v130 = bit32.band(n8, 409107392)
+						local v131 = bit32.bor(n8, 2147483647)
+						local v132 = table.pack(bit32.band(bit32.bxor(v130, v131), 4294967295))
+						local v133 = table.pack(bit32.band(v132[1], 65535))
+						local n17 = n16 + v119 + v129 + bit32.band(64323 * v133[1] + bit32.lshift(bit32.band(64323 * bit32.rshift(v132[1], 16) + 40597 * v133[1], 65535), 16), 4294967295)
+						local v134 = bit32.bor(v49, 2147483647)
+						local v135 = bit32.bxor(n8, 409107392)
+						local v136 = bit32.band(2147483647, n8)
+						local v137 = bit32.bor(v135, v136)
+						local v138 = table.pack(bit32.band(v134, 4294967295))
+						local v139 = table.pack(bit32.band(v137, 4294967295))
+						local v140 = table.pack(bit32.band(v138[1], 65535))
+						local v141 = table.pack(bit32.rshift(v138[1], 16))
+						local v142 = table.pack(bit32.band(v139[1], 65535))
+						local v143 = table.pack(bit32.band(bit32.band(v140[1] * v142[1] + bit32.lshift(bit32.band(v140[1] * bit32.rshift(v139[1], 16) + v141[1] * v142[1], 65535), 16), 4294967295), 4294967295))
+						local v144 = table.pack(bit32.band(v143[1], 65535))
+						local v145 = bit32.band(44096 * v144[1] + bit32.lshift(bit32.band(44096 * bit32.rshift(v143[1], 16) + 8312 * v144[1], 65535), 16), 4294967295)
+						local v146 = bit32.bor(2147483647, 409107392, n8)
+						local v147 = bit32.bxor(bit32.bor(2147483647, n8), 2147483647)
+						local v148 = table.pack(bit32.band(v146, 4294967295))
+						local v149 = table.pack(bit32.band(v147, 4294967295))
+						local v150 = table.pack(bit32.band(v148[1], 65535))
+						local v151 = table.pack(bit32.rshift(v148[1], 16))
+						local v152 = table.pack(bit32.band(v149[1], 65535))
+						local v153 = table.pack(bit32.band(bit32.band(v150[1] * v152[1] + bit32.lshift(bit32.band(v150[1] * bit32.rshift(v149[1], 16) + v151[1] * v152[1], 65535), 16), 4294967295), 4294967295))
+						local v154 = table.pack(bit32.band(v153[1], 65535))
+						local v155 = bit32.band(44096 * v154[1] + bit32.lshift(bit32.band(44096 * bit32.rshift(v153[1], 16) + 8312 * v154[1], 65535), 16), 4294967295)
+						local v156 = bit32.bor(v49, 2147483647)
+						local v157 = bit32.band(n8, 409107392)
+						local v158 = bit32.bor(n8, 2147483647)
+						local v159 = bit32.bxor(v157, v158)
+						local v160 = table.pack(bit32.band(v156, 4294967295))
+						local v161 = table.pack(bit32.band(v159, 4294967295))
+						local v162 = table.pack(bit32.band(v160[1], 65535))
+						local v163 = table.pack(bit32.rshift(v160[1], 16))
+						local v164 = table.pack(bit32.band(v161[1], 65535))
+						local v165 = table.pack(bit32.band(bit32.band(v162[1] * v164[1] + bit32.lshift(bit32.band(v162[1] * bit32.rshift(v161[1], 16) + v163[1] * v164[1], 65535), 16), 4294967295), 4294967295))
+						local v166 = table.pack(bit32.band(v165[1], 65535))
+						local n18 = v145 + v155 + bit32.band(64320 * v166[1] + bit32.lshift(bit32.band(64320 * bit32.rshift(v165[1], 16) + 40597 * v166[1], 65535), 16), 4294967295)
+						local v167 = bit32.bxor(n8, 409107392)
+						local v168 = bit32.band(2147483647, n8)
+						local v169 = bit32.bor(v167, v168)
+						local v170 = bit32.bxor(bit32.bor(2147483647, n8), 2147483647)
+						local v171 = table.pack(bit32.band(v169, 4294967295))
+						local v172 = table.pack(bit32.band(v170, 4294967295))
+						local v173 = table.pack(bit32.band(v171[1], 65535))
+						local v174 = table.pack(bit32.rshift(v171[1], 16))
+						local v175 = table.pack(bit32.band(v172[1], 65535))
+						local v176 = table.pack(bit32.band(bit32.band(v173[1] * v175[1] + bit32.lshift(bit32.band(v173[1] * bit32.rshift(v172[1], 16) + v174[1] * v175[1], 65535), 16), 4294967295), 4294967295))
+						local v177 = table.pack(bit32.band(v176[1], 65535))
+						local v178 = bit32.band(44096 * v177[1] + bit32.lshift(bit32.band(44096 * bit32.rshift(v176[1], 16) + 8312 * v177[1], 65535), 16), 4294967295)
+						local v179 = bit32.bor(v49, 2147483647)
+						local v180 = bit32.bxor(bit32.bor(2147483647, n8), 2147483647)
+						local v181 = table.pack(bit32.band(v179, 4294967295))
+						local v182 = table.pack(bit32.band(v180, 4294967295))
+						local v183 = table.pack(bit32.band(v181[1], 65535))
+						local v184 = table.pack(bit32.rshift(v181[1], 16))
+						local v185 = table.pack(bit32.band(v182[1], 65535))
+						local v186 = table.pack(bit32.band(bit32.band(v183[1] * v185[1] + bit32.lshift(bit32.band(v183[1] * bit32.rshift(v182[1], 16) + v184[1] * v185[1], 65535), 16), 4294967295), 4294967295))
+						local v187 = table.pack(bit32.band(v186[1], 65535))
+						local v188 = bit32.band(1216 * v187[1] + bit32.lshift(bit32.band(1216 * bit32.rshift(v186[1], 16) + 24938 * v187[1], 65535), 16), 4294967295)
+						local v189 = bit32.bxor(bit32.bor(2147483647, n8), 2147483647)
+						local v190 = bit32.band(n8, 409107392)
+						local v191 = bit32.bor(n8, 2147483647)
+						local v192 = bit32.bxor(v190, v191)
+						local v193 = table.pack(bit32.band(v189, 4294967295))
+						local v194 = table.pack(bit32.band(v192, 4294967295))
+						local v195 = table.pack(bit32.band(v193[1], 65535))
+						local v196 = table.pack(bit32.rshift(v193[1], 16))
+						local v197 = table.pack(bit32.band(v194[1], 65535))
+						local v198 = table.pack(bit32.band(bit32.band(v195[1] * v197[1] + bit32.lshift(bit32.band(v195[1] * bit32.rshift(v194[1], 16) + v196[1] * v197[1], 65535), 16), 4294967295), 4294967295))
+						local v199 = table.pack(bit32.band(v198[1], 65535))
+						local n19 = v62 + n15 + n17 + n18 + v178 + v188 + bit32.band(64320 * v199[1] + bit32.lshift(bit32.band(64320 * bit32.rshift(v198[1], 16) + 40597 * v199[1], 65535), 16), 4294967295)
+						v4[v7] = bit32.bxor(v4[v7], n19)
+						local n20 = n2 + 248235177
+						local v200 = table.pack(bit32.band(v7, 4294967295))
+						local v201 = table.pack(bit32.band(v200[1], 65535))
+						local v202 = bit32.band(v201[1] * 45239 + bit32.lshift(bit32.band(v201[1] * 4114 + bit32.rshift(v200[1], 16) * 45239, 65535), 16), 4294967295)
+						local v203 = table.pack(bit32.band(n19, 4294967295))
+						local v204 = table.pack(bit32.band(v203[1], 65535))
+						local n21 = 2970211589 + bit32.band(54535 * v204[1] + bit32.lshift(bit32.band(54535 * bit32.rshift(v203[1], 16) + 45321 * v204[1], 65535), 16), 4294967295)
+						local v205 = table.pack(bit32.band(v202, 4294967295))
+						local v206 = table.pack(bit32.band(v205[1], 65535))
+						local v207 = bit32.band(65533 * v206[1] + bit32.lshift(bit32.band(65533 * bit32.rshift(v205[1], 16) + 65535 * v206[1], 65535), 16), 4294967295)
+						local v208 = bit32.band(v202, n20)
+						local v209 = bit32.bxor(n20, n19, v208)
+						local v210 = table.pack(bit32.band(n19, 4294967295))
+						local v211 = table.pack(bit32.band(v209, 4294967295))
+						local v212 = table.pack(bit32.band(v210[1], 65535))
+						local v213 = table.pack(bit32.rshift(v210[1], 16))
+						local v214 = table.pack(bit32.band(v211[1], 65535))
+						local v215 = table.pack(bit32.band(bit32.band(v212[1] * v214[1] + bit32.lshift(bit32.band(v212[1] * bit32.rshift(v211[1], 16) + v213[1] * v214[1], 65535), 16), 4294967295), 4294967295))
+						local v216 = table.pack(bit32.band(v215[1], 65535))
+						local v217 = bit32.band(29723 * v216[1] + bit32.lshift(bit32.band(29723 * bit32.rshift(v215[1], 16) + 64377 * v216[1], 65535), 16), 4294967295)
+						local v218 = table.pack(bit32.band(n20, 4294967295))
+						local v219 = table.pack(bit32.band(v218[1], 65535))
+						local n22 = n21 + v207 + v217 + bit32.band(65535 * v219[1] + bit32.lshift(bit32.band(65535 * bit32.rshift(v218[1], 16) + 65535 * v219[1], 65535), 16), 4294967295)
+						local v220 = bit32.band(n19, 409107392)
+						local v221 = bit32.bnot(v202)
+						local v222 = table.pack(bit32.band(bit32.band(n19, v221), 4294967295))
+						local v223 = table.pack(bit32.band(v222[1], 65535))
+						local v224 = bit32.band(10999 * v223[1] + bit32.lshift(bit32.band(10999 * bit32.rshift(v222[1], 16) + 20214 * v223[1], 65535), 16), 4294967295)
+						local v225 = table.pack(bit32.band(bit32.bnot(n19), 4294967295))
+						local v226 = table.pack(bit32.band(v209, 4294967295))
+						local v227 = table.pack(bit32.band(v225[1], 65535))
+						local v228 = table.pack(bit32.rshift(v225[1], 16))
+						local v229 = table.pack(bit32.band(v226[1], 65535))
+						local v230 = table.pack(bit32.band(bit32.band(v227[1] * v229[1] + bit32.lshift(bit32.band(v227[1] * bit32.rshift(v226[1], 16) + v228[1] * v229[1], 65535), 16), 4294967295), 4294967295))
+						local v231 = table.pack(bit32.band(v230[1], 65535))
+						local n23 = v220 + v224 + bit32.band(29723 * v231[1] + bit32.lshift(bit32.band(29723 * bit32.rshift(v230[1], 16) + 64377 * v231[1], 65535), 16), 4294967295)
+						local v232 = bit32.band(n19, v202)
+						local v233 = table.pack(bit32.band(bit32.bnot(v232), 4294967295))
+						local v234 = table.pack(bit32.band(v233[1], 65535))
+						local v235 = bit32.band(54533 * v234[1] + bit32.lshift(bit32.band(54533 * bit32.rshift(v233[1], 16) + 45321 * v234[1], 65535), 16), 4294967295)
+						local v236 = table.pack(bit32.band(bit32.bor(v202, n19, n20), 4294967295))
+						local v237 = table.pack(bit32.band(v236[1], 65535))
+						local v238 = bit32.band(4 * v237[1] + bit32.lshift(bit32.band(4 * bit32.rshift(v236[1], 16) + 0 * v237[1], 65535), 16), 4294967295)
+						local v239 = table.pack(bit32.band(v209, 4294967295))
+						local v240 = table.pack(bit32.band(v239[1], 65535))
+						local n24 = n22 + n23 + v235 + v238 + bit32.band(29721 * v240[1] + bit32.lshift(bit32.band(29721 * bit32.rshift(v239[1], 16) + 64377 * v240[1], 65535), 16), 4294967295)
+						local v241 = bit32.band(n24, 2147483647)
+						local v242 = table.pack(bit32.band(bit32.bnot(v241), 4294967295))
+						local v243 = table.pack(bit32.band(v242[1], 65535))
+						local n25 = 280410928 + bit32.band(47920 * v243[1] + bit32.lshift(bit32.band(47920 * bit32.rshift(v242[1], 16) + 4278 * v243[1], 65535), 16), 4294967295)
+						local v244 = bit32.bxor(n24, 2147483647)
+						local v245 = table.pack(bit32.band(bit32.band(2147483647, v244), 4294967295))
+						local v246 = table.pack(bit32.band(v245[1], 65535))
+						local n26 = n25 + 1867072719 + bit32.band(17615 * v246[1] + bit32.lshift(bit32.band(17615 * bit32.rshift(v245[1], 16) + 61257 * v246[1], 65535), 16), 4294967295)
+						local v247 = bit32.band(n24, 2147483647)
+						local v248 = table.pack(bit32.band(bit32.bnot(v247), 4294967295))
+						local v249 = table.pack(bit32.band(v248[1], 65535))
+						local n27 = 4030235860 + bit32.band(34004 * v249[1] + bit32.lshift(bit32.band(34004 * bit32.rshift(v248[1], 16) + 61496 * v249[1], 65535), 16), 4294967295)
+						local v250 = bit32.band(n24, 2147483647)
+						local v251 = table.pack(bit32.band(bit32.bxor(2147483647, v250), 4294967295))
+						local v252 = table.pack(bit32.band(v251[1], 65535))
+						local v253 = table.pack(bit32.band(n26 - n27 + 2412215083 + bit32.band(31531 * v252[1] + bit32.lshift(bit32.band(31531 * bit32.rshift(v251[1], 16) + 4039 * v252[1], 65535), 16), 4294967295), 4294967295))
+						local v254 = table.pack(bit32.band(v253[1], 65535))
+						local v255 = bit32.band(30740 * v254[1] + bit32.lshift(bit32.band(30740 * bit32.rshift(v253[1], 16) + 36655 * v254[1], 65535), 16), 4294967295)
+						local v256 = table.pack(bit32.band(n24, 4294967295))
+						local v257 = table.pack(bit32.band(v256[1], 65535))
+						local v258 = bit32.band(5312 * v257[1] + bit32.lshift(bit32.band(5312 * bit32.rshift(v256[1], 16) + 38634 * v257[1], 65535), 16), 4294967295)
+						local v259 = bit32.band(n24, 2147483647)
+						local v260 = bit32.bnot(v259)
+						local v261 = table.pack(bit32.band(n24, 4294967295))
+						local v262 = table.pack(bit32.band(v260, 4294967295))
+						local v263 = table.pack(bit32.band(v261[1], 65535))
+						local v264 = table.pack(bit32.rshift(v261[1], 16))
+						local v265 = table.pack(bit32.band(v262[1], 65535))
+						local v266 = table.pack(bit32.band(bit32.band(v263[1] * v265[1] + bit32.lshift(bit32.band(v263[1] * bit32.rshift(v262[1], 16) + v264[1] * v265[1], 65535), 16), 4294967295), 4294967295))
+						local v267 = table.pack(bit32.band(v266[1], 65535))
+						local n28 = v258 + bit32.band(1821 * v267[1] + bit32.lshift(bit32.band(1821 * bit32.rshift(v266[1], 16) + 60552 * v267[1], 65535), 16), 4294967295)
+						local v268 = bit32.bnot(n24)
+						local v269 = bit32.band(n24, 2147483647)
+						local v270 = table.pack(bit32.band(bit32.bxor(v268, v269), 4294967295))
+						local v271 = table.pack(bit32.band(v270[1], 65535))
+						local v272 = table.pack(bit32.band(bit32.band(65535 * v271[1] + bit32.lshift(bit32.band(65535 * bit32.rshift(v270[1], 16) + 32767 * v271[1], 65535), 16), 4294967295), 4294967295))
+						local v273 = table.pack(bit32.band(v272[1], 65535))
+						local n29 = n28 + 768878975 + bit32.band(63715 * v273[1] + bit32.lshift(bit32.band(63715 * bit32.rshift(v272[1], 16) + 4983 * v273[1], 65535), 16), 4294967295)
+						local v274 = bit32.band(n24, 2147483647)
+						local v275 = table.pack(bit32.band(bit32.bnot(v274), 4294967295))
+						local v276 = table.pack(bit32.band(v275[1], 65535))
+						local v277 = bit32.band(8953 * v276[1] + bit32.lshift(bit32.band(8953 * bit32.rshift(v275[1], 16) + 28666 * v276[1], 65535), 16), 4294967295)
+						local v278 = bit32.band(n24, 2147483647)
+						local v279 = bit32.bnot(v278)
+						local v280 = bit32.band(n24, 2147483647)
+						local v281 = bit32.bnot(v280)
+						local v282 = table.pack(bit32.band(v279, 4294967295))
+						local v283 = table.pack(bit32.band(v281, 4294967295))
+						local v284 = table.pack(bit32.band(v282[1], 65535))
+						local v285 = table.pack(bit32.rshift(v282[1], 16))
+						local v286 = table.pack(bit32.band(v283[1], 65535))
+						local v287 = table.pack(bit32.band(bit32.band(v284[1] * v286[1] + bit32.lshift(bit32.band(v284[1] * bit32.rshift(v283[1], 16) + v285[1] * v286[1], 65535), 16), 4294967295), 4294967295))
+						local v288 = table.pack(bit32.band(v287[1], 65535))
+						local n30 = v277 + bit32.band(1821 * v288[1] + bit32.lshift(bit32.band(1821 * bit32.rshift(v287[1], 16) + 60552 * v288[1], 65535), 16), 4294967295)
+						local v289 = bit32.band(n24, 2147483647)
+						local v290 = table.pack(bit32.band(bit32.bxor(v268, v289), 4294967295))
+						local v291 = table.pack(bit32.band(v290[1], 65535))
+						local v292 = bit32.band(3491 * v291[1] + bit32.lshift(bit32.band(3491 * bit32.rshift(v290[1], 16) + 43618 * v291[1], 65535), 16), 4294967295)
+						local v293 = bit32.band(n24, 2147483647)
+						local v294 = bit32.bxor(v268, v293)
+						local v295 = table.pack(bit32.band(n24, 4294967295))
+						local v296 = table.pack(bit32.band(v294, 4294967295))
+						local v297 = table.pack(bit32.band(v295[1], 65535))
+						local v298 = table.pack(bit32.rshift(v295[1], 16))
+						local v299 = table.pack(bit32.band(v296[1], 65535))
+						local v300 = table.pack(bit32.band(bit32.band(v297[1] * v299[1] + bit32.lshift(bit32.band(v297[1] * bit32.rshift(v296[1], 16) + v298[1] * v299[1], 65535), 16), 4294967295), 4294967295))
+						local v301 = table.pack(bit32.band(v300[1], 65535))
+						local v302 = bit32.band(63715 * v301[1] + bit32.lshift(bit32.band(63715 * bit32.rshift(v300[1], 16) + 4983 * v301[1], 65535), 16), 4294967295)
+						local v303 = bit32.bor(n24, 2147483647)
+						local bxor = bit32.bxor
+						local v304 = bit32.band(n24, 2147483647)
+						local v305 = bxor(v268, v304)
+						local v306 = table.pack(bit32.band(v303, 4294967295))
+						local v307 = table.pack(bit32.band(v305, 4294967295))
+						local v308 = table.pack(bit32.band(v306[1], 65535))
+						local v309 = table.pack(bit32.rshift(v306[1], 16))
+						local v310 = table.pack(bit32.band(v307[1], 65535))
+						local v311 = table.pack(bit32.band(bit32.band(v308[1] * v310[1] + bit32.lshift(bit32.band(v308[1] * bit32.rshift(v307[1], 16) + v309[1] * v310[1], 65535), 16), 4294967295), 4294967295))
+						local v312 = table.pack(bit32.band(v311[1], 65535))
+						n2 = v255 + n29 + n30 + v292 + v302 + bit32.band(1821 * v312[1] + bit32.lshift(bit32.band(1821 * bit32.rshift(v311[1], 16) + 60552 * v312[1], 65535), 16), 4294967295)
+						continue
+					end
+
+					break
+				end
+
+				tbl2 = tbl3[2]
+				continue
+			end
+
+			break
+		end
+
+		local v2 = arg3[4]
+		local n3 = buffer.len(v2) - 17 - 17
+		local n4 = 17 + 274946521 % n3
+		local n5 = 17
+
+		while true do
+			local n6 = n5 + (n4 + bit32.band(n2, 255) + 1) % n3
+			local v3 = buffer.readu32(v2, n4)
+			local v4 = buffer.readi16(v2, n6)
+			local lshift = bit32.lshift
+			local v5 = bit32.band(bit32.bxor(bit32.bxor(n2, v3) + lshift(bit32.band(v4, 255), 3) + 248235177, n4), 2147483647)
+			local writei32 = buffer.writei32
+			local v6 = bit32.bor(bit32.band(bit32.bxor(v3, v4, v5), 2147483647), 1885031168)
+			writei32(v2, n4, v6)
+			local writei322 = buffer.writei32
+			local v7 = bit32.bor(bit32.band(bit32.bxor(v4, bit32.rshift(v5, 8), n4), 2147483647), 97687040)
+			writei322(v2, n6, v7)
+			n4 = n5 + (n4 + bit32.band(v5, 63) + 1) % n3
+			n2 = v5
+		end
+	end
+
+	fn(152908940, 401804819, {}, {}, {}, {}, {})
+	n = nil
+	local n2 = 264299223
+	local n3 = 740514
+
+	while true do
+		n2 += n3
+	end
+end
+
+-- function created 7-th by the script at run time
+local function payload_fn_7()
+	upv1(211849736, 4)
+	upv2 = 476448435
+	upv3()
+end
+
+-- function created 8-th by the script at run time
+local function payload_fn_8(arg, arg2)
+	if not upv2[not arg] and arg == nil then
+		if not upv2[not arg2] and arg2 == nil then
+			return true
+		end
+		return false
+	end
+
+	upv1[arg] = true
+	local v = upv1[arg2]
+	upv1[arg] = nil
+	return v
+end
+
+-- function created 9-th by the script at run time
+local function payload_fn_9(arg, arg2, arg3)
+	local n = 3
+
+	while true do
+		if not (n <= 3) then
+			if n <= 5 then
+				if n <= 4 then
+					upv2(211849736, 4)
+					upv3 = 476448435
+					upv4()
+					n = 7
+				else
+					upv2(211849736, 4)
+					upv3 = 476448435
+					upv4()
+					n = 6
+				end
+			elseif n <= 6 then
+				pcall(setmetatable, arg, nil)
+				n = 2
+			else
+				local v = getmetatable(arg)
+				n = not upv5(nil, v) and 5 or 6
+			end
+
+			continue
+		end
+
+		if n <= 1 then
+			if n <= 0 then
+				upv2(211849736, 4)
+				upv3 = 476448435
+				upv4()
+				local flag = arg3 == 355573648
+				n = 1
+				n = flag and n or 7
+			else
+				local kind = type(arg)
+				n = not upv5("table", kind) and 4 or 7
+			end
+
+			continue
+		end
+
+		if not (n <= 2) then
+			n = not upv1[not arg] and 0 or 1
+			continue
+		end
+		break
+	end
+end
+
+-- function created 10-th by the script at run time
+local function payload_fn_10(arg, arg2, arg3, ...)
+	local v = table.pack(string.byte(arg3, 1, -1))
+	local n = 2166136261
+	local tbl = { nil, nil, 1, 0, select("#", table.unpack(t146_12_1, 1, t146_12_1.n)) + 0 }
+
+	while true do
+		local v2 = tbl[3]
+		local v3 = tbl[5]
+		local n2 = tbl[4] + v2
+		local flag = v2 <= 0
+		local flag2 = flag and n2 >= v3 or not flag and n2 <= v3
+		tbl[4] = n2
+
+		if flag2 then
+			local v4 = bit32.bxor(n, v[n2])
+
+			if nil then
+				n = v4 * 16777619 % 4294967296
+			else
+				local n3 = v4 % 65536
+				n = (((v4 - n3) / 65536 * 403 + n3 * 256) * 65536 + n3 * 403) % 4294967296
+			end
+
+			continue
+		end
+
+		break
+	end
+
+	return (bit32.bxor(n, 178550505))
+end
+
+-- function created 11-th by the script at run time
+local function payload_fn_11(arg, arg2, arg3)
+	for k in arg, nil, nil do
+		arg2[upv1(436669670, arg3, k)] = nil
+	end
+
+	for k in arg2, nil, nil do
+		upv2(211849736, 4)
+		upv3 = 476448435
+		upv4()
+	end
+end
+
+-- function created 12-th by the script at run time
+local function payload_fn_12(arg, arg2, arg3, arg4)
+	local state = 1
+	local v, v2, n, n2, result, str, v3, v4, v5
+
+	while true do
+		if state == 1 then
+			v = arg2
+			v2 = arg4
+			state = 2
+		elseif state == 2 then
+			n = 924632572
+			n2 = 2933661728
+
+			if nil then
+				state = 3
+			else
+				state = 71
+			end
+		elseif state == 3 then
+			local kind = type(v)
+			upv7("function", kind)
+
+			if nil then
+				state = 4
+			else
+				state = 6
+			end
+		elseif state == 4 then
+			state = 5
+		elseif state == 5 then
+			upv8(211849736, 4)
+			upv9 = 476448435
+			upv10()
+			state = 6
+		elseif state == 6 then
+			state = 7
+		elseif state == 7 then
+			local flag = bit32.bxor(n, 40223938) ~= 125579298
+			state = 8
+		elseif state == 8 then
+			local ok
+			ok, result = pcall(setfenv, v, upv1)
+
+			if nil then
+				state = 10
+			else
+				state = 9
+			end
+		elseif state == 9 then
+			str = "'setfenv' cannot change environment of given object"
+			state = 12
+		elseif state == 10 then
+			str = "'setfenv' cannot change environment of given object"
+			state = 11
+		elseif state == 11 then
+			local v6 = upv8
+			local v7 = bit32.band(n, 129654050)
+			v6(211849736, 4)
+			upv9 = 476448435
+			upv10()
+			n = bit32.bxor(v7, 805601500)
+			state = 12
+		elseif state == 12 then
+			state = 13
+		elseif state == 13 then
+			upv7(str, result)
+
+			if nil then
+				state = 14
+			else
+				state = 15
+			end
+		elseif state == 14 then
+			upv8(211849736, 4)
+			upv9 = 476448435
+			upv10()
+			state = 15
+		elseif state == 15 then
+			state = 16
+		elseif state == 16 then
+			local v6
+			v6, str, result, v3, v4, v5 = upv2(v, "slnaf")
+			upv7("[C]", v6)
+
+			if nil then
+				state = 17
+			else
+				state = 18
+			end
+		elseif state == 17 then
+			upv8(211849736, 4)
+			upv9 = 476448435
+			upv10()
+			state = 18
+		elseif state == 18 then
+			n2 = bit32.bxor(n2, 266313542)
+
+			if not upv7(-1, str) then
+				state = 19
+			else
+				state = 21
+			end
+		elseif state == 19 then
+			state = 20
+		elseif state == 20 then
+			upv8(211849736, 4)
+			upv9 = 476448435
+			upv10()
+			state = 21
+		elseif state == 21 then
+			state = 22
+		elseif state == 22 then
+			upv7(0, v3)
+
+			if nil then
+				state = 23
+			else
+				state = 24
+			end
+		elseif state == 23 then
+			upv8(211849736, 4)
+			upv9 = 476448435
+			upv10()
+			state = 24
+		elseif state == 24 then
+			state = 25
+		elseif state == 25 then
+			upv7(true, v4)
+
+			if nil then
+				state = 26
+			else
+				state = 27
+			end
+		elseif state == 26 then
+			upv8(211849736, 4)
+			upv9 = 476448435
+			upv10()
+			n2 = n2 - 1526069478 + 1526069478
+			state = 27
+		elseif state == 27 then
+			upv7(v, v5)
+
+			if nil then
+				state = 28
+			else
+				state = 30
+			end
+		elseif state == 28 then
+			state = 29
+		elseif state == 29 then
+			upv8(211849736, 4)
+			upv9 = 476448435
+			upv10()
+			state = 30
+		elseif state == 30 then
+			if v2 then
+				state = 31
+			else
+				state = 33
+			end
+		elseif state == 31 then
+			upv7(v2, result)
+
+			if nil then
+				state = 32
+			else
+				state = 33
+			end
+		elseif state == 32 then
+			local v6 = upv8
+			local v7 = bit32.bxor(n, 4075128878)
+			v6(211849736, 4)
+			upv9 = 476448435
+			upv10()
+			n = v7 - 2396817366
+			state = 33
+		elseif state == 33 then
+			state = 34
+		elseif state == 34 then
+			if upv3 then
+				state = 63
+			else
+				state = 35
+			end
+		elseif state == 35 then
+			if nil then
+				state = 36
+			else
+				state = 70
+			end
+		elseif state == 36 then
+			if nil <= 13 then
+				state = 50
+			else
+				state = 37
+			end
+		elseif state == 37 then
+			if nil <= 20 then
+				state = 44
+			else
+				state = 38
+			end
+		elseif state == 38 then
+			if nil <= 23 then
+				state = 42
+			else
+				state = 39
+			end
+		elseif state == 39 then
+			if nil <= 25 then
+				state = 41
+			else
+				state = 40
+			end
+		elseif state == 40 then
+			if nil <= 26 then
+				state = 63
+			else
+				state = 11
+			end
+		elseif state == 41 then
+			if nil <= 24 then
+				state = 20
+			else
+				state = 30
+			end
+		elseif state == 42 then
+			if nil <= 21 then
+				state = 14
+			else
+				state = 43
+			end
+		elseif state == 43 then
+			if nil <= 22 then
+				state = 26
+			else
+				state = 70
+			end
+		elseif state == 44 then
+			if nil <= 16 then
+				state = 48
+			else
+				state = 45
+			end
+		elseif state == 45 then
+			if nil <= 18 then
+				state = 47
+			else
+				state = 46
+			end
+		elseif state == 46 then
+			if nil <= 19 then
+				state = 2
+			else
+				state = 27
+			end
+		elseif state == 47 then
+			if nil <= 17 then
+				state = 5
+			else
+				state = 29
+			end
+		elseif state == 48 then
+			if nil <= 14 then
+				state = 23
+			else
+				state = 49
+			end
+		elseif state == 49 then
+			if nil <= 15 then
+				state = 25
+			else
+				state = 7
+			end
+		elseif state == 50 then
+			if nil <= 6 then
+				state = 57
+			else
+				state = 51
+			end
+		elseif state == 51 then
+			if nil <= 9 then
+				state = 55
+			else
+				state = 52
+			end
+		elseif state == 52 then
+			if nil <= 11 then
+				state = 54
+			else
+				state = 53
+			end
+		elseif state == 53 then
+			if nil <= 12 then
+				state = 32
+			else
+				state = 18
+			end
+		elseif state == 54 then
+			if nil <= 10 then
+				state = 67
+			else
+				state = 69
+			end
+		elseif state == 55 then
+			if nil <= 7 then
+				state = 8
+			else
+				state = 56
+			end
+		elseif state == 56 then
+			if nil <= 8 then
+				state = 13
+			else
+				state = 16
+			end
+		elseif state == 57 then
+			if nil <= 2 then
+				state = 61
+			else
+				state = 58
+			end
+		elseif state == 58 then
+			if nil <= 4 then
+				state = 60
+			else
+				state = 59
+			end
+		elseif state == 59 then
+			if nil <= 5 then
+				state = 22
+			else
+				state = 34
+			end
+		elseif state == 60 then
+			if nil <= 3 then
+				state = 65
+			else
+				state = 72
+			end
+		elseif state == 61 then
+			if nil <= 0 then
+				state = 3
+			else
+				state = 62
+			end
+		elseif state == 62 then
+			if nil <= 1 then
+				state = 31
+			else
+				state = 17
+			end
+		elseif state == 63 then
+			local v6 = upv4(v)
+			upv7(true, v6)
+
+			if nil then
+				state = 64
+			else
+				state = 66
+			end
+		elseif state == 64 then
+			state = 65
+		elseif state == 65 then
+			upv8(211849736, 4)
+			upv9 = 476448435
+			upv10()
+			state = 66
+		elseif state == 66 then
+			state = 67
+		elseif state == 67 then
+			local v6 = upv5(v)
+
+			if not upv7(false, v6) then
+				state = 68
+			else
+				state = 70
+			end
+		elseif state == 68 then
+			state = 69
+		elseif state == 69 then
+			upv8(211849736, 4)
+			upv9 = 476448435
+			upv10()
+			state = 70
+		elseif state == 70 then
+			state = 71
+		elseif state == 71 then
+			state = 72
+		elseif state == 72 then
+			return
+		end
+	end
+end
+
+-- function created 13-th by the script at run time
+local function payload_fn_13()
+	assert(0.19490810384423962)
+	getfenv(0)
+	type(0.92643824868952906)
+	typeof(0.57251082246534202)
+	select("#", 0.69492673978561903, 0.077584242112048951, 0.13744594624307949)
+	tonumber(0.61174450017952453)
+	tostring(0.77316137632686621)
+	rawequal(scratch, scratch)
+	local tbl = {}
+	next(tbl)
+	pairs(tbl)(tbl)
+	ipairs(tbl)(tbl, 1)
+	rawlen(tbl)
+	rawget(tbl, 0.72969697478113837)
+	rawset(tbl, 0.022410957195544201, 0.29466111503737868)
+	getmetatable(tbl)
+	setmetatable(tbl, tbl)
+	setmetatable(tbl, nil)
+	upv1(10852, "slnaf")
+	bit32.bor(109, 208)
+	bit32.bxor(204, 75)
+	bit32.band(228, 31)
+	bit32.bnot(134)
+	bit32.lshift(26, 24)
+	bit32.rshift(110, 19)
+	bit32.lrotate(57, 1)
+	bit32.rrotate(125, 25)
+	bit32.countlz(104)
+	bit32.countrz(190)
+	local v = buffer.create(128)
+	buffer.len(v)
+	buffer.fromstring("")
+	buffer.tostring(v)
+	buffer.readi8(v, 17)
+	buffer.readu8(v, 20)
+	buffer.readi16(v, 20)
+	buffer.readu16(v, 9)
+	buffer.readi32(v, 9)
+	buffer.readu32(v, 4)
+	buffer.readf32(v, 12)
+	buffer.readf64(v, 26)
+	buffer.writei8(v, 29, -95)
+	buffer.writeu8(v, 13, 123)
+	buffer.writei16(v, 13, -22529)
+	buffer.writeu16(v, 27, 58383)
+	buffer.writei32(v, 17, -2061910737)
+	buffer.writeu32(v, 2, 1282658724)
+	buffer.writef32(v, 24, 14252)
+	buffer.writef64(v, 18, 28899)
+	buffer.readstring(v, 14, 11)
+	buffer.writestring(v, 21, "Luraph", 0)
+	buffer.readbits(v, 211, 24)
+	buffer.writebits(v, 38, 3, 818490583)
+	buffer.copy(v, 32, v, 0, 16)
+	buffer.fill(v, 0, 239, 21)
+	local v2 = upv2.new()
+	v2:NextInteger(15, 384)
+	v2:NextNumber(9, 787)
+	v2:NextUnitVector()
+	v2:NextNumber()
+	v2:Shuffle({})
+	v2:Clone()
+	local n = Vector3.new(0.36199006, 0.25054455, 0.3590625) + Vector3.new(0.24420778, 0.6849509, 0.57623744)
+	local vector_ = Vector3.new(0.36199006, 0.25054455, 0.3590625)
+	local vector_2 = Vector3.new(0.24420778, 0.6849509, 0.57623744)
+	local vector_3 = Vector3.new(1, 0, 0)
+	local v3 = upv3.new()
+	local v4 = upv3.new(vector_)
+	upv3.Angles(0.60603588149602461, 0.80395399956728986, 0.1583023104331942)
+	local xyz = Enum.RotationOrder.XYZ
+	upv3.new(vector_, n)
+	local vector_4 = Vector3.new(0, 1, 0)
+	upv3.new(vector_.X, vector_.Y, vector_.Z)
+	upv3.new(vector_.X, vector_.Y, vector_.Z, 0, 0, 0, 1)
+	upv3.new(vector_.X, vector_.Y, vector_.Z, 1, 0, 0, 0, 1, 0, 0, 0, 1)
+	upv3.lookAt(vector_, n, vector_4)
+	upv3.lookAlong(vector_, vector_2, vector_4)
+	upv3.fromEulerAnglesXYZ(0.60603588149602461, 0.80395399956728986, 0.1583023104331942)
+	upv3.fromEulerAnglesYXZ(0.60603588149602461, 0.80395399956728986, 0.1583023104331942)
+	upv3.fromOrientation(0.60603588149602461, 0.80395399956728986, 0.1583023104331942)
+	upv3.fromAxisAngle(vector_2.Unit, 0.60603588149602461)
+	upv3.fromRotationBetweenVectors(vector_3, vector_4)
+	upv3.fromMatrix(vector_, vector_3, vector_4, Vector3.new(0, 0, 1))
+	upv3.fromEulerAngles(0.60603588149602461, 0.80395399956728986, 0.1583023104331942, xyz)
+	v3:Inverse()
+	v3:Orthonormalize()
+	v3:Lerp(v4, 0.61426829366405467)
+	v3:ToWorldSpace(v4)
+	v3:ToObjectSpace(v4)
+	v3:ToEulerAnglesXYZ()
+	v3:ToEulerAnglesYXZ()
+	v3:PointToWorldSpace(vector_)
+	v3:PointToObjectSpace(vector_)
+	v3:VectorToWorldSpace(vector_2)
+	v3:VectorToObjectSpace(vector_2)
+	v3:ToEulerAngles(xyz)
+	v3:GetComponents()
+	v3:ToOrientation()
+	v3:ToAxisAngle()
+	v3:FuzzyEq(v4)
+	v3:AngleBetween(v4)
+	local vector_5 = Vector3.new(0.5613789, 0.92548156, 0.49762103)
+	local vector_6 = Vector3.new(0.7967932, 0.15171073, 0.08551837)
+	upv4.FromAxis(Enum.Axis.X)
+	upv4.FromNormalId(Enum.NormalId.Top)
+	vector_5:Abs()
+	vector_5:Ceil()
+	vector_5:Floor()
+	vector_5:Sign()
+	vector_5:Dot(vector_6)
+	vector_5:Cross(vector_6)
+	vector_5:Angle(vector_6)
+	vector_5:FuzzyEq(vector_6)
+	vector_5:Lerp(vector_6, 0.61537441201469489)
+	vector_5:Max(vector_6)
+
+	vector_5:Min(vector_6)
+	;(Vector2.new(0.61152452230453491, 0.2495693564414978)):Abs()
+	;(Vector2.new(0.61152452230453491, 0.2495693564414978)):Ceil()
+	;(Vector2.new(0.61152452230453491, 0.2495693564414978)):Floor()
+	;(Vector2.new(0.61152452230453491, 0.2495693564414978)):Sign()
+	;(Vector2.new(0.61152452230453491, 0.2495693564414978)):Dot(Vector2.new(0.94483035802841187, 0.49274951219558716))
+	;(Vector2.new(0.61152452230453491, 0.2495693564414978)):Cross(Vector2.new(0.94483035802841187, 0.49274951219558716))
+	;(Vector2.new(0.61152452230453491, 0.2495693564414978)):Angle(Vector2.new(0.94483035802841187, 0.49274951219558716))
+	;(Vector2.new(0.61152452230453491, 0.2495693564414978)):FuzzyEq(Vector2.new(0.94483035802841187, 0.49274951219558716))
+	;(Vector2.new(0.61152452230453491, 0.2495693564414978)):Lerp(Vector2.new(0.94483035802841187, 0.49274951219558716), 0.46336529077172073)
+	local vector2 = Vector2.new(0.61152452230453491, 0.2495693564414978)
+	local vector22 = Vector2.new(0.94483035802841187, 0.49274951219558716)
+	vector2:Max(vector22)
+	vector2:Min(vector22)
+	local v5 = upv5(0.73319336911837918, 31)
+	local v6 = upv5(-0.64045628619113204, -121)
+	upv6(-0.50213764457302301, -79, 0.6835776353190457, 72):Lerp(upv6(-0.015610496258734452, 103, 0.20573810514279023, -119), 0.93009658864657185)
+	local v7 = Enum.HumanoidRigType:FromValue(0).EnumType:FromName("R6").EnumType.R6.EnumType:FromValue(1)
+	local enumType = v7.EnumType
+	enumType:GetEnumItems()
+	enumType:FromName(v7.Name)
+	enumType:FromValue(v7.Value)
+	local v8 = upv6(0.048753867164851722, 34, 0.15434859699202916, 14)
+	local v9 = upv6(0.002337568731584222, 16, 0.044055360885603273, 8)
+	local v10 = upv6(0.60447967278251302, 167, 0.86510690238260735, 158)
+	upv7.Size = upv6(0, 353, 0, 387)
+	local v11 = upv8(v8, v9, v9)
+	local v12 = upv8(v8:Lerp(v10, 0.37221775673252544))
+	local tbl2 = {}
+	local v13 = upv8(v10)
+	tbl2[1] = v11
+	tbl2[2] = v13
+	upv9:GetControlPoints()
+	upv9:SetControlPoints(tbl2)
+	upv9:GetControlPoint(1)
+	upv9:GetLength()
+	upv9:GetBoundingRect()
+	upv9:GetMaxControlPoints()
+	upv9:GetPositionOnCurve(0.38207296393782353)
+	upv9:GetPositionOnCurveArcLength(0.88991780567936318)
+	upv9:GetTangentOnCurve(0.090993968602619657)
+	upv9:GetTangentOnCurveArcLength(0.1787818701935594)
+	upv9:UpdateControlPoint(1, tbl2[1])
+	upv9:InsertControlPoint(3, v12)
+	upv9:RemoveControlPoint(3)
+	local v14 = utf8.char(39, 994, 474887)
+	utf8.codepoint(v14, 1, #v14)
+	utf8.len(v14)
+	utf8.offset(v14, 1)
+	utf8.offset(v14, -1)
+	local v15, v16, v17 = utf8.codes(v14)
+	v15(v16, v17)
+	v15(v16, utf8.offset(v14, 1))
+	local v18 = utf8.char(99, 854)
+	utf8.nfcnormalize(v18)
+	utf8.nfdnormalize(v14)
+	utf8.graphemes(v18, 1, #v18)()
+	upv10 = (415345 * upv10 + 28151043) % 268435456
+	upv11 = (1 * upv11 + 54032590) % 268435456
+end
+
+-- function created 14-th by the script at run time
+local function payload_fn_14()
+	upv1 += 1
+
+	if nil then
+		setmetatable({}, { __index = upv2 })
+		local v = luraph_runtime2(table.pack(r12, r5, upv8, upv9, upv10), nil)
+		local v2 = upv3(v)
+		upv8(211849736, 4)
+		upv9 = 476448435
+		upv10()
+
+		if nil then
+			upv8(211849736, 4)
+			upv9 = 476448435
+			upv10()
+		end
+	end
+
+	if nil then
+		upv4()
+	end
+
+	upv6 = (1 * upv6 + 151291252) % 268435456
+	upv7 = (273169 * upv7 + 186702101) % 268435456
+end
+
+-- function created 15-th by the script at run time
+local function payload_fn_15()
+	upv1 = (10943 * upv1 + 221153163) % 268435456
+	upv2 = (1 * upv2 + 52538718) % 268435456
+end
+
+-- function created 16-th by the script at run time
+local function payload_fn_16()
+	upv1 = upv1 - upv1 % 2 + 1
+	upv2 = (943849 * upv2 + 66932843) % 268435456
+	upv2 = (680777 * upv2 + 32976199) % 268435456
+end
+
+-- function created 17-th by the script at run time
+local function payload_fn_17()
+	upv1 += 1
+
+	if upv1 == 2499 then
+		upv2()
+		upv3 = (168761 * upv3 + 159708319) % 268435456
+		upv4 = (1 * upv4 + 105157348) % 268435456
+		return
+	end
+
+	if nil then
+		upv5()
+	end
+
+	upv3 = (628769 * upv3 + 13652069) % 268435456
+	upv4 = (1 * upv4 + 158443002) % 268435456
+	upv6()
+end
+
+-- function created 18-th by the script at run time
+local function payload_fn_18(arg)
+	if arg == 19998 then
+		upv1()
+		upv2 = (321041 * upv2 + 32230933) % 268435456
+		upv3 = (1 * upv3 + 93526020) % 268435456
+		return
+	end
+
+	if arg == 19997 or arg == 4780 then
+		upv4(arg)
+	end
+
+	upv5(arg + 1)
+
+	if nil then
+		upv6(upv1, upv7)
+
+		if nil then
+			upv3 = upv3 - upv3 % 2 + 1
+			upv2 = (693085 * upv2 + 188218509) % 268435456
+			return
+		end
+
+		upv8()
+		upv9(upv1)
+
+		if nil then
+			upv3 = upv3 - upv3 % 2 + 1
+			upv2 = (535515 * upv2 + 78081269) % 268435456
+			upv2 = (911499 * upv2 + 148445605) % 268435456
+			return
+		end
+
+		upv6(upv10, upv11)
+
+		if nil then
+			upv3 = upv3 - upv3 % 2 + 1
+			upv2 = (220837 * upv2 + 21306197) % 268435456
+			upv2 = (464437 * upv2 + 37455393) % 268435456
+		end
+	end
+
+	upv2 = (300923 * upv2 + 179151065) % 268435456
+	upv3 = (1 * upv3 + 73916094) % 268435456
+end
+
+-- function created 19-th by the script at run time
+local function payload_fn_19()
+	coroutine.yield(upv1)
+	coroutine.yield(upv2)
+	upv3(211849736, 4)
+	upv4 = 476448435
+	upv5()
+end
+
+-- function created 20-th by the script at run time
+local function payload_fn_20()
+	upv1 = coroutine.running()
+	upv2(0)
+	upv3 = true
+	upv4(211849736, 4)
+	upv5 = 476448435
+	upv6()
+end
+
+-- function created 21-th by the script at run time
+local function payload_fn_21()
+	coroutine.yield()
+	upv1(211849736, 4)
+	upv2 = 476448435
+	upv3()
+end
+
+-- function created 22-th by the script at run time
+local function payload_fn_22(arg)
+	return (upv1(arg + 1, "f"))
+end
+
+-- function created 23-th by the script at run time
+local function payload_fn_23(arg, ...)
+	local v = upv7
+
+	if v[not arg] then
+		local n = 28163616
+
+		if not v then
+			bit32.bxor(n, 3658324671)
+		end
+
+		local fn = nil
+		local v2 = table.pack(bit32.band(n, 4294967295))
+		local v3 = table.pack(bit32.band(v2[1], 65535))
+		local n2 = bit32.band(27275 * v3[1] + bit32.lshift(bit32.band(27275 * bit32.rshift(v2[1], 16) + 608 * v3[1], 65535), 16), 4294967295) + 2417044981
+		local v4 = table.pack(bit32.band(bit32.bor(n, 131488127), 4294967295))
+		local v5 = table.pack(bit32.band(v4[1], 65535))
+		local v6 = bit32.band(38262 * v5[1] + bit32.lshift(bit32.band(38262 * bit32.rshift(v4[1], 16) + 64927 * v5[1], 65535), 16), 4294967295)
+		local v7 = table.pack(bit32.band(bit32.band(n, 131488127), 4294967295))
+		local v8 = table.pack(bit32.band(v7[1], 65535))
+		local n3 = n2 + v6 + bit32.band(38260 * v8[1] + bit32.lshift(bit32.band(38260 * bit32.rshift(v7[1], 16) + 64927 * v8[1], 65535), 16), 4294967295)
+
+		fn = function(...)
+			if not upv3(upv1(1), fn) then
+				upv4(211849736, 4)
+				upv5 = 476448435
+				upv6()
+			end
+
+			if not upv3(upv1(2), arg) then
+				upv4(211849736, 4)
+				upv5 = 476448435
+				upv6()
+			end
+
+			local v9 = xpcall
+
+			if not upv3(upv1(3), v9) then
+				upv4(211849736, 4)
+				upv5 = 476448435
+				upv6()
+			end
+
+			if not upv3(upv1(4), upv2) then
+				upv4(211849736, 4)
+				upv5 = 476448435
+				upv6()
+			end
+
+			return ...
+		end
+
+		local ok, result = xpcall(arg, fn, ...)
+
+		if upv7[not ok] then
+			upv4(211849736, 4)
+			upv5 = 476448435
+			upv6()
+		end
+
+		if upv3(result, "error in error handling") then
+			upv4(211849736, 4)
+			upv5 = 476448435
+			upv6()
+		end
+	end
+end
+
+-- function created 28-th by the script at run time
+local function payload_fn_28()
+	upv1.Parent = upv2
+end
+
+-- function created 29-th by the script at run time
+local function payload_fn_29(arg, arg2, arg3, arg4)
+	local n = 996748306
+	local n2 = 1479065191
+	local v, v2, n3 = string.find(arg2, "[:][^%d%D]*([%d]%d*)[%:\n\r][^%x%X]-")
+
+	if not v or not v2 then
+		upv1(211849736, 4)
+		upv3 = 476448435
+		local v3 = upv4
+		local v4 = bit32.bxor(n2, 3090453551)
+		v3()
+		n2 = v4 - 2280877025
+	end
+
+	upv1(v, 2)
+	upv1(v2, 2)
+	local v3 = string.match(arg2, "%:[^%s%S]*([0-9][0-9]*)[^%x%X]-[\r:\n][^%p%P]*")
+	local v4 = upv1
+	local v5
+
+	if n3 then
+		v5 = v3
+	else
+		v5 = v3
+		n3 = 0
+	end
+
+	v4(n3 + 0, 2)
+	upv1((v5 or 0) + 0, 2)
+	local v6 = string.gmatch(arg2, "%:[^%s%S]?([0-9]+)[:\n\r]")
+	local n4 = v6()
+	upv5(v6(), nil)
+
+	if nil then
+		upv1(211849736, 4)
+		upv3 = 476448435
+		upv4()
+	end
+
+	local v7 = upv1
+	local v8
+
+	if n4 then
+		v8 = v7
+	else
+		v8 = v7
+		n4 = 0
+	end
+
+	v8(n4 + 0, 2)
+	local sub = string.sub
+	local v9 = table.pack(bit32.band(n, 4294967295))
+	local v10 = table.pack(bit32.band(n2, 4294967295))
+	local v11 = table.pack(bit32.band(v9[1], 65535))
+	local v12 = table.pack(bit32.rshift(v9[1], 16))
+	local v13 = table.pack(bit32.band(v10[1], 65535))
+	local v14 = bit32.band(v11[1] * v13[1] + bit32.lshift(bit32.band(v11[1] * bit32.rshift(v10[1], 16) + v12[1] * v13[1], 65535), 16), 4294967295)
+	local v15 = sub(arg2, v + 1, v2 - 1)
+	local n5 = n2 - 2010909163
+	local v16 = string.char(string.byte(arg2, v + 1, v2 - 1))
+	local v17 = string.byte(arg2, v + 1, v + 1)
+	upv1(v15 + 0, 2)
+	upv1(v16 + 0, 2)
+	upv2(520377520, v17, arg)
+	local tbl = { v2 - 1 + 0, nil, nil, 1, v + 1 - 1 }
+	local n6 = 0
+	local v18 = tbl
+
+	while true do
+		local v19 = v18[4]
+		local v20 = v18[1]
+		local n7 = v18[5] + v19
+		local flag = v19 <= 0
+		v18[5] = n7
+
+		if n7 <= v20 then
+			n6 = n6 * 10 + string.byte(arg2, n7, n7) - 48
+		else
+			break
+		end
+	end
+
+	upv1(n6, 2)
+	local v19 = nil
+	local n7 = 0
+	local gsub = string.gsub
+	local v20 = table.pack(bit32.band(arg, 4294967295))
+	local v21 = table.pack(bit32.band(v20[1], 65535))
+	local v22 = bit32.band(51362 * v21[1] + bit32.lshift(bit32.band(51362 * bit32.rshift(v20[1], 16) + 12278 * v21[1], 65535), 16), 4294967295)
+	local v23 = table.pack(bit32.band(bit32.bnot(arg), 4294967295))
+	local v24 = table.pack(bit32.band(v23[1], 65535))
+	local n8 = 1754461362 + v22 + bit32.band(51362 * v24[1] + bit32.lshift(bit32.band(51362 * bit32.rshift(v23[1], 16) + 12278 * v24[1], 65535), 16), 4294967295)
+
+	local v25, v26 = gsub(arg2, "%:[^%u%U]*(%d%d*)[^%c%C]?[\r%:\n]", function(arg5)
+		v19 = arg5
+		n7 += 1
+	end, 1)
+
+	upv5(n7, 1)
+	local v27
+
+	if nil then
+		v27 = v26
+		upv1(211849736, 4)
+		upv3 = 476448435
+		upv4()
+	else
+		v27 = v26
+	end
+
+	upv5(v27, 1)
+
+	if nil then
+		upv1(211849736, 4)
+		upv3 = 476448435
+		upv4()
+		local bxor = bit32.bxor
+		local v28 = bit32.bxor(arg4, 0)
+		n5 = bit32.bxor(bxor(n5, v28), 319981672)
+	end
+
+	upv1((v19 or 0) + 0, 2)
+	upv5(string.sub(arg2, 2, 2), arg3)
+
+	if nil then
+		upv1(211849736, 4)
+		upv3 = 476448435
+		upv4()
+	end
+
+	upv2(520377520, string.byte(arg2, 2, 2), arg)
+end
+
+-- function created 31-th by the script at run time
+local function payload_fn_31(arg)
+	type(171576312)
+	local n = 3238320019
+	local n2 = 853579638
+	local v = string.match(arg, "[%:][^%d%D]-(%d+)[^%x%X]*[\r:\n]")
+	local v2 = string.gmatch(arg, "%:[^%u%U]?([0-9][0-9]*)[\n%:\r]")()
+	local n3 = 2634974721 + n2
+	local v3, v4 = string.find(arg, "[:](%d%d*)[\n\r%:]")
+	local n4 = 9010983336
+
+	if not v3 or not v4 then
+		upv4(211849736, 4)
+		upv5 = 476448435
+		upv6()
+	end
+
+	local str = string.sub(arg, v3 + 1, v4 - 1)
+	local char = string.char
+	local v5 = table.pack(string.byte(arg, v3 + 1, v4 - 1))
+	local v6 = bit32.bxor(n4, 472056303)
+	local v7 = char(table.unpack(v5, 1, v5.n))
+	local v8 = nil
+	local v9 = str
+	local n5 = 0
+	local fn = nil
+
+	fn = function(arg2)
+		upv3(upv1(1, "f"), fn)
+
+		if nil then
+			upv4(211849736, 4)
+			upv5 = 476448435
+			upv6()
+		end
+
+		local gsub = string.gsub
+		upv3(upv1(2, "f"), gsub)
+
+		if nil then
+			upv4(211849736, 4)
+			upv5 = 476448435
+			upv6()
+		end
+
+		upv3(upv1(3, "f"), upv2)
+
+		if nil then
+			upv4(211849736, 4)
+			upv5 = 476448435
+			upv6()
+		end
+
+		v8 = arg2
+		n5 += 1
+	end
+
+	local v10, v11 = string.gsub(arg, "[%:]([0-9]+)[^%s%S]?[\n%:\r][^%w%W]-", fn, 1)
+	local n6 = n2 + 4122557432
+
+	if not upv3(n5, 1) then
+		upv4(211849736, 4)
+		upv5 = 476448435
+		upv6()
+	else
+	end
+
+	upv3(v11, 1)
+
+	if nil then
+		upv4(211849736, 4)
+		upv5 = 476448435
+		upv6()
+	end
+
+	local flag = not v
+	local v12 = bit32.bxor(n6, 1343961717)
+	local flag2 = flag or not v2
+	flag2 = flag2 or not v9
+	flag2 = flag2 or not v7
+
+	if flag2 or not v8 then
+		upv4(211849736, 4)
+		upv5 = 476448435
+		upv6()
+	end
+
+	local n7 = v + 0
+	local n8 = v2 + 0
+	local n9 = v9 + 0
+	local n10 = v7 + 0
+	local n11 = v8 + 0
+	upv3(v, v2)
+	local v13
+
+	if nil then
+		v13 = n8
+		upv4(211849736, 4)
+		upv5 = 476448435
+		upv6()
+	else
+		v13 = n8
+	end
+
+	upv3(v2, v9)
+
+	if nil then
+		upv4(211849736, 4)
+		upv5 = 476448435
+		upv6()
+	end
+
+	upv3(v9, v7)
+
+	if nil then
+		local n12 = n3 // 180
+		upv4(211849736, 4)
+		upv5 = 476448435
+		upv6()
+		local flag3 = bit32.bxor(n12, 15854526) ~= 419064419
+		n3 = n12 - 825793794
+	end
+
+	local v14 = upv3
+	bit32.bxor(n, 2359820910)
+	v14(v7, v8)
+
+	if nil then
+		upv4(211849736, 4)
+		upv5 = 476448435
+		upv6()
+	end
+
+	upv3(n7, v13)
+
+	if nil then
+		upv4(211849736, 4)
+		upv5 = 476448435
+		upv6()
+	end
+
+	local n12 = n3 - 2432680529
+	upv3(v13, n9)
+
+	if nil then
+		upv4(211849736, 4)
+		upv5 = 476448435
+		upv6()
+	end
+
+	if not upv3(n9, n10) then
+		upv4(211849736, 4)
+		upv5 = 476448435
+		upv6()
+	end
+
+	upv3(n10, n11)
+
+	if nil then
+		local v15 = upv4
+		local v16 = table.pack(bit32.band(v12, 4294967295))
+		local v17 = table.pack(bit32.band(n12, 4294967295))
+		local v18 = table.pack(bit32.band(v16[1], 65535))
+		local v19 = table.pack(bit32.rshift(v16[1], 16))
+		local v20 = table.pack(bit32.band(v17[1], 65535))
+		local v21 = bit32.band(v18[1] * v20[1] + bit32.lshift(bit32.band(v18[1] * bit32.rshift(v17[1], 16) + v19[1] * v20[1], 65535), 16), 4294967295)
+		v15(211849736, 4)
+		upv5 = 476448435
+		upv6()
+	end
+
+	return n7
+end
+
+-- function created 33-th by the script at run time
+local function payload_fn_33(arg, arg2, arg3, arg4)
+	local v = bit32.bxor(arg4, 0)
+	local n = 1092718447
+	local tbl = {}
+	local n2 = buffer.readu8(arg, arg3)
+	local v2 = table.pack(bit32.band(arg4, 4294967295))
+	local v3 = table.pack(bit32.band(v2[1], 65535))
+	local n3 = bit32.band(29936 * v3[1] + bit32.lshift(bit32.band(29936 * bit32.rshift(v2[1], 16) + 25390 * v3[1], 65535), 16), 4294967295) + 2943948512
+	local n4 = 1663988976
+	local n5 = bit32.band(776635033, n)
+	local v4 = table.pack(bit32.band(bit32.band(238705714, arg4), 4294967295))
+	local v5 = table.pack(bit32.band(v4[1], 65535))
+	local v6 = bit32.band(5664 * v5[1] + bit32.lshift(bit32.band(5664 * bit32.rshift(v4[1], 16) + 14755 * v5[1], 65535), 16), 4294967295)
+	local v7 = table.pack(bit32.band(bit32.bxor(arg4, 238705714), 4294967295))
+	local v8 = table.pack(bit32.band(v7[1], 65535))
+	local n6 = n3 + v6 + bit32.band(35601 * v8[1] + bit32.lshift(bit32.band(35601 * bit32.rshift(v7[1], 16) + 40145 * v8[1], 65535), 16), 4294967295)
+	local n7, v9
+
+	if nil then
+		n7 = arg3 + 1
+	else
+		local v10 = buffer.readu8(arg, arg3 + 1)
+
+		if nil then
+			bit32.bxor(v, n4)
+			n2 = (n2 - 128) * 128 + v10
+			n7 = arg3 + 2
+			n = n - 1290295132 + 1290295132
+		else
+			v9 = buffer.readu8(arg, arg3 + 2)
+
+			if nil then
+				n2 = (n2 - 128) * 16384 + v10 - 128 + v9 * 128
+				n7 = arg3 + 3
+			else
+				local v11 = buffer.readu8(arg, arg3 + 3)
+				n2 = (n2 - 128) * 128 + (v10 - 128) * 16384 + (v9 - 128) * 2097152 + v11 % 128 + (v11 - v11 % 128) * 2097152
+				n7 = arg3 + 4
+			end
+		end
+	end
+
+	local v10 = buffer.readu8(arg, n7)
+	local n8 = n7 + 1
+	tbl[7] = v10 ~= 0
+	local n9 = buffer.readu8(arg, n8)
+	local n10, n11, v11, tbl2, v12, v13, n12, flag, flag2, flag3, flag4, v14, n13, v15, v16, v17, n14, n15, v18, v19, v20, readu8, v21, v22, v23, v24
+
+	if nil then
+		n10 = n8 + 1
+
+		if n6 + 523222637 ~= 355732478 then
+			n11 = n9 - 74375
+			v11 = table.create(n11)
+			tbl[5] = v11
+			tbl2 = { nil, 0, nil, 1, n11 + 0 }
+
+			while true do
+				v12 = tbl2[4]
+				v13 = tbl2[5]
+				n12 = tbl2[2] + v12
+				flag = v12 <= 0
+				flag2 = not flag
+				flag3 = n12 >= v13
+				flag4 = n12 <= v13
+				flag3 = flag and flag3
+				flag2 = flag2 and flag4
+				flag3 = flag3 or flag2
+				tbl2[2] = n12
+
+				if flag3 then
+					v14 = n12
+					n13 = buffer.readu8(arg, n10)
+
+					if nil then
+						n10 += 1
+					else
+						v15 = buffer.readu8(arg, n10 + 1)
+
+						if nil then
+							n13 = (n13 - 128) * 128 + v15
+							n10 += 2
+						else
+							v16 = buffer.readu8(arg, n10 + 2)
+
+							if nil then
+								n13 = (n13 - 128) * 16384 + v15 - 128 + v16 * 128
+								n10 += 3
+							else
+								v17 = buffer.readu8(arg, n10 + 3)
+								n13 = (n13 - 128) * 128 + (v15 - 128) * 16384 + (v16 - 128) * 2097152 + v17 % 128 + (v17 - v17 % 128) * 2097152
+								n10 += 4
+							end
+						end
+					end
+
+					v11[v14] = n13
+					continue
+				end
+
+				break
+			end
+
+			v9 = buffer.readu8(arg, n10)
+
+			if nil then
+				n14 = 4
+				n15 = n10 + 1
+				v18 = buffer.create(v9)
+				buffer.copy(v18, 0, arg, n15, v9)
+				tbl[n14] = v18
+				return (luraph_runtime3(tbl, n2, 138))
+			end
+
+			v19 = buffer.readu8(arg, n10 + 1)
+
+			if nil then
+				v20 = bit32.bxor(n6, 388993099)
+			else
+				readu8 = buffer.readu8
+				n6 = bit32.bxor(n6, 320247792)
+				v21 = bit32.bxor(n6, 0)
+				local v25 = table.pack(bit32.band(n, 4294967295))
+				local v26 = table.pack(bit32.band(v21, 4294967295))
+				local v27 = table.pack(bit32.band(v25[1], 65535))
+				local v28 = table.pack(bit32.rshift(v25[1], 16))
+				local v29 = table.pack(bit32.band(v26[1], 65535))
+				v22 = bit32.band(v27[1] * v29[1] + bit32.lshift(bit32.band(v27[1] * bit32.rshift(v26[1], 16) + v28[1] * v29[1], 65535), 16), 4294967295)
+				v23 = readu8(arg, n10 + 2)
+
+				if not nil then
+					buffer.readu8(arg, n10 + 3)
+					bit32.bxor(n6, 0)
+					error("devirt: symbolic value store into proto array (at 192:159)")
+				end
+
+				v20 = bit32.bxor(n6, 70846395)
+			end
+
+			v24 = bit32.bxor(v20, 0)
+			local v25 = table.pack(bit32.band(n5, 4294967295))
+			local v26 = table.pack(bit32.band(v24, 4294967295))
+			local v27 = table.pack(bit32.band(v25[1], 65535))
+			local v28 = table.pack(bit32.rshift(v25[1], 16))
+			local v29 = table.pack(bit32.band(v26[1], 65535))
+			bit32.band(v27[1] * v29[1] + bit32.lshift(bit32.band(v27[1] * bit32.rshift(v26[1], 16) + v28[1] * v29[1], 65535), 16), 4294967295)
+			error("devirt: symbolic value store into proto array (at 192:240)")
+		end
+	else
+		local readu82 = buffer.readu8
+		local v25 = table.pack(bit32.band(n5, 4294967295))
+		local v26 = table.pack(bit32.band(n, 4294967295))
+		local v27 = table.pack(bit32.band(v25[1], 65535))
+		local v28 = table.pack(bit32.rshift(v25[1], 16))
+		local v29 = table.pack(bit32.band(v26[1], 65535))
+		local v30 = bit32.band(v27[1] * v29[1] + bit32.lshift(bit32.band(v27[1] * bit32.rshift(v26[1], 16) + v28[1] * v29[1], 65535), 16), 4294967295)
+		local v31 = readu82(arg, n8 + 1)
+
+		if nil then
+			n9 = (n9 - 128) * 128 + v31
+			n10 = n8 + 2
+		else
+			local v32 = buffer.readu8(arg, n8 + 2)
+			local v33 = bit32.bxor(n6, 498610862)
+
+			if not (v32 < 128) then
+				local v34 = buffer.readu8(arg, n8 + 3)
+				local v35 = bit32.bxor(v33, 77608838)
+				bit32.bxor(n, v30)
+				local n16 = v30 - bit32.bxor(v35, 0)
+				error("devirt: symbolic value store into proto array (at 192:837)")
+			end
+
+			n9 = (n9 - 128) * 16384 + v31 - 128 + v32 * 128
+			n10 = n8 + 3
+			n6 = bit32.bxor(v33, 498610862)
+		end
+
+		n5 = v30 + 2868648226
+		n11 = n9 - 74375
+		v11 = table.create(n11)
+		tbl[5] = v11
+		tbl2 = { nil, 0, nil, 1, n11 + 0 }
+
+		while true do
+			v12 = tbl2[4]
+			v13 = tbl2[5]
+			n12 = tbl2[2] + v12
+			flag = v12 <= 0
+			flag2 = not flag
+			flag3 = n12 >= v13
+			flag4 = n12 <= v13
+			flag3 = flag and flag3
+			flag3 = flag3 or flag2 and flag4
+			tbl2[2] = n12
+
+			if flag3 then
+				v14 = n12
+				n13 = buffer.readu8(arg, n10)
+
+				if nil then
+					n10 += 1
+				else
+					v15 = buffer.readu8(arg, n10 + 1)
+
+					if nil then
+						n13 = (n13 - 128) * 128 + v15
+						n10 += 2
+					else
+						v16 = buffer.readu8(arg, n10 + 2)
+
+						if nil then
+							n13 = (n13 - 128) * 16384 + v15 - 128 + v16 * 128
+							n10 += 3
+						else
+							v17 = buffer.readu8(arg, n10 + 3)
+							n13 = (n13 - 128) * 128 + (v15 - 128) * 16384 + (v16 - 128) * 2097152 + v17 % 128 + (v17 - v17 % 128) * 2097152
+							n10 += 4
+						end
+					end
+				end
+
+				v11[v14] = n13
+				continue
+			end
+
+			break
+		end
+
+		v9 = buffer.readu8(arg, n10)
+
+		if nil then
+			n14 = 4
+			n15 = n10 + 1
+			v18 = buffer.create(v9)
+			buffer.copy(v18, 0, arg, n15, v9)
+			tbl[n14] = v18
+			return (luraph_runtime3(tbl, n2, 138))
+		end
+
+		v19 = buffer.readu8(arg, n10 + 1)
+
+		if nil then
+			v20 = bit32.bxor(n6, 388993099)
+		else
+			readu8 = buffer.readu8
+			n6 = bit32.bxor(n6, 320247792)
+			v21 = bit32.bxor(n6, 0)
+			local v32 = table.pack(bit32.band(n, 4294967295))
+			local v33 = table.pack(bit32.band(v21, 4294967295))
+			local v34 = table.pack(bit32.band(v32[1], 65535))
+			local v35 = table.pack(bit32.rshift(v32[1], 16))
+			local v36 = table.pack(bit32.band(v33[1], 65535))
+			v22 = bit32.band(v34[1] * v36[1] + bit32.lshift(bit32.band(v34[1] * bit32.rshift(v33[1], 16) + v35[1] * v36[1], 65535), 16), 4294967295)
+			v23 = readu8(arg, n10 + 2)
+
+			if not nil then
+				buffer.readu8(arg, n10 + 3)
+				bit32.bxor(n6, 0)
+				error("devirt: symbolic value store into proto array (at 192:159)")
+			end
+
+			v20 = bit32.bxor(n6, 70846395)
+		end
+
+		v24 = bit32.bxor(v20, 0)
+		local v32 = table.pack(bit32.band(n5, 4294967295))
+		local v33 = table.pack(bit32.band(v24, 4294967295))
+		local v34 = table.pack(bit32.band(v32[1], 65535))
+		local v35 = table.pack(bit32.rshift(v32[1], 16))
+		local v36 = table.pack(bit32.band(v33[1], 65535))
+		bit32.band(v34[1] * v36[1] + bit32.lshift(bit32.band(v34[1] * bit32.rshift(v33[1], 16) + v35[1] * v36[1], 65535), 16), 4294967295)
+		error("devirt: symbolic value store into proto array (at 192:240)")
+	end
+
+	buffer.readu8(arg, n10 + 3)
+	bit32.bxor(n6, 0)
+	error("devirt: symbolic value store into proto array (at 192:159)")
+end
+
+-- function created 34-th by the script at run time
+local function payload_fn_34(arg)
+	local v = arg[6]
+	local tbl
+
+	if not v then
+		local v2 = arg[5]
+		local n = 495708093
+
+		tbl = { __index = function(arg2, arg3)
+			local n2 = 2685952929
+			local n3 = 451978942
+			local v3 = arg2[0][arg3]
+			local v4 = v2[v3]
+			local v5 = arg
+			local n4 = bit32.bxor(n, 3558435419) // bit32.bxor(n3, 0)
+			local v6 = v5[4]
+			local v7 = buffer.readu8(v6, v4)
+			local n5
+
+			if nil then
+				local n6 = 0
+
+				if v7 > 192 then
+					if nil then
+						local n7
+
+						if v7 > 225 then
+							if nil then
+								local n8 = v4 + 1
+								local n9 = buffer.readu8(v6, n8)
+								local n10
+
+								if n9 < 128 then
+									n10 = n8 + 1
+								else
+									local v8 = buffer.readu8(v6, n8 + 1)
+
+									if nil then
+										n9 = (n9 - 128) * 128 + v8
+										n10 = n8 + 2
+										n3 = n3 + 446586273 - 446586273
+										bit32.bxor(n2 // 3, 2504332586)
+									else
+										local v9 = buffer.readu8(v6, n8 + 2)
+
+										if v9 < 128 then
+											n9 = (n9 - 128) * 16384 + v8 - 128 + v9 * 128
+											n10 = n8 + 3
+										else
+											local v10 = buffer.readu8(v6, n8 + 3)
+											n9 = (n9 - 128) * 128 + (v8 - 128) * 16384 + (v9 - 128) * 2097152 + v10 % 128 + (v10 - v10 % 128) * 2097152
+											n10 = n8 + 4
+											n3 = n3 + 428883410 - 428883410
+										end
+									end
+								end
+
+								local n11 = (89 + v3) % 256
+								local v8 = buffer.create(n9)
+								n7 = bit32.bxor(n3, 0)
+								local n12 = n9 - n9 % 4
+								local n13 = 89
+								local n14 = 9
+								local n15 = 163
+								local n16 = 1499027801
+								local tbl2 = { -4, nil, n12 - 1 + 0, nil, 4 }
+
+								while true do
+									local v9 = tbl2[5]
+									local v10 = tbl2[3]
+									local n17 = tbl2[1] + v9
+									local flag = v9 <= 0
+									local flag2 = flag and n17 >= v10 or not flag and n17 <= v10
+									tbl2[1] = n17
+
+									if flag2 then
+										local v11 = n17
+										local writeu32 = buffer.writeu32
+										local v12 = upv7[n11]
+										local v13 = bit32.bxor(buffer.readu32(v6, n10 + v11), v12, n16)
+										writeu32(v8, v11, v13)
+										n11 = upv8[n11]
+										continue
+									end
+
+									break
+								end
+
+								local tbl3 = { nil, n12 - 1, tbl2[2], 1, n9 - 1 + 0 }
+
+								while true do
+									local v9 = tbl3[4]
+									local v10 = tbl3[5]
+									local n17 = tbl3[2] + v9
+									tbl3[2] = n17
+
+									if n17 <= v10 then
+										local v11 = n17
+										n11 = (n14 * n11 + n15) % 256
+										local writeu8 = buffer.writeu8
+										local v12 = bit32.bxor(buffer.readu8(v6, n10 + v11), n13, n11)
+										writeu8(v8, v11, v12)
+									else
+										break
+									end
+								end
+
+								n5 = v8
+							else
+								local v8 = bit32.bxor(n4, 4199639829)
+								local n8 = v4 + 1
+								local n9 = (232 + v3) % 256
+								local writeu32 = buffer.writeu32
+								local v9 = upv9
+								local v10 = upv7[n9]
+								local v11 = bit32.bxor(buffer.readu32(v6, n8 + 0), v10, 3907578088)
+								writeu32(v9, 0, v11)
+								local v12 = upv8[n9]
+								local writeu322 = buffer.writeu32
+								local v13 = upv9
+								local v14 = upv7[v12]
+								local v15 = bit32.bxor(buffer.readu32(v6, n8 + 4), v14, 3907578088)
+								writeu322(v13, 4, v15)
+								local v16 = upv8[v12]
+								local writeu323 = buffer.writeu32
+								local v17 = upv9
+								local v18 = upv7[v16]
+								local v19 = bit32.bxor(buffer.readu32(v6, n8 + 8), v18, 3907578088)
+								writeu323(v17, 8, v19)
+								local v20 = upv8[v16]
+								local writeu324 = buffer.writeu32
+								local v21 = upv9
+								local v22 = upv7[v20]
+								local v23 = bit32.bxor(buffer.readu32(v6, n8 + 12), v22, 3907578088)
+								writeu324(v21, 12, v23)
+								local v24 = upv9
+								local v25 = buffer.readf32(v24, n6)
+								local v26 = buffer.readi32(v24, 4)
+								local v27 = buffer.readf32(v24, 8)
+								local v28 = bit32.rshift(v8, 15)
+								local v29 = buffer.readi32(v24, 12)
+								n5 = upv1(v25, v26, v27, v29)
+								n7 = n2 // 176 - 3858249450
+							end
+						else
+							local n8
+
+							if nil then
+								local n9 = v4 + 1
+								local n10 = (110 + v3) % 256
+								local writeu32 = buffer.writeu32
+								local v8 = upv9
+								local v9 = upv7[n10]
+								local v10 = bit32.bxor(buffer.readu32(v6, n9 + 0), v9, 1852730990)
+								writeu32(v8, 0, v10)
+								local v11 = upv8[n10]
+								local writeu322 = buffer.writeu32
+								local v12 = upv9
+								local readu32 = buffer.readu32
+								n8 = bit32.bor(n2, n4)
+								local v13 = upv7[v11]
+								local v14 = bit32.bxor(readu32(v6, n9 + 4), v13, 1852730990)
+								writeu322(v12, 4, v14)
+								local v15 = upv9
+								local v16 = buffer.readf32(v15, n6)
+								local v17 = buffer.readf32(v15, 4)
+								n5 = upv2(v16, v17)
+							else
+								local n9 = (251 + v3) % 256
+								local writeu32 = buffer.writeu32
+								local v8 = upv9
+								local v9 = upv7[n9]
+								local v10 = bit32.bxor(buffer.readu32(v6, v4 + 1 + 0), v9, 4227595259)
+								writeu32(v8, 0, v10)
+								n5 = buffer.readf32(upv9, n6)
+								n8 = bit32.bor(n2, 285491105) + 4009485318
+							end
+
+							n7 = n8 + 2060993303
+						end
+					elseif nil then
+						if nil then
+							n5 = luraph_runtime3(v5, v3, 138)
+						else
+							local n7 = v4 + 1
+							local n8 = (94 + v3) % 256
+							local writeu32 = buffer.writeu32
+							local v8 = upv9
+							local v9 = upv7[n8]
+							local v10 = bit32.bxor(buffer.readu32(v6, n7 + 0), v9, 1583242846)
+							writeu32(v8, 0, v10)
+							local n9 = n4 // bit32.bxor(n3, 0)
+							local v11 = upv8[n8]
+							local writeu322 = buffer.writeu32
+							local v12 = upv9
+							local v13 = upv7[v11]
+							local v14 = bit32.bxor(buffer.readu32(v6, n7 + 4), v13, 1583242846)
+							writeu322(v12, 4, v14)
+							n5 = buffer.readf64(upv9, n6)
+						end
+					elseif v7 == 195 then
+						local n7 = v4 + 1
+						local n8 = (202 + v3) % 256
+						local writeu32 = buffer.writeu32
+						local v8 = upv9
+						local v9 = upv7[n8]
+						local v10 = bit32.bxor(buffer.readu32(v6, n7 + 0), v9, 3402287818)
+						writeu32(v8, 0, v10)
+						local v11 = upv8[n8]
+						local writeu322 = buffer.writeu32
+						local v12 = upv9
+						local v13 = upv7[v11]
+						local v14 = bit32.bxor(buffer.readu32(v6, n7 + 4), v13, 3402287818)
+						writeu322(v12, 4, v14)
+						local v15 = upv8[v11]
+						local writeu323 = buffer.writeu32
+						local v16 = upv9
+						local v17 = buffer.readu32(v6, n7 + 8)
+						local v18 = upv7[v15]
+						local v19 = bit32.lshift(n2, 4)
+						local v20 = v15
+						local v21 = bit32.bxor(v17, v18, 3402287818)
+						writeu323(v16, 8, v21)
+						local v22 = upv9
+						local v23 = buffer.readf32(v22, n6)
+						local v24 = buffer.readf32(v22, 4)
+						local create = vector.create
+						local v25 = buffer.readf32(v22, 8)
+						n5 = create(v23, v24, v25)
+						bit32.bxor(v19, 2711509425)
+					else
+						local n7 = v4 + 1
+						local n8 = buffer.readu8(v6, n7)
+						local n9
+
+						if nil then
+							n9 = n7 + 1
+							local n10 = n3 + 362183003
+							local v8 = bit32.bxor(n10, 0)
+							n3 = n10 - 362183003
+							n4 = bit32.band(n4, v8) + 6
+						else
+							local v8 = buffer.readu8(v6, n7 + 1)
+
+							if nil then
+								n8 = (n8 - 128) * 128 + v8
+								n9 = n7 + 2
+							else
+								local v9 = buffer.readu8(v6, n7 + 2)
+
+								if nil then
+									n8 = (n8 - 128) * 16384 + v8 - 128 + v9 * 128
+									n9 = n7 + 3
+								else
+									local n10 = (n8 - 128) * 128 + (v8 - 128) * 16384 + (v9 - 128) * 2097152
+									local n11 = n3 + 280576677
+									local v10 = buffer.readu8(v6, n7 + 3)
+									n8 = n10 + v10 % 128 + (v10 - v10 % 128) * 2097152
+									n9 = n7 + 4
+									n3 = n11 - 280576677
+									n2 = bit32.bxor(bit32.bxor(n2, 4294967295) // bit32.bxor(n11, 0), 2685952931)
+								end
+							end
+						end
+
+						local tostring_ = buffer.tostring
+						local n10 = (246 + v3) % 256
+						local v8 = buffer.create(n8)
+						local n11 = n8 - n8 % 4
+						local n12 = 246
+						local n13 = 9
+						local n14 = 163
+						local n15 = 4143380214
+						local tbl2 = { 4, nil, n11 - 1 + 0, nil, -4 }
+
+						while true do
+							local v9 = tbl2[1]
+							local v10 = tbl2[3]
+							local n16 = tbl2[5] + v9
+							local flag = v9 <= 0
+							local flag2 = not flag
+							local flag3 = n16 >= v10
+							local flag4 = n16 <= v10
+							flag3 = flag and flag3
+							flag3 = flag3 or flag2 and flag4
+							tbl2[5] = n16
+
+							if flag3 then
+								local writeu32 = buffer.writeu32
+								local v11 = upv7[n10]
+								local v12 = bit32.bxor(buffer.readu32(v6, n9 + n16), v11, n15)
+								writeu32(v8, n16, v12)
+								n10 = upv8[n10]
+								continue
+							end
+
+							break
+						end
+
+						local tbl3 = { tbl2[4], n11 - 1, n8 - 1 + 0, 1, nil }
+
+						while true do
+							local v9 = tbl3[4]
+							local v10 = tbl3[3]
+							local n16 = tbl3[2] + v9
+							tbl3[2] = n16
+
+							if n16 <= v10 then
+								local v11 = n16
+								n10 = (n13 * n10 + n14) % 256
+								local writeu8 = buffer.writeu8
+								local v12 = bit32.bxor(buffer.readu8(v6, n9 + v11), n12, n10)
+								writeu8(v8, v11, v12)
+								n3 = n3 + 489734636 - 489734636
+							else
+								break
+							end
+						end
+
+						local v9 = tostring_(v8)
+						local rep = string.rep
+						local n16 = n9 + n8
+						local n17 = buffer.readu8(v6, n16)
+						local v10, n18
+
+						if nil then
+							v10 = rep
+							n18 = n16 + 1
+						else
+							v10 = rep
+							local v11 = buffer.readu8(v6, n16 + 1)
+
+							if v11 < 128 then
+								local bor = bit32.bor
+								local v12 = bit32.bxor(n3, 0)
+								n17 = (n17 - 128) * 128 + v11
+								n18 = n16 + 2
+								bit32.bxor(bor(n4, v12), 451978936)
+							else
+								local v12 = v11
+								local v13 = buffer.readu8(v6, n16 + 2)
+
+								if v13 < 128 then
+									n17 = (n17 - 128) * 16384 + v12 - 128 + v13 * 128
+									n18 = n16 + 3
+									local n19 = n4 + bit32.bxor(n3, 0) + 3842988354
+								else
+									local v14 = v13
+									local v15 = buffer.readu8(v6, n16 + 3)
+									n17 = (n17 - 128) * 128 + (v12 - 128) * 16384 + (v14 - 128) * 2097152 + v15 % 128 + (v15 - v15 % 128) * 2097152
+									n18 = n16 + 4
+								end
+							end
+						end
+
+						n5 = v10(v9, n17, n18)
+					end
+				elseif nil then
+					local n7
+
+					if nil then
+						local n8
+
+						if nil then
+							local n9 = v4 + 1
+							local n10 = (191 + v3) % 256
+							local writeu32 = buffer.writeu32
+							local v8 = upv9
+							local v9 = upv7[n10]
+							local v10 = bit32.bxor(buffer.readu32(v6, n9 + 0), v9, 3217014719)
+							writeu32(v8, 0, v10)
+							local v11 = upv8[n10]
+							local writeu322 = buffer.writeu32
+							local v12 = bit32.lshift(n2, 18)
+							local v13 = upv9
+							local v14 = upv7[v11]
+							local v15 = bit32.bxor(buffer.readu32(v6, n9 + 4), v14, 3217014719)
+							writeu322(v13, 4, v15)
+							local v16 = upv8[v11]
+							local writeu323 = buffer.writeu32
+							local v17 = upv9
+							local v18 = upv7[v16]
+							local v19 = bit32.bxor(buffer.readu32(v6, n9 + 8), v18, 3217014719)
+							writeu323(v17, 8, v19)
+							local v20 = upv9
+							local v21 = buffer.readf32(v20, n6)
+							local v22 = buffer.readf32(v20, 4)
+							n8 = n3 + 331573038 + 157494835
+							local v23 = buffer.readf32(v20, 8)
+							n5 = upv3(v21, v22, v23)
+							n7 = bit32.bxor(n4, 4176793841)
+						else
+							local n9 = v4 + 1
+							local n10 = (157 + v3) % 256
+							local writeu32 = buffer.writeu32
+							local v8 = upv9
+							local v9 = upv7[n10]
+							local v10 = bit32.bxor(buffer.readu32(v6, n9 + 0), v9, 2644352413)
+							writeu32(v8, 0, v10)
+							local v11 = upv8[n10]
+							local writeu322 = buffer.writeu32
+							local v12 = upv9
+							local v13 = upv7[v11]
+							local v14 = bit32.bxor(buffer.readu32(v6, n9 + 4), v13, 2644352413)
+							writeu322(v12, 4, v14)
+							local v15 = upv8[v11]
+							local writeu323 = buffer.writeu32
+							local v16 = upv9
+							local v17 = upv7[v15]
+							local v18 = bit32.bxor(buffer.readu32(v6, n9 + 8), v17, 2644352413)
+							writeu323(v16, 8, v18)
+							local v19 = upv9
+							local v20 = buffer.readf32(v19, n6)
+							local v21 = buffer.readf32(v19, 4)
+							local v22 = buffer.readf32(v19, 8)
+							n5 = upv4(v20, v21, v22)
+							n8 = n3 + 398241897 + 90825976
+							n7 = bit32.bxor(n4 // n2, 4176793846)
+						end
+					else
+						local writeu8 = buffer.writeu8
+						local v8 = upv9
+						local v9 = buffer.readu8(v6, v4 + 1 + 0)
+						local bxor = bit32.bxor
+						local v10 = bit32.bxor(n3, 0)
+						local v11 = bxor(n4, v10)
+						local v12 = bit32.bxor(v9, 97, (9 * (97 + v3) % 256 + 163) % 256)
+						writeu8(v8, 0, v12)
+						n5 = buffer.readu8(upv9, n6)
+						n7 = v11 + 3724814909
+					end
+
+					bit32.bxor(n7, 4176793841)
+				elseif nil then
+					if nil then
+						local n7 = v4 + 1
+						local n8 = buffer.readu8(v6, n7)
+						local n9
+
+						if nil then
+							n9 = n7 + 1
+						else
+							local v8 = buffer.readu8(v6, n7 + 1)
+
+							if nil then
+								n8 = (n8 - 128) * 128 + v8
+								n9 = n7 + 2
+								local n10 = bit32.lshift(n2, 24) - 15178847
+							else
+								local v9 = buffer.readu8(v6, n7 + 2)
+
+								if nil then
+									n8 = (n8 - 128) * 16384 + v8 - 128 + v9 * 128
+									n9 = n7 + 3
+								else
+									local v10 = buffer.readu8(v6, n7 + 3)
+									local v11 = bit32.rshift(n4, 21)
+									n8 = (n8 - 128) * 128 + (v8 - 128) * 16384 + (v9 - 128) * 2097152 + v10 % 128 + (v10 - v10 % 128) * 2097152
+									n9 = n7 + 4
+									local v12 = table.pack(bit32.band(n2, 4294967295))
+									local v13 = table.pack(bit32.band(v12[1], 65535))
+									local n10 = bit32.band(v13[1] * 56073 + bit32.lshift(bit32.band(v13[1] * 0 + bit32.rshift(v12[1], 16) * 56073, 65535), 16), 4294967295) + 570566648
+								end
+							end
+						end
+
+						local v8 = buffer.readu8(v6, n9)
+						n5 = buffer.create(n8)
+						buffer.fill(n5, 0, v8)
+					else
+						local writeu8 = buffer.writeu8
+						local v8 = upv9
+						local v9 = bit32.bxor(buffer.readu8(v6, v4 + 1 + 0), 176, (9 * (176 + v3) % 256 + 163) % 256)
+						writeu8(v8, 0, v9)
+						n5 = -buffer.readu8(upv9, n6)
+						local n7 = bit32.bxor(n4, 2897822451) + 1397144851
+					end
+				else
+					local n7
+
+					if nil then
+						local n8 = v4 + 1
+						local n9 = (123 + v3) % 256
+						local writeu32 = buffer.writeu32
+						local v8 = upv9
+						local v9 = upv7[n9]
+						local v10 = bit32.bxor(buffer.readu32(v6, n8 + 0), v9, 2071690107)
+						writeu32(v8, 0, v10)
+						local v11 = upv8[n9]
+						local writeu322 = buffer.writeu32
+						local v12 = upv9
+						local v13 = upv7[v11]
+						local v14 = n8
+						local v15 = bit32.bxor(buffer.readu32(v6, n8 + 4), v13, 2071690107)
+						writeu322(v12, 4, v15)
+						local v16 = upv8[v11]
+						local writeu323 = buffer.writeu32
+						local v17 = upv9
+						local v18 = upv7[v16]
+						local v19 = bit32.bxor(buffer.readu32(v6, v14 + 8), v18, 2071690107)
+						writeu323(v17, 8, v19)
+						local v20 = upv8[v16]
+						local writeu324 = buffer.writeu32
+						local v21 = upv9
+						n7 = n3 + 475000313
+						local v22 = bit32.bxor(buffer.readu32(v6, v14 + 12), upv7[v20], 2071690107)
+						writeu324(v21, 12, v22)
+						local v23 = upv9
+						local v24 = buffer.readf32(v23, n6)
+						local v25 = buffer.readf32(v23, 4)
+						local readf32 = buffer.readf32
+						local v26 = bit32.rshift(n4, 20)
+						local v27 = readf32(v23, 8)
+						local v28 = buffer.readf32(v23, 12)
+						n5 = upv5(v24, v25, v27, v28)
+					else
+						local n8 = v4 + 1
+						local v8 = buffer.readu8(v6, n8)
+						local v9, n9
+
+						if nil then
+							local n10 = n8 + 1
+							v9 = v8
+							n9 = n10
+						else
+							local v10 = buffer.readu8(v6, n8 + 1)
+
+							if nil then
+								local n10 = (v8 - 128) * 128 + v10
+								n9 = n8 + 2
+								v9 = n10
+							else
+								local v11 = buffer.readu8(v6, n8 + 2)
+								local n10 = n4 - n2
+
+								if nil then
+									local n11 = (v8 - 128) * 16384 + v10 - 128 + v11 * 128
+									n9 = n8 + 3
+									n3 = n3 + 275261428 - 275261428
+									v9 = n11
+								else
+									local n11 = (v8 - 128) * 128 + (v10 - 128) * 16384
+									local v12 = buffer.readu8(v6, n8 + 3)
+									local n12 = n11 + (v11 - 128) * 2097152 + v12 % 128 + (v12 - v12 % 128) * 2097152
+									n9 = n8 + 4
+									bit32.bxor(bit32.bxor(n2, n10), 1609014374)
+									v9 = n12
+								end
+							end
+						end
+
+						local tostring_ = buffer.tostring
+						local n10 = (246 + v3) % 256
+						local v10 = buffer.create(v9)
+						local n11 = n3 + 91923193
+						local n12 = v9 - v9 % 4
+						local n13 = 246
+						local n14 = 9
+						local n15 = 163
+						local n16 = 4143380214
+						local tbl2 = { n12 - 1 + 0, nil, -4, nil, 4 }
+
+						while true do
+							local v11 = tbl2[5]
+							local v12 = tbl2[1]
+							local n17 = tbl2[3] + v11
+							local flag = v11 <= 0
+							local flag2 = not flag
+							local flag3 = n17 >= v12
+							local flag4 = n17 <= v12
+							flag3 = flag and flag3
+							flag3 = flag3 or flag2 and flag4
+							tbl2[3] = n17
+
+							if flag3 then
+								local writeu32 = buffer.writeu32
+								local v13 = upv7[n10]
+								local v14 = bit32.bxor(buffer.readu32(v6, n9 + n17), v13, n16)
+								writeu32(v10, n17, v14)
+								n10 = upv8[n10]
+								continue
+							end
+
+							break
+						end
+
+						local v11 = tbl2[2]
+						local v12 = bit32.bxor(n11, 0)
+						local tbl3 = { v9 - 1 + 0, 1, v11, n12 - 1, nil }
+
+						while true do
+							local v13 = tbl3[2]
+							local v14 = tbl3[1]
+							local n17 = tbl3[4] + v13
+							local flag = v13 <= 0
+							tbl3[4] = n17
+
+							if n17 <= v14 then
+								n10 = (n14 * n10 + n15) % 256
+								local writeu8 = buffer.writeu8
+								local v15 = bit32.bxor(buffer.readu8(v6, n9 + n17), n13, n10)
+								writeu8(v10, n17, v15)
+							else
+								break
+							end
+						end
+
+						n5 = tostring_(v10)
+						n7 = n11 + 383077120
+					end
+				end
+			else
+				local n6 = 0
+				local n7 = n3 + 521755753
+
+				if nil then
+					if nil then
+						if nil then
+							if nil then
+								local n8 = v4 + 1
+								local n9 = buffer.readu8(v6, n8)
+								local n10
+
+								if nil then
+									n10 = n8 + 1
+								else
+									local v8 = buffer.readu8(v6, n8 + 1)
+
+									if nil then
+										n9 = (n9 - 128) * 128 + v8
+										n10 = n8 + 2
+										n2 = n2 - 807139012 + 807139012
+									else
+										local v9 = buffer.readu8(v6, n8 + 2)
+
+										if v9 < 128 then
+											n9 = (n9 - 128) * 16384 + v8 - 128 + v9 * 128
+											n10 = n8 + 3
+										else
+											local v10 = buffer.readu8(v6, n8 + 3)
+											n9 = (n9 - 128) * 128 + (v8 - 128) * 16384 + (v9 - 128) * 2097152 + v10 % 128 + (v10 - v10 % 128) * 2097152
+											n10 = n8 + 4
+										end
+									end
+								end
+
+								local tostring_ = buffer.tostring
+								local n11 = n2
+								local n12 = (246 + v3) % 256
+								local v8 = buffer.create(n9)
+								local n13 = n7 - 353652072
+								local n14 = n9 - n9 % 4
+								local n15 = 246
+								local n16 = 9
+								local n17 = 163
+								local n18 = 4143380214
+								local tbl2 = { n14 - 1 + 0, -4, nil, 4, nil }
+
+								while true do
+									local v9 = tbl2[4]
+									local v10 = tbl2[1]
+									local n19 = tbl2[2] + v9
+									local flag = v9 <= 0
+									local flag2 = not flag
+									local flag3 = n19 >= v10
+									local flag4 = n19 <= v10
+									flag3 = flag and flag3
+									flag3 = flag3 or flag2 and flag4
+									tbl2[2] = n19
+
+									if flag3 then
+										local writeu32 = buffer.writeu32
+										local v11 = upv7[n12]
+										local v12 = bit32.bxor(buffer.readu32(v6, n10 + n19), v11, n18)
+										writeu32(v8, n19, v12)
+										n12 = upv8[n12]
+										continue
+									end
+
+									break
+								end
+
+								local tbl3 = { n9 - 1 + 0, n14 - 1, nil, tbl2[5], 1 }
+
+								while true do
+									local v9 = tbl3[5]
+									local v10 = tbl3[1]
+									local n19 = tbl3[2] + v9
+									local flag = v9 <= 0
+									tbl3[2] = n19
+
+									if n19 <= v10 then
+										n12 = (n16 * n12 + n17) % 256
+										local writeu8 = buffer.writeu8
+										local v11 = bit32.bxor(buffer.readu8(v6, n10 + n19), n15, n12)
+										writeu8(v8, n19, v11)
+									else
+										break
+									end
+								end
+
+								local v9 = tbl3[4]
+								local v10 = tostring_(v8)
+								local n19 = n10 + n9
+								local n20 = n2 // 231
+								local n21 = buffer.readu8(v6, n19)
+
+								if not nil then
+									local v11 = buffer.readu8(v6, n19 + 1)
+
+									if v11 < 128 then
+										n21 = (n21 - 128) * 128 + v11
+									else
+										local v12 = v11
+										local v13 = buffer.readu8(v6, n19 + 2)
+
+										if v13 < 128 then
+											n21 = (n21 - 128) * 16384 + v12 - 128 + v13 * 128
+											n13 = n13 + 292815446 - 292815446
+											n11 = bit32.band(n11, n20) + 2684878848
+										else
+											local v14 = buffer.readu8(v6, n19 + 3)
+											local n22 = (n21 - 128) * 128 + (v12 - 128) * 16384 + (v13 - 128) * 2097152 + v14 % 128
+											local v15 = v14
+											n21 = n22 + (v15 - v15 % 128) * 2097152
+											n20 = n20 - bit32.bxor(n13, 0) + 620082623
+										end
+									end
+								end
+
+								local n22 = 0
+								local tbl4 = { v9, 0, nil, n21 + 0, 1 }
+
+								while true do
+									local v11 = tbl4[5]
+									local v12 = tbl4[4]
+									local n23 = tbl4[2] + v11
+									local flag = v11 <= 0
+									local flag2 = not flag
+									local flag3 = n23 >= v12
+									local flag4 = n23 <= v12
+									flag3 = flag and flag3
+									flag3 = flag3 or flag2 and flag4
+									tbl4[2] = n23
+
+									if flag3 then
+										local tbl5 = { 1, tbl4, n23 + 1 - 1, nil, n21 + 0 }
+										string.sub(v10, n23 % n9 + 1, n23 % n9 + 2)
+
+										while true do
+											local v13 = tbl5[1]
+											local v14 = tbl5[5]
+											local n24 = tbl5[3] + v13
+											local flag5 = v13 <= 0
+											local flag6 = not flag5
+											local flag7 = n24 >= v14
+											local flag8 = n24 <= v14
+											flag7 = flag5 and flag7
+											flag7 = flag7 or flag6 and flag8
+											tbl5[3] = n24
+
+											if flag7 then
+												string.sub(v10, n24 % n9 + 1, n24 % n9 + 2)
+
+												if nil then
+													n22 += 1
+												end
+
+												continue
+											end
+
+											break
+										end
+
+										tbl4 = tbl5[2]
+										continue
+									end
+
+									break
+								end
+
+								n7 = n13 + 353652072
+								bit32.bxor(n11, 2685952934)
+								n5 = n22
+							else
+								local n8 = v4 + 1
+								local v8 = buffer.readu8(v6, n8)
+								local v9, n9
+
+								if nil then
+									local n10 = n8 + 1
+									n7 = n7 - 54697550 + 54697550
+									v9 = v8
+									n9 = n10
+								else
+									local v10 = buffer.readu8(v6, n8 + 1)
+									local v11 = bit32.band(n4, n2)
+
+									if nil then
+										local n10 = (v8 - 128) * 128 + v10
+										n9 = n8 + 2
+										v9 = n10
+									else
+										local v12 = buffer.readu8(v6, n8 + 2)
+
+										if nil then
+											local n10 = (v8 - 128) * 16384 + v10 - 128 + v12 * 128
+											n9 = n8 + 3
+											local n11 = bit32.bxor(n2, 939307090) + 137596846
+											v9 = n10
+										else
+											local n10 = (v8 - 128) * 128 + (v10 - 128) * 16384 + (v12 - 128) * 2097152
+											local v13 = buffer.readu8(v6, n8 + 3)
+											local v14 = bit32.bxor(n7, 0)
+											v11 = bit32.band(v11, v14)
+											local n11 = n10 + v13 % 128 + (v13 - v13 % 128) * 2097152
+											n9 = n8 + 4
+											v9 = n11
+										end
+									end
+								end
+
+								local v10 = buffer.create(v9)
+								buffer.copy(v10, 0, v6, n9, v9)
+								n5 = v10
+							end
+						else
+							local n8
+
+							if nil then
+								local n9 = v4 + 1
+								local v8 = buffer.readu8(v6, n9)
+								n8 = bit32.band(n2, 1308499252)
+								local n10, n11
+
+								if nil then
+									local n12 = n9 + 1
+									n10 = v8
+									n11 = n12
+								else
+									local v9 = buffer.readu8(v6, n9 + 1)
+
+									if nil then
+										local n12 = (v8 - 128) * 128 + v9
+										n11 = n9 + 2
+										n10 = n12
+									else
+										local v10 = buffer.readu8(v6, n9 + 2)
+										local n12 = n7 - 249022774
+
+										if nil then
+											local v11 = bit32.bxor(n12, 0)
+											local v12 = table.pack(bit32.band(n8, 4294967295))
+											local v13 = table.pack(bit32.band(v11, 4294967295))
+											local v14 = table.pack(bit32.band(v12[1], 65535))
+											local v15 = table.pack(bit32.rshift(v12[1], 16))
+											local v16 = table.pack(bit32.band(v13[1], 65535))
+											local n13 = (v8 - 128) * 16384 + v9 - 128 + v10 * 128
+											n11 = n9 + 3
+											n8 = bit32.band(v14[1] * v16[1] + bit32.lshift(bit32.band(v14[1] * bit32.rshift(v13[1], 16) + v15[1] * v16[1], 65535), 16), 4294967295) - 117517824
+											n10 = n13
+										else
+											local v11 = buffer.readu8(v6, n9 + 3)
+											local n13 = (v8 - 128) * 128 + (v9 - 128) * 16384 + (v10 - 128) * 2097152 + v11 % 128
+											n11 = n9 + 4
+											n10 = n13 + (v11 - v11 % 128) * 2097152
+										end
+
+										n7 = n12 + 249022774
+									end
+								end
+
+								n5 = table.create(n10, buffer.readu8(v6, n11), n11 + 1)
+							else
+								local n9 = v4 + 1
+								local n10 = (236 + v3) % 256
+								local writeu32 = buffer.writeu32
+								local v8 = bit32.band(n4, n2)
+								local v9 = upv9
+								local v10 = upv7[n10]
+								local v11 = bit32.bxor(buffer.readu32(v6, n9 + 0), v10, 3974950124)
+								writeu32(v9, 0, v11)
+								local v12 = upv8[n10]
+								local writeu322 = buffer.writeu32
+								local v13 = upv9
+								local v14 = upv7[v12]
+								local v15 = bit32.bxor(buffer.readu32(v6, n9 + 4), v14, 3974950124)
+								writeu322(v13, 4, v15)
+								local v16 = upv8[v12]
+								local writeu323 = buffer.writeu32
+								local v17 = upv9
+								local v18 = upv7[v16]
+								local v19 = bit32.bxor(buffer.readu32(v6, n9 + 8), v18, 3974950124)
+								writeu323(v17, 8, v19)
+								local v20 = upv8[v16]
+								local writeu324 = buffer.writeu32
+								local v21 = upv9
+								local v22 = buffer.readu32(v6, n9 + 12)
+								local v23 = bit32.lshift(v8, 15)
+								local v24 = bit32.bxor(v22, upv7[v20], 3974950124)
+								writeu324(v21, 12, v24)
+								local v25 = upv9
+								local v26 = buffer.readf32(v25, n6)
+								local v27 = buffer.readf32(v25, 4)
+								local v28 = buffer.readf32(v25, 8)
+								local v29 = buffer.readf32(v25, 12)
+								n5 = vector.create(v26, v27, v28, v29)
+								n7 = n7 - 446578504 + 446578504
+								n8 = n2 + 109405839 - 2793785616
+								bit32.bxor(v23, 32775)
+							end
+
+							bit32.bxor(n8, 2684379777)
+						end
+					elseif v7 > 113 then
+						local n8
+
+						if v7 == 151 then
+							local v8 = bit32.bxor(n4, 1181581576)
+							local n9 = (242 + v3) % 256
+							local writeu32 = buffer.writeu32
+							local v9 = upv9
+							n8 = n7 - 99902241
+							local v10 = upv7[n9]
+							local v11 = bit32.bxor(buffer.readu32(v6, v4 + 1 + 0), v10, 4076008178)
+							writeu32(v9, 0, v11)
+							n5 = buffer.readu32(upv9, n6)
+						else
+							local n9 = v4 + 1
+							local v8 = bit32.lshift(n2, 13)
+							local n10 = (9 * (192 + v3) % 256 + 163) % 256
+							local writeu8 = buffer.writeu8
+							local v9 = upv9
+							local v10 = bit32.bxor(buffer.readu8(v6, n9 + 0), 192, n10)
+							writeu8(v9, 0, v10)
+							local writeu82 = buffer.writeu8
+							local v11 = upv9
+							local v12 = bit32.bxor(buffer.readu8(v6, n9 + 1), 192, (9 * n10 + 163) % 256)
+							writeu82(v11, 1, v12)
+							n5 = buffer.readu16(upv9, n6)
+							n8 = n7 - 318045315 + 218143074
+						end
+
+						n7 = n8 + 99902241
+					elseif nil then
+						local n8 = v4 + 1
+						local v8 = bit32.band(n4, 3266105160)
+						local n9 = (9 * (126 + v3) % 256 + 163) % 256
+						local writeu8 = buffer.writeu8
+						local v9 = upv9
+						local v10 = bit32.bxor(buffer.readu8(v6, n8 + 0), 126, n9)
+						writeu8(v9, 0, v10)
+						local writeu82 = buffer.writeu8
+						local v11 = bit32.lshift(n2, 15)
+						local v12 = upv9
+						local v13 = bit32.bxor(buffer.readu8(v6, n8 + 1), 126, (9 * n9 + 163) % 256)
+						writeu82(v12, 1, v13)
+						n5 = buffer.readi16(upv9, n6)
+						n7 = n7 - 465036534 + 465036534
+						bit32.bxor(v11, 2445861793)
+						bit32.bxor(v8, 7)
+					else
+						local v8 = v5[4]
+						local n8 = v5[5][v3] + 1
+						local v9 = buffer.readu8(v8, n8)
+						local n9, v10, n10
+
+						if nil then
+							n9 = 79
+							local n11 = n8 + 1
+							v10 = v9
+							n10 = n11
+						else
+							n9 = 79
+							local v11 = buffer.readu8(v8, n8 + 1)
+							local n11 = bit32.bxor(n2, 3107110576)
+
+							if nil then
+								local n12 = (v9 - 128) * 128 + v11
+								n10 = n8 + 2
+								v10 = n12
+							else
+								local v12 = buffer.readu8(v8, n8 + 2)
+
+								if nil then
+									local n12 = (v9 - 128) * 16384 + v11 - 128 + v12 * 128
+									n10 = n8 + 3
+									v10 = n12
+								else
+									local readu8 = buffer.readu8
+									local n12 = n4 * 25175
+									local v13 = table.pack(bit32.band(v12, 4294967295))
+									local v14 = table.pack(bit32.band(v13[1], 65535))
+									local v15 = bit32.band(55194 * v14[1] + bit32.lshift(bit32.band(55194 * bit32.rshift(v13[1], 16) + 61187 * v14[1], 65535), 16), 4294967295)
+									local v16 = table.pack(bit32.band(bit32.bnot(v12), 4294967295))
+									local v17 = table.pack(bit32.band(v16[1], 65535))
+									local n13 = 3702333167 + n7 + v15 + bit32.band(55194 * v17[1] + bit32.lshift(bit32.band(55194 * bit32.rshift(v16[1], 16) + 61187 * v17[1], 65535), 16), 4294967295)
+									local n14 = (v9 - 128) * 128 + (v11 - 128) * 16384
+									local v18 = readu8(v8, n8 + 3)
+									local n15 = n14 + (v12 - 128) * 2097152 + v18 % 128 + (v18 - v18 % 128) * 2097152
+									n10 = n8 + 4
+									n7 = n13 + 307673259
+									n11 = n11 // n12 + 422237109
+									n4 = n12 - 176218
+									v10 = n15
+								end
+							end
+
+							n2 = bit32.bxor(n11, 3107110576)
+						end
+
+						local n11 = n10 + v10
+						local v11 = buffer.readu8(v8, n11)
+						local n12
+
+						if v11 < 128 then
+							n12 = v11
+						else
+							local v12 = v11
+							local v13 = n11
+							local v14 = buffer.readu8(v8, v13 + 1)
+
+							if v14 < 128 then
+								n12 = (v12 - 128) * 128 + v14
+							else
+								local v15 = v14
+								local v16 = buffer.readu8(v8, v13 + 2)
+								local n13 = n4 - bit32.bxor(n7, 0)
+
+								if v16 < 128 then
+									n12 = (v12 - 128) * 16384 + v15 - 128 + v16 * 128
+								else
+									local v17 = v16
+									local v18 = buffer.readu8(v8, v13 + 3)
+									n12 = (v12 - 128) * 128 + (v15 - 128) * 16384 + (v17 - 128) * 2097152 + v18 % 128 + (v18 - v18 % 128) * 2097152
+									local n14 = bit32.bor(n2, 3072329737) - 387975176
+								end
+
+								n4 = n13 - 3321232601
+							end
+						end
+
+						local v12 = ({})[n12]
+						local tbl2
+
+						if not v12 then
+							local v13, v14 = luraph_runtime3(v5, v3, n9)
+							tbl2 = { [3] = v13, [2] = v14 }
+						else
+							tbl2 = v12
+						end
+
+						tbl2[2] = tbl2[2] - 1
+
+						if nil then
+							local flag = bit32.bxor(n4, 63181294) == 63181289
+						end
+
+						n5 = tbl2[3]
+					end
+				else
+					local n8
+
+					if nil then
+						local n9 = bit32.bor(n4, n2)
+						n8 = n7 - 4088210
+
+						if nil then
+							local n10 = v4 + 1
+							local n11 = n8 - 304157313
+							local n12 = (131 + v3) % 256
+							local writeu32 = buffer.writeu32
+							local v8 = upv9
+							local v9 = upv7[n12]
+							local v10 = bit32.bxor(buffer.readu32(v6, n10 + 0), v9, 2206434179)
+							writeu32(v8, 0, v10)
+							local v11 = upv8[n12]
+							local n13 = n9 // bit32.bxor(n11, 0)
+							local writeu322 = buffer.writeu32
+							local v12 = upv9
+							local v13 = upv7[v11]
+							local v14 = bit32.bxor(buffer.readu32(v6, n10 + 4), v13, 2206434179)
+							writeu322(v12, 4, v14)
+							local v15 = upv9
+							n5 = buffer.readu32(v15, n6)
+							local v16 = buffer.readu32(v15, 4)
+
+							if v16 ~= 0 then
+								local v17 = v16
+
+								if nil then
+									v17 -= 4294967296
+								end
+
+								n5 = v17 * 4294967296 + n5
+							end
+
+							n8 = n11 + 304157313
+							bit32.bxor(n2 - bit32.bxor(n8, 0), 3327435181)
+							n9 = n13 - 1609014365
+						elseif v7 ~= 16 then
+							local n10 = v4 + 1
+							local n11 = buffer.readu8(v6, n10)
+							local n12
+
+							if nil then
+								n12 = n10 + 1
+							else
+								local v8 = buffer.readu8(v6, n10 + 1)
+
+								if nil then
+									bit32.band(n2, n9)
+									n11 = (n11 - 128) * 128 + v8
+									n12 = n10 + 2
+								else
+									local v9 = buffer.readu8(v6, n10 + 2)
+
+									if nil then
+										n11 = (n11 - 128) * 16384 + v8 - 128 + v9 * 128
+										n12 = n10 + 3
+										n8 = n8 - 38305200 + 38305200
+									else
+										local v10 = buffer.readu8(v6, n10 + 3)
+										n11 = (n11 - 128) * 128 + (v8 - 128) * 16384 + (v9 - 128) * 2097152 + v10 % 128 + (v10 - v10 % 128) * 2097152
+										n12 = n10 + 4
+										n9 = n9 - 2208934611 + 2208934611
+									end
+								end
+							end
+
+							n9 = n9 + 3975433114 - 3975433114
+							n5 = buffer.readstring(v6, n12, n11)
+						else
+							local v8 = buffer.readu8(v6, v4 + 1)
+							local n10 = v4 + 2
+							local v9 = buffer.readu8(v6, n10)
+							local n11, v10, n12
+
+							if nil then
+								n11 = 128
+								local n13 = n10 + 1
+								v10 = v9
+								n12 = n13
+							else
+								n11 = 128
+								local v11 = buffer.readu8(v6, n10 + 1)
+
+								if nil then
+									local n13 = (v9 - 128) * 128 + v11
+									n12 = n10 + 2
+									v10 = n13
+								else
+									local v12 = buffer.readu8(v6, n10 + 2)
+									local n13
+
+									if nil then
+										n13 = n2 - 3339818026
+										local n14 = (v9 - 128) * 16384 + v11 - 128 + v12 * 128
+										n12 = n10 + 3
+										v10 = n14
+									else
+										local v13 = buffer.readu8(v6, n10 + 3)
+										local n14 = (v9 - 128) * 128 + (v11 - 128) * 16384
+										local v14 = table.pack(bit32.band(n2, 4294967295))
+										local v15 = table.pack(bit32.band(v14[1], 65535))
+										local v16 = v13
+										local n15 = n14 + (v12 - 128) * 2097152 + v16 % 128 + (v16 - v16 % 128) * 2097152
+										n12 = n10 + 4
+										n8 = n8 - 128083543 + 128083543
+										n13 = bit32.band(v15[1] * 18083 + bit32.lshift(bit32.band(v15[1] * 0 + bit32.rshift(v14[1], 16) * 18083, 65535), 16), 4294967295) - 3250497036
+										v10 = n15
+									end
+
+									n2 = n13 - 955149270
+								end
+							end
+
+							local v11 = buffer.readu8(v6, n12)
+							local n13
+
+							if v11 < 128 then
+								n13 = v11
+							else
+								local v12 = v11
+								local v13 = buffer.readu8(v6, n12 + 1)
+								local n14 = n9 - 3214123812
+
+								if v13 < 128 then
+									n13 = (v12 - 128) * 128 + v13
+								else
+									local v14 = v13
+									local v15 = buffer.readu8(v6, n12 + 2)
+
+									if v15 < 128 then
+										n13 = (v12 - 128) * 16384 + v14 - 128 + v15 * 128
+									else
+										local v16 = v15
+										local v17 = buffer.readu8(v6, n12 + 3)
+										n8 = n8 - 106609767 + 106609767
+										n13 = (v12 - 128) * 128 + (v14 - 128) * 16384 + (v16 - 128) * 2097152 + v17 % 128 + (v17 - v17 % 128) * 2097152
+									end
+								end
+
+								n9 = bit32.bxor(n14, 1084007204)
+							end
+
+							local tbl2 = { 0, 1, nil, nil, v10 + 0 }
+							local v12 = table.create(v10)
+
+							while true do
+								local v13 = tbl2[2]
+								local v14 = tbl2[5]
+								local n14 = tbl2[1] + v13
+								local flag = v13 <= 0
+								local flag2 = not flag
+								local flag3 = n14 >= v14
+								local flag4 = n14 <= v14
+								flag3 = flag and flag3
+								flag3 = flag3 or flag2 and flag4
+								tbl2[1] = n14
+
+								if flag3 then
+									local v15 = n14
+									local v16 = table.create(n13)
+									local tbl3 = { 0, 1, tbl2, nil, n13 + 0 }
+
+									while true do
+										local v17 = tbl3[2]
+										local v18 = tbl3[5]
+										local n15 = tbl3[1] + v17
+										local flag5 = v17 <= 0
+										local flag6 = not flag5
+										local flag7 = n15 >= v18
+										local flag8 = n15 <= v18
+										flag7 = flag5 and flag7
+										flag7 = flag7 or flag6 and flag8
+										tbl3[1] = n15
+										if flag7 then
+											v16[n15] = bit32.bxor(v15 * n15, v8)
+											continue
+										end
+										break
+									end
+
+									tbl2 = tbl3[3]
+									v12[v15] = v16
+									continue
+								end
+
+								break
+							end
+
+							n5 = v12
+						end
+
+						bit32.bxor(n9, 2685952928)
+					else
+						local n9 = n7 - 277446088
+
+						if nil then
+							if nil then
+								local n10 = v4 + 1
+								local n11 = (187 + v3) % 256
+								local v8 = bit32.bxor(n9, 0)
+								local v9 = bit32.band(n4, v8)
+								local writeu32 = buffer.writeu32
+								local v10 = upv9
+								local v11 = upv7[n11]
+								local v12 = bit32.bxor(buffer.readu32(v6, n10 + 0), v11, 3149642683)
+								writeu32(v10, 0, v12)
+								local v13 = upv8[n11]
+								local writeu322 = buffer.writeu32
+								local v14 = upv9
+								local v15 = upv7[v13]
+								local v16 = bit32.bxor(buffer.readu32(v6, n10 + 4), v15, 3149642683)
+								writeu322(v14, 4, v16)
+								local v17 = upv9
+								local v18 = buffer.readf32(v17, n6)
+								local v19 = buffer.readi32(v17, 4)
+								n5 = upv6(v18, v19)
+							else
+								local n10 = v4 + 1
+								local n11 = buffer.readu8(v6, n10)
+								local n12
+
+								if nil then
+									n12 = n10 + 1
+								else
+									local v8 = buffer.readu8(v6, n10 + 1)
+
+									if nil then
+										local v9 = bit32.bxor(n9, 0)
+										n11 = (n11 - 128) * 128 + v8
+										n12 = n10 + 2
+										n9 = n9 - 93552691 + 93552691
+										n2 = bit32.bxor(v9, 2308499198)
+									else
+										local v9 = buffer.readu8(v6, n10 + 2)
+
+										if nil then
+											n11 = (n11 - 128) * 16384 + v8 - 128 + v9 * 128
+											n12 = n10 + 3
+										else
+											local v10 = buffer.readu8(v6, n10 + 3)
+											local n13 = (n11 - 128) * 128 + (v8 - 128) * 16384 + (v9 - 128) * 2097152
+											local n14 = v10 % 128
+											local v11 = v10
+											n11 = n13 + n14 + (v11 - v11 % 128) * 2097152
+											n12 = n10 + 4
+											n2 = bit32.bxor(n9, 0) - 2305302974
+											n4 = bit32.bxor(bit32.bor(n4, 3443884229), 3443884224)
+										end
+									end
+								end
+
+								local n13 = (30 + v3) % 256
+								local v8 = buffer.create(n11)
+								local n14 = n11 - n11 % 4
+								local n15 = 30
+								local n16 = 9
+								local n17 = 163
+								local n18 = 505290270
+								local tbl2 = { n14 - 1 + 0, -4, 4, nil, nil }
+
+								while true do
+									local v9 = tbl2[3]
+									local v10 = tbl2[1]
+									local n19 = tbl2[2] + v9
+									local flag = v9 <= 0
+									local flag2 = not flag
+									local flag3 = n19 >= v10
+									local flag4 = n19 <= v10
+									flag = flag and flag3
+									flag = flag or flag2 and flag4
+									tbl2[2] = n19
+
+									if flag then
+										local writeu32 = buffer.writeu32
+										local v11 = upv7[n13]
+										local v12 = bit32.bxor(buffer.readu32(v6, n12 + n19), v11, n18)
+										writeu32(v8, n19, v12)
+										n13 = upv8[n13]
+										continue
+									end
+
+									break
+								end
+
+								local n19 = n9 + 287491097
+								local tbl3 = { n11 - 1 + 0, nil, tbl2[5], n14 - 1, 1 }
+
+								while true do
+									local v9 = tbl3[5]
+									local v10 = tbl3[1]
+									local n20 = tbl3[4] + v9
+									local flag = v9 <= 0
+									tbl3[4] = n20
+
+									if n20 <= v10 then
+										n13 = (n16 * n13 + n17) % 256
+										local writeu8 = buffer.writeu8
+										local v11 = bit32.bxor(buffer.readu8(v6, n12 + n20), n15, n13)
+										writeu8(v8, n20, v11)
+									else
+										break
+									end
+								end
+
+								local v9 = tbl3[3]
+								local n20 = buffer.readu8(v8, n6)
+								local n21
+
+								if nil then
+									n21 = 1
+								else
+									local v10 = buffer.readu8(v8, 1)
+
+									if nil then
+										n20 = (n20 - 128) * 128 + v10
+										n21 = 2
+									else
+										local v11 = buffer.readu8(v8, 2)
+										local n22
+
+										if nil then
+											bit32.band(n4, 2584220919)
+											local n23 = n19 - 440778458
+											local bor = bit32.bor
+											local v12 = bit32.bxor(n23, 0)
+											n22 = bor(n2, v12)
+											n20 = (n20 - 128) * 16384 + v10 - 128 + v11 * 128
+											n19 = n23 + 440778458
+											n21 = 3
+										else
+											local v12 = buffer.readu8(v8, 3)
+											n20 = (n20 - 128) * 128 + (v10 - 128) * 16384 + (v11 - 128) * 2097152 + v12 % 128 + (v12 - v12 % 128) * 2097152
+											n22 = bit32.bxor(n2, 4294967295) - 3213471903
+											n21 = 4
+										end
+
+										bit32.bxor(n22, 4556830)
+									end
+								end
+
+								local tbl4 = {}
+
+								if n20 > 0 then
+									local tbl5 = { n20 + 0, nil, 1, v9, 0 }
+									n5 = table.create(n20 * 3)
+
+									while true do
+										local v10 = tbl5[3]
+										local v11 = tbl5[1]
+										local n22 = tbl5[5] + v10
+										local flag = v10 <= 0
+										local flag2 = not flag
+										local flag3 = n22 >= v11
+										local flag4 = n22 <= v11
+										flag = flag and flag3
+										flag4 = flag2 and flag4
+										flag4 = flag or flag4
+										tbl5[5] = n22
+
+										if flag4 then
+											local n23 = (n22 - 1) * 3
+											local n24 = buffer.readu8(v8, n21)
+
+											if nil then
+												n21 += 1
+											else
+												local v12 = buffer.readu8(v8, n21 + 1)
+
+												if nil then
+													n24 = (n24 - 128) * 128 + v12
+													n21 += 2
+													n19 = n19 - 209607266 + 209607266
+												else
+													local v13 = buffer.readu8(v8, n21 + 2)
+
+													if nil then
+														n24 = (n24 - 128) * 16384 + v12 - 128 + v13 * 128
+														n21 += 3
+													else
+														local v14 = buffer.readu8(v8, n21 + 3)
+														n24 = (n24 - 128) * 128 + (v12 - 128) * 16384 + (v13 - 128) * 2097152 + v14 % 128 + (v14 - v14 % 128) * 2097152
+														n21 += 4
+													end
+												end
+											end
+
+											local v12 = bit32.band(n24, 3)
+											local v13 = bit32.rshift(n24, 2)
+											local v14, n25
+
+											if v12 == 1 then
+												v14 = v12
+												local n26 = buffer.readu8(v8, n21)
+
+												if nil then
+													n21 += 1
+												else
+													local v15 = buffer.readu8(v8, n21 + 1)
+
+													if nil then
+														n26 = (n26 - 128) * 128 + v15
+														n21 += 2
+													else
+														local v16 = buffer.readu8(v8, n21 + 2)
+
+														if nil then
+															n26 = (n26 - 128) * 16384 + v15 - 128 + v16 * 128
+															n21 += 3
+															n19 = n19 - 137162488 + 137162488
+														else
+															local v17 = buffer.readu8(v8, n21 + 3)
+															n26 = (n26 - 128) * 128 + (v15 - 128) * 16384 + (v16 - 128) * 2097152 + v17 % 128 + (v17 - v17 % 128) * 2097152
+															n21 += 4
+														end
+													end
+												end
+
+												n25 = n26 + 1
+											else
+												n25 = 6547
+												v14 = v12
+											end
+
+											n5[n23 + 1] = n25
+											n5[n23 + 3] = v14
+											n5[n23 + 2] = v13
+											continue
+										end
+
+										break
+									end
+								else
+									n5 = tbl4
+								end
+
+								n9 = n19 - 287491097
+							end
+						elseif nil then
+							local writeu8 = buffer.writeu8
+							local v8 = upv9
+							local v9 = bit32.bxor(buffer.readu8(v6, v4 + 1 + 0), 203, (9 * (203 + v3) % 256 + 163) % 256)
+							writeu8(v8, 0, v9)
+							n5 = buffer.readu8(upv9, n6) ~= 237
+						else
+							local n10 = (80 + v3) % 256
+							local writeu32 = buffer.writeu32
+							local v8 = upv9
+							local v9 = upv7[n10]
+							local v10 = bit32.bxor(buffer.readu32(v6, v4 + 1 + 0), v9, 1347440720)
+							writeu32(v8, 0, v10)
+							n5 = buffer.readi32(upv9, n6)
+							n9 = n9 + 218351644 - 218351644
+						end
+
+						n8 = n9 + 273357878
+					end
+
+					local v8 = bit32.bxor(n8, 0)
+					n7 = n8 + 4088210
+				end
+			end
+
+			arg2[arg3] = n5
+			return n5
+		end }
+
+		arg[6] = tbl
+	else
+		tbl = v
+	end
+
+	return tbl
+end
+
+local v, v2, v3, v4 = ...
+local v5 = bit32.bxor(v4, 0)
+local n = 2410440297
+local n2 = 3658448686
+local kind = type(v)
+upv3("userdata", kind)
+
+if nil then
+	upv4(211849736, 4)
+	upv5 = 476448435
+	upv6()
+end
+
+local n3 = n2 // 2
+local kind2 = typeof(v)
+local n4 = v4 + 296280223
+local str
+
+if not upv3("Instance", kind2) then
+	str = "Instance"
+	local v6 = upv4
+	bit32.bxor(v5, 296280223)
+	v6(211849736, 4)
+	upv5 = 476448435
+	upv6()
+else
+	str = "Instance"
+end
+
+local parent = v.Parent
+local parent2 = v.Parent
+
+if upv7[not parent] then
+	upv3(parent, parent2)
+	local v6 = bit32.bxor(n, n3)
+
+	if nil then
+		upv4(211849736, 4)
+		upv5 = 476448435
+		upv6()
+	end
+
+	n = bit32.bxor(v6, 1829224343)
+end
+
+local name = v.Name
+local name2 = v.Name
+local kind3 = type(name)
+upv3("string", kind3)
+
+if nil then
+	upv4(211849736, 4)
+	upv5 = 476448435
+	upv6()
+end
+
+upv3(name, name2)
+
+if nil then
+	upv4(211849736, 4)
+	upv5 = 476448435
+	upv6()
+	n4 = n4 - 281706928 + 281706928
+end
+
+local n5 = #name2
+upv3(#name, n5)
+
+if nil then
+	local v6 = upv4
+	local v7 = bit32.bxor(n, n3)
+	v6(211849736, 4)
+	upv5 = 476448435
+	upv6()
+	n = bit32.bxor(v7, 1829224343)
+end
+
+upv3(tostring(v), name)
+local bxor = bit32.bxor
+local v6 = bit32.bxor(n4, 0)
+local n6 = bxor(n3, v6)
+
+if nil then
+	upv4(211849736, 4)
+	upv5 = 476448435
+	upv6()
+end
+
+upv3(v2, v.ClassName)
+
+if nil then
+	upv4(211849736, 4)
+	upv5 = 476448435
+	upv6()
+end
+
+local attributeChanged = v.AttributeChanged
+local attributeChanged2 = v.AttributeChanged
+upv3(attributeChanged, attributeChanged2)
+
+if nil then
+	upv4(211849736, 4)
+	upv5 = 476448435
+	upv6()
+end
+
+local v7 = upv7
+local v8 = table.pack(bit32.band(n5, 4294967295))
+local v9 = table.pack(bit32.band(v8[1], 65535))
+local v10 = bit32.band(42688 * v9[1] + bit32.lshift(bit32.band(42688 * bit32.rshift(v8[1], 16) + 65155 * v9[1], 65535), 16), 4294967295)
+local v11 = table.pack(bit32.band(bit32.bnot(n5), 4294967295))
+local v12 = table.pack(bit32.band(v11[1], 65535))
+local n7 = 4239163973 + n4 + v10 + bit32.band(42688 * v12[1] + bit32.lshift(bit32.band(42688 * bit32.rshift(v11[1], 16) + 65155 * v12[1], 65535), 16), 4294967295)
+
+if not v7[not (attributeChanged == attributeChanged2)] then
+	upv4(211849736, 4)
+	upv5 = 476448435
+	upv6()
+end
+
+local connect = attributeChanged.Connect
+local connect2 = attributeChanged.Connect
+upv1(v3, connect, 372944977, "Connect")
+upv1(v3, connect2, 372944977, "Connect")
+upv3(connect, connect2)
+local str2
+
+if nil then
+	str2 = "Connect"
+	upv4(211849736, 4)
+	upv5 = 476448435
+	upv6()
+	n6 = n6 + 3687638738 - 3687638738
+else
+	str2 = "Connect"
+end
+
+local flag = false
+local n8 = 8912013580
+local changed = v.Changed
+local connect3 = changed.Connect
+local v13
+
+local function fn()
+	flag = true
+end
+
+if bit32.bxor(n6, 102476705) == 96396310 then
+	v13 = bit32.bxor(n8, 1880945823)
+end
+
+local v14 = connect3(changed, fn)
+
+if nil then
+	v13 = n8
+	upv4(211849736, 4)
+	local v15 = bit32.rshift(n, 10)
+	upv5 = 476448435
+	upv6()
+	n = v15 + 2408086352
+else
+	v13 = n8
+end
+
+if nil then
+	upv4(211849736, 4)
+	upv5 = 476448435
+	upv6()
+	n7 = n7 - 6235664 + 6235664
+end
+
+local disconnect = v14.Disconnect
+upv1(v3, disconnect, 372944977, "Disconnect")
+upv2(disconnect, nil)
+disconnect(v14)
+local connected = v14.Connected
+local v15 = table.pack(bit32.band(n6, 4294967295))
+local v16 = table.pack(bit32.band(n, 4294967295))
+local v17 = table.pack(bit32.band(v15[1], 65535))
+local v18 = table.pack(bit32.rshift(v15[1], 16))
+local v19 = table.pack(bit32.band(v16[1], 65535))
+local v20 = bit32.band(v17[1] * v19[1] + bit32.lshift(bit32.band(v17[1] * bit32.rshift(v16[1], 16) + v18[1] * v19[1], 65535), 16), 4294967295)
+
+if nil then
+	upv4(211849736, 4)
+	upv5 = 476448435
+	upv6()
+end
+
+local wait = attributeChanged.Wait
+upv1(v3, wait, 372944977, "Wait")
+local n9 = 437391040
+
+local thread = coroutine.create(function()
+	return (wait(attributeChanged))
+end)
+
+local v21, v22 = coroutine.resume(thread)
+local v23 = v20
+
+if not upv7[not v21] then
+	error("devirt: symbolic value store into proto array (at 192:372)")
+end
+
+local flag2 = upv7[not v22]
+local v24
+
+if not flag2 then
+	v24 = coroutine.status(thread)
+	flag2 = not upv3("suspended", v24)
+end
+
+while true do
+	if flag2 then
+		upv4(211849736, 4)
+		upv5 = 476448435
+		upv6()
+	end
+
+	local ok, result = pcall(coroutine.close, thread)
+	n7 += 197996017
+	local flag3 = not upv7[not ok] or not upv7[not result]
+
+	if not flag3 then
+		local v25 = coroutine.status(thread)
+		flag3 = not upv3("dead", v25)
+	end
+
+	if flag3 then
+		upv4(211849736, 4)
+		upv5 = 476448435
+		upv6()
+	end
+
+	local v25 = getmetatable(v)
+	upv3("The metatable is locked", v25)
+
+	if nil then
+		upv4(211849736, 4)
+		upv5 = 476448435
+		upv6()
+	end
+
+	if bit32.bxor(v23, 22251624) == 99844097 then
+		v24 = coroutine.status(thread)
+		flag2 = not upv3("suspended", v24)
+		continue
+	end
+
+	break
+end

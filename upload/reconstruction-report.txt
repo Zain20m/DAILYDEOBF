@@ -45,10 +45,10 @@ VERIFIED FUNCTION RECONSTRUCTION
 - Final top-level chunk: performs an Instance and RBXScriptSignal contract check, but delegates comparisons and failure reporting to missing callback upvalues.
 
 RUNTIME PLACEHOLDERS AND CALL SITES
-- luraph_runtime1 is called at lines 420, 571, and 1327 (the latter appears in payload_fn_5).
-- luraph_runtime2 is called at line 1834.
-- luraph_runtime3 is called at lines 2460, 2586, 2812, and 3676.
-The placeholder comments say these are VM functions created by LPH_ENCFUNC and not lifted. The key, encrypted buffer, return type, and captured closure environment are not available. Recreating them from call sites would be guesswork.
+- luraph_runtime1 has source references at lines 420 and 571 in payload_fn_5. Line 420 is inside an "if nil then" arm and is unreachable; line 571 is in the corresponding reachable path.
+- luraph_runtime2 has one source reference at line 1834 inside an "if nil then" arm, so that call is unreachable in the recovered text.
+- luraph_runtime3 has source references at lines 2460, 2586, 2812, and 3676. The first three are inside literal-nil branches/arms and are unreachable. The line 3676 call is in payload_fn_34 after indexing a newly-created empty table, so the local lookup is always nil and the call is reachable when that decoder path is reached.
+The placeholder comments say these are VM functions created by LPH_ENCFUNC and not lifted. The key, encrypted buffer, return type, and captured closure environment are not available. In particular, the reachable runtime3 call blocks the lazy decoder's full behavior. Recreating it from call sites would be guesswork.
 
 UNRESOLVED PROTOTYPE STORES
 The eight failures are at lines 392, 2482, 2495, 2519, 2608, 2621, 2626, and 4369.

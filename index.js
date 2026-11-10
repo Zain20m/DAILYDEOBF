@@ -750,12 +750,12 @@ function runCommand(command, args, cwd, timeoutMs, options = {}) {
     let timedOut = false;
 
     child.stdout.on('data', (chunk) => {
-      if (stdout.length < 48_000) stdout += chunk.toString().slice(0, 48_000 - stdout.length);
+      if (stdout.length < 512_000) stdout += chunk.toString().slice(0, 512_000 - stdout.length);
     });
 
     child.stderr.on('data', (chunk) => {
       const text = chunk.toString();
-      if (stderr.length < 64_000) stderr += text.slice(0, 64_000 - stderr.length);
+      if (stderr.length < 512_000) stderr += text.slice(0, 512_000 - stderr.length);
       pendingStderr += text;
       let newline;
       while ((newline = pendingStderr.indexOf('\n')) !== -1) {
@@ -772,6 +772,8 @@ function runCommand(command, args, cwd, timeoutMs, options = {}) {
 
     child.once('error', (error) => {
       clearTimeout(timer);
+      error.stdout = stdout;
+      error.stderr = stderr;
       reject(error);
     });
 
@@ -779,13 +781,22 @@ function runCommand(command, args, cwd, timeoutMs, options = {}) {
       clearTimeout(timer);
       if (pendingStderr.trim() && options.onProgress) options.onProgress(pendingStderr.trim());
       if (timedOut || signal === 'SIGKILL') {
-        return reject(new Error('The engine exceeded its ' + formatDuration(timeoutMs) + ' processing limit.'));
+        const error = new Error('The engine exceeded its ' + formatDuration(timeoutMs) + ' processing limit.');
+        error.stdout = stdout;
+        error.stderr = stderr;
+        error.signal = signal || 'SIGKILL';
+        return reject(error);
       }
       if (code !== 0) {
         const raw = (stderr || stdout).trim();
         const lines = raw.split('\n').filter(Boolean);
         const detail = lines.length > 18 ? [...lines.slice(0, 12), '…', ...lines.slice(-6)].join('\n') : lines.join('\n');
-        return reject(new Error(detail || ('Deobfuscator exited with code ' + code + '.')));
+        const error = new Error(detail || ('Deobfuscator exited with code ' + code + '.'));
+        error.stdout = stdout;
+        error.stderr = stderr;
+        error.exitCode = code;
+        error.signal = signal || null;
+        return reject(error);
       }
       resolve({ stdout, stderr });
     });

@@ -2275,7 +2275,7 @@ async function startGetWorkflow(message, inlineSource = null) {
       content: '📋 **.get complete report** · ' + resolution.discovered +
         ' URL(s), ' + resolution.attempts + ' fetch attempt(s), ' +
         resolution.failures.length + ' failed.',
-      files: [new AttachmentBuilder(reportBuffer, { name: 'get_report.txt' })],
+      files: [new AttachmentBuilder(reportBuffer, { name: 'get_report.txt' }), ...(runtimeSpyFile ? [runtimeSpyFile] : [])],
       allowedMentions: { repliedUser: false },
     });
   }

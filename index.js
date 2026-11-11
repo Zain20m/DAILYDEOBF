@@ -2568,6 +2568,96 @@ function helpText() {
   ].join('\n');
 }
 
+
+async function processVantarmorFetcher(message, prompt, input) {
+  const source = String(input.source || '');
+  const loaderMatch = source.match(/https:\/\/[^\s"'<>]+\/files\/v1\/loaders\/([a-fA-F0-9]{32,64})\.lua/i);
+  const keyMatch = source.match(/(?:getgenv\(\)\.script_key|script_key)\s*=\s*["']([^"']+)["']/i);
+  if (!loaderMatch) throw new Error('No Vantarmor loader URL was found. Expected /files/v1/loaders/HASH.lua.');
+  if (!keyMatch) throw new Error('No script_key was found. Paste the loader and its script_key together.');
+
+  const loaderUrl = new URL(loaderMatch[0]);
+  if (loaderUrl.protocol !== 'https:' || loaderUrl.hostname !== 'vantarmor.up.railway.app' ||
+      loaderUrl.username || loaderUrl.password) {
+    throw new Error('The loader must use the official HTTPS Vantarmor host.');
+  }
+  const base = loaderUrl.origin;
+  const hash = loaderMatch[1].toLowerCase();
+  const key = keyMatch[1].trim();
+  const hwidMatch = source.match(/\bhwid\s*=\s*["']([^"']+)["']/i);
+  const rbxidMatch = source.match(/\brbxid\s*=\s*["']([^"']+)["']/i);
+  const params = new URLSearchParams({
+    s: hash,
+    key,
+    hwid: hwidMatch ? hwidMatch[1] : 'va-deob-hwid-0001',
+    rbxid: rbxidMatch ? rbxidMatch[1] : '1',
+  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 40000);
+  const outputPath = path.join(os.tmpdir(), 'daily-vantarmor-' + message.id + '.lua');
+
+  try {
+    await prompt.edit({
+      content: '🔄 **Vantarmor Fetcher**\nRequesting the server-delivered Lua source using the supplied loader and key.',
+      embeds: [],
+      components: [],
+    });
+    const response = await fetch(base + '/v1/a?' + params.toString(), {
+      headers: { 'User-Agent': 'Roblox/WinInet', Accept: '*/*' },
+      signal: controller.signal,
+    });
+    let body = (await response.text()).replace(/\r\n/g, '\n');
+    if (!response.ok) throw new Error('Vantarmor returned HTTP ' + response.status + '.');
+    const errorLine = body.trim().match(/^!VANTARMOR:([A-Z0-9_]+)$/);
+    if (errorLine) throw new Error('Vantarmor rejected the request: ' + errorLine[1] + '.');
+
+    if (body.startsWith('!VANTARMOR:TOKEN\n')) {
+      const token = body.slice('!VANTARMOR:TOKEN\n'.length).trim();
+      const postResponse = await fetch(base + '/v1/p', {
+        method: 'POST',
+        headers: {
+          'User-Agent': 'Roblox/WinInet',
+          'Content-Type': 'text/plain',
+          Accept: '*/*',
+        },
+        body: token,
+        signal: controller.signal,
+      });
+      body = (await postResponse.text()).replace(/\r\n/g, '\n');
+      if (!postResponse.ok) throw new Error('Vantarmor payload request returned HTTP ' + postResponse.status + '.');
+    }
+
+    const payloadError = body.trim().match(/^!VANTARMOR:([A-Z0-9_]+)$/);
+    if (payloadError) throw new Error('Vantarmor rejected the payload: ' + payloadError[1] + '.');
+    if (!body.startsWith('!VANTARMOR:CODE\n')) {
+      throw new Error('Unexpected Vantarmor response. Expected a CODE or TOKEN response.');
+    }
+
+    let recovered = body.slice('!VANTARMOR:CODE\n'.length).replace(/\r\n/g, '\n');
+    if (!recovered.trim()) throw new Error('Vantarmor returned an empty source file.');
+    if (recovered.startsWith('-- deob by prince')) {
+      recovered = '-- Recovered from Vantarmor delivery\n' + recovered.slice('-- deob by prince'.length).replace(/^\n+/, '');
+    }
+    if (!recovered.endsWith('\n')) recovered += '\n';
+    const data = Buffer.from(recovered, 'utf8');
+    if (data.length > MAX_OUTPUT_BYTES) throw new Error('Recovered source exceeds the 18 MB Discord output limit.');
+    await fs.writeFile(outputPath, data, { mode: 0o600 });
+    await message.reply({
+      embeds: [dailyEmbed(
+        'Vantarmor source fetched',
+        'Retrieved ' + formatBytes(data.length) + ' of server-delivered Lua source. This fetches the source returned by Vantarmor; it does not unpack an inner obfuscator or VM.',
+        DAILY_COLORS.success
+      )],
+      files: [new AttachmentBuilder(outputPath, { name: 'vantarmor_recovered.lua' })],
+      allowedMentions: { repliedUser: false },
+    });
+    await prompt.edit({ content: '✅ Vantarmor returned the Lua source. Attached as **vantarmor_recovered.lua**.', components: [] }).catch(() => {});
+  } finally {
+    clearTimeout(timeout);
+    await fs.rm(outputPath, { force: true }).catch(() => {});
+  }
+}
+
 async function startWorkflow(message, inlineText = null) {
   const prompt = await message.reply({
     embeds: [dailyEmbed('New deobfuscation', 'Upload a **.lua**, **.luau**, **.pureluau** or **.txt** file, paste source, or send a direct HTTP/HTTPS script URL.\n\n**Maximum input:** 18 MB', DAILY_COLORS.primary)],
@@ -2580,7 +2670,7 @@ async function startWorkflow(message, inlineText = null) {
     ? await inputFromAttachment(firstAttachment)
     : (inlineText ? await inputFromUrlText(inlineText) : await collectInput(message, prompt));
 
-  if (isClearlyPlainLuau(input.source)) {
+  if (isClearlyPlainLuau(input.source) && !/\/files\/v1\/loaders\//i.test(input.source)) {
     await sendOriginalLua(
       message,
       prompt,
@@ -2615,6 +2705,10 @@ async function startWorkflow(message, inlineText = null) {
     ),
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
+        .setCustomId(`deobf-vantarmor:${message.author.id}`)
+        .setLabel('Vantarmor Fetcher')
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
         .setCustomId(`deobf-cancel:${message.author.id}`)
         .setLabel('Cancel')
         .setStyle(ButtonStyle.Secondary),
@@ -2631,6 +2725,16 @@ async function startWorkflow(message, inlineText = null) {
     filter: (interaction) => interaction.user.id === message.author.id,
   });
   componentCollector.on('collect', async (interaction) => {
+    if (interaction.customId === `deobf-vantarmor:${message.author.id}`) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        await processVantarmorFetcher(message, prompt, input);
+      } catch (error) {
+        await showDeobfFailure(message, prompt, 'Vantarmor Fetcher failed', error);
+      }
+      return;
+    }
     if (interaction.customId === `deobf-cancel:${message.author.id}`) {
       await interaction.update({ content: 'Cancelled.', components: [] });
       componentCollector.stop('cancelled');

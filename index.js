@@ -1063,7 +1063,7 @@ async function sendAnalysisOutput(message, input, config) {
     'Unlifted blocks: ' + (unliftedBlocks === null ? 'not reported' : unliftedBlocks),
     'Unstructured jumps: ' + (unstructuredJumps === null ? 'not reported' : unstructuredJumps),
     'Captured prototypes: ' + (prototypeCount || (protoBytes ? 'present, count unavailable' : 'not captured')),
-    'Dynamic VM chunks: ' + chunkFiles.length,
+    'Dynamic VM chunks captured: ' + chunkFiles.length,
     'String dump: ' + (stringBytes ? formatBytes(stringBytes) : 'not produced'),
     'Source candidate: ' + (hasLiftCandidate ? formatBytes(liftedBytes) : 'not produced'),
     'Lift validation: ' + (hasLiftedSource ? 'passed' : 'failed'),
@@ -1155,7 +1155,7 @@ async function sendAnalysisOutput(message, input, config) {
   const safeName = String(input.filename || 'script.lua').replaceAll(String.fromCharCode(96), '');
   let summary;
   if (environmentProbeOnly) {
-    summary = '**DAILY DEOBF · ' + config.label + '**\n⚠️ Environment compatibility check failed (PC-R01) before payload execution.\nThis is probe output, not deobfuscated source.\nAttached: environment_probe_partial.txt and analysis-report.txt.';
+    summary = '**DAILY DEOBF · ' + config.label + '**\n⚠️ Environment compatibility check failed (PC-R01) before payload execution.\nThis is probe output, not deobfuscated source.\nDynamic VM chunks attached: ' + attachedChunkCount + '.\nAttached: environment_probe_partial.txt and analysis-report.txt.';
   } else if (hasLiftedSource) {
     summary = '**DAILY DEOBF · ' + config.label + '**\n✅ Luau candidate passed structural checks and syntax validation.\nProcessed: ' + safeName +
       '\nFunctions lifted: ' + (liftedFunctions === null ? 'see report' : liftedFunctions) +

@@ -2703,7 +2703,7 @@ async function processVantarmorFetcher(message, prompt, input) {
     }
 
     await prompt.edit({
-      content: '🔄 **Vantarmor and Universal Loader Fetcher**\\nFetching the loader and checking supported HTTP request methods...',
+      content: '🔄 **Vantarmor and Universal Loader Fetcher**\nFetching the loader and checking supported HTTP request methods...',
       embeds: [],
       components: [],
     });

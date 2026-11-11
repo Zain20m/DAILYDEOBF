@@ -751,6 +751,16 @@ async function showDeobfFailure(message, prompt, title, error) {
     allowedMentions: { repliedUser: false },
   }).catch(() => {});
 
+  if (error && error.originalInput && error.originalInput.data) {
+    await message.reply({
+      content: '📎 Original protected input, unchanged:',
+      files: [new AttachmentBuilder(error.originalInput.data, {
+        name: error.originalInput.name || 'original-obfuscated.lua',
+      })],
+      allowedMentions: { repliedUser: false },
+    }).catch(() => {});
+  }
+
   const collector = prompt.createMessageComponentCollector({
     time: 15 * 60_000,
     filter: (interaction) =>
@@ -1855,6 +1865,15 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
   } catch (error) {
     error.stdout = [dedicatedLogs, compatibilityLogs].filter(Boolean).join('\n\n');
     error.stderr = error.stdout;
+    if (input && input.source) {
+      const originalData = Buffer.from(input.source, 'utf8');
+      if (originalData.length > 0 && originalData.length <= MAX_OUTPUT_BYTES) {
+        error.originalInput = {
+          name: path.basename(String(input.filename || 'original-obfuscated.lua')).replace(/[^A-Za-z0-9._-]/g, '_'),
+          data: originalData,
+        };
+      }
+    }
     await capturePartialArtifact(error, [chosen.base + '.devirt.luau', chosen.base + '.trace.luau', chosen.base + '.luau', dedicated.base + '.devirt.luau', compatible.base + '.devirt.luau']);
     await progress.fail(error);
     throw error;

@@ -1,6 +1,14 @@
 'use strict';
 const fs = require('node:fs/promises');
 
+function readLongBracketOpen(source, index) {
+  if (source[index] !== '[') return null;
+  let cursor = index + 1;
+  while (source[cursor] === '=') cursor++;
+  if (source[cursor] !== '[') return null;
+  return { equals: source.slice(index + 1, cursor), length: cursor - index + 1 };
+}
+
 function scan(source) {
   const tokens = []; let i = 0; let lineBreak = false;
   while (i < source.length) {
@@ -9,8 +17,8 @@ function scan(source) {
     if (/\s/.test(ch)) { i++; continue; }
     const start = i; let type = 'word';
     if (ch === '"' || ch === "'") { type = 'string'; const q = ch; i++; while (i < source.length) { if (source[i] === '\\') { i += 2; continue; } if (source[i++] === q) break; } }
-    else if (ch === '[' && /^\[(=*)\[/.test(source.slice(i))) { const m = source.slice(i).match(/^\[(=*)\[/); type = 'longstring'; const close = ']' + m[1] + ']'; i += m[0].length; const end = source.indexOf(close, i); i = end < 0 ? source.length : end + close.length; }
-    else if (ch === '-' && source[i + 1] === '-') { type = 'comment'; const m = source.slice(i + 2).match(/^\[(=*)\[/); if (m) { const close = ']' + m[1] + ']'; i += 2 + m[0].length; const end = source.indexOf(close, i); i = end < 0 ? source.length : end + close.length; } else { i += 2; while (i < source.length && source[i] !== '\n' && source[i] !== '\r') i++; } }
+    else if (ch === '[' && readLongBracketOpen(source, i)) { const opener = readLongBracketOpen(source, i); type = 'longstring'; const close = ']' + opener.equals + ']'; i += opener.length; const end = source.indexOf(close, i); i = end < 0 ? source.length : end + close.length; }
+    else if (ch === '-' && source[i + 1] === '-') { type = 'comment'; const opener = readLongBracketOpen(source, i + 2); if (opener) { const close = ']' + opener.equals + ']'; i += 2 + opener.length; const end = source.indexOf(close, i); i = end < 0 ? source.length : end + close.length; } else { i += 2; while (i < source.length && source[i] !== '\n' && source[i] !== '\r') i++; } }
     else if (/[A-Za-z_]/.test(ch)) { i++; while (i < source.length && /[A-Za-z0-9_]/.test(source[i])) i++; }
     else if (/[0-9]/.test(ch)) { i++; while (i < source.length && /[A-Za-z0-9_.]/.test(source[i])) i++; }
     else { const ops = ['...', '<<=', '>>=', '//=', '..=', '<<', '>>', '//', '..', '==', '~=', '<=', '>=', '+=', '-=', '*=', '/=', '%=', '^=', '::']; const op = ops.find(x => source.startsWith(x, i)); i += op ? op.length : 1; }

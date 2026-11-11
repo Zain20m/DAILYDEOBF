@@ -386,15 +386,15 @@ async function probePublicHttpMethods(rawUrl, curlOptions = {}) {
     }
     const responseHeaders = response.headers.entries()
       .filter(([name]) => /^(allow|accept|accept-patch|accept-post|content-type|content-length|content-disposition|content-range|etag|last-modified|dav|location|server|www-authenticate|vary)$/i.test(name));
-    let body = Buffer.alloc(0);
+    let responseBody = Buffer.alloc(0);
     let bodyError = null;
     try {
-      body = await readResponse(response, 512 * 1024);
+      responseBody = await readResponse(response, 512 * 1024);
     } catch (error) {
       bodyError = String(error && (error.message || error) || 'Response body could not be read');
       if (response.body && typeof response.body.cancel === 'function') await response.body.cancel().catch(() => {});
     }
-    const result = { method: label, status: response.status, statusText: response.statusText, headers: responseHeaders, body, bodyError };
+    const result = { method: label, status: response.status, statusText: response.statusText, headers: responseHeaders, body: responseBody, bodyError };
     results.push(result);
     return result;
   }

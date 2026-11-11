@@ -918,12 +918,15 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
   }
 
   function onLine(rawLine) {
-    const line = String(rawLine || '').replace(/\x1b\[[0-9;]*m/g, '').trim();
+    const receivedLine = String(rawLine || '').replace(/\x1b\[[0-9;]*m/g, '').trim();
+    const candidateMatch = receivedLine.match(/^\[candidate ([^\]]+)\]\s*(.*)$/);
+    const line = (candidateMatch ? candidateMatch[2] : receivedLine).trim();
     if (!line) return;
+    const candidatePrefix = candidateMatch ? '[' + candidateMatch[1] + '] ' : '';
     lastEngineOutputAt = Date.now();
-    lastDiagnosticLine = line.slice(0, 220);
+    lastDiagnosticLine = (candidatePrefix + line).slice(0, 220);
     if (/\b(error|exception|traceback|failed|fatal)\b/i.test(line)) {
-      lastErrorLine = line.slice(0, 220);
+      lastErrorLine = (candidatePrefix + line).slice(0, 220);
     }
     let match;
 
@@ -2203,9 +2206,9 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
 
 
 
-async function collectFlowAuthGameId(message, prompt) {
+async function collectLuraphGameId(message, prompt, label = 'Luraph') {
   await prompt.edit({
-    content: '🎮 **FlowAuth · target game**\nSend the Roblox **Universe/GameId** for the game this script belongs to, or type **skip** if it is not game-locked.\n\nUse the universe ID, not the place ID. The ID is only used as sandbox context.',
+    content: '🎮 **' + label + ' · target game**\nSend the Roblox **Universe/GameId** for the game this script belongs to, or type **skip** if it is not game-locked.\n\nUse the universe ID, not the place ID. The ID is only used as sandbox context.',
     components: [],
   });
 
@@ -2265,7 +2268,7 @@ async function processFlowAuth(message, prompt, input) {
     components: [],
   });
 
-  const gameId = await collectFlowAuthGameId(message, prompt);
+  const gameId = await collectLuraphGameId(message, prompt, 'FlowAuth');
   if (detected.version === '15') {
     return processLuraphV15(message, prompt, input, 'FlowAuth · Luraph v15', gameId);
   }
@@ -3328,7 +3331,9 @@ async function startWorkflow(message, inlineText = null) {
       await interaction.deferUpdate();
       componentCollector.stop('selected');
       try {
-        await processLuraph151(message, prompt, await getWorkflowInput());
+        const selectedInput = await getWorkflowInput();
+        const gameId = await collectLuraphGameId(message, prompt, 'Luraph 15.1');
+        await processLuraph151(message, prompt, selectedInput, gameId);
       } catch (error) {
         await showDeobfFailure(message, prompt, 'Luraph 15.1 failed', error);
       }

@@ -34,8 +34,6 @@ const MAX_GET_ATTEMPTS = 250;
 const INPUT_WAIT_MS = 180_000;
 const PICKER_WAIT_MS = 120_000;
 const ENGINE_TIMEOUT_MS = 25 * 60_000;
-const ENGINE_V14_DIR = path.join(__dirname, 'luraph-v14-engine');
-const ENGINE_V14_CLI = path.join(ENGINE_V14_DIR, 'cli.py');
 const ENGINE_V15_DIR = path.join(__dirname, 'luraph-v15-engine');
 const ENGINE_V15_CLI = path.join(ENGINE_V15_DIR, 'deob.py');
 const ENGINE_151_DIR = path.join(__dirname, 'luraph-v15.1-engine');
@@ -1159,96 +1157,6 @@ async function sendAnalysisOutput(message, input, config) {
 
 
 
-async function processLuraphV14(message, prompt, input, version, gameId = null) {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-v14-'));
-  const inputPath = path.join(tempRoot, 'input.lua');
-  const outputPath = path.join(tempRoot, 'deobfuscated.luau');
-  const inputBytes = Buffer.byteLength(input.source, 'utf8');
-  const progress = createAnalysisProgress(prompt, input.filename, inputBytes, 'Luraph v' + version, { maxTracePasses: 12 });
-  const startedAt = Date.now();
-
-  try {
-    await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
-    await progress.setPhase(
-      'Preparing the dedicated v' + version + ' engine',
-      'Using the isolated v14.x VM frontend and shared Luau runtime.'
-    );
-
-    const result = await runPythonEngine(
-      ENGINE_V14_DIR,
-      ENGINE_V14_CLI,
-      inputPath,
-      outputPath,
-      ENGINE_TIMEOUT_MS,
-      [
-        '--engine', version,
-        '--debug',
-        '--strings',
-        '--trace-fallback',
-        '--max-runs', '12',
-        '--devirt-rounds', '200',
-        '--timeout', '600',
-        '--budget', '600',
-        ...(gameId ? ['--cfg', '__superz_game_id=' + gameId] : []),
-      ],
-      { onProgress: progress.onLine },
-    );
-
-    await progress.setPhase(
-      'Checking the reconstructed Luau',
-      'Separating a VM-lifted result from a behaviour trace before sending the file.'
-    );
-
-    const output = await fs.readFile(outputPath, 'utf8');
-    if (!output.trim()) throw new Error('The v' + version + ' engine produced an empty result.');
-    const isLifted = /^\s*--\s*Devirtualized with Luraph v14\./m.test(output.slice(0, 2500));
-    const elapsedMs = Date.now() - startedAt;
-    const report = [
-      'DAILY DEOBF · Luraph v' + version + ' analysis report',
-      'Result: ' + (isLifted ? 'STATIC VM LIFT GENERATED' : 'TRACE / PARTIAL RECOVERY'),
-      'Input: ' + String(input.filename || 'script.lua'),
-      'Input size: ' + formatBytes(inputBytes),
-      'Elapsed: ' + formatDuration(elapsedMs),
-      'Engine: dedicated Luraph v' + version + ' frontend',
-      'VM lift: ' + (isLifted ? 'devirtualized-source header detected' : 'no devirtualized-source header detected'),
-      '',
-      'Engine progress log:',
-      String(result.stderr || 'No diagnostic output was returned.').slice(-14000),
-    ].join('\n');
-
-    const resultName = 'Luraph_v' + version.replace('.', '_') +
-      (isLifted ? '_devirtualized.luau' : '_partial_result.luau');
-    await prependDailyDeobfHeader(outputPath);
-
-    await message.reply({
-      content: isLifted
-        ? '**DAILY DEOBF · Luraph v' + version + '**\n✅ Static VM-lifted Luau generated.'
-        : '**DAILY DEOBF · Luraph v' + version + '**\n⚠️ Partial result only. The attached file is not confirmed as fully reconstructed source.',
-      files: [
-        new AttachmentBuilder(outputPath, { name: resultName }),
-      ],
-      allowedMentions: { repliedUser: false },
-    });
-
-    await progress.complete(isLifted
-      ? 'The Luau output file was attached.'
-      : 'The partial Luau output file was attached and clearly labelled.');
-    await prompt.edit({
-      content: isLifted
-        ? '✅ Luraph v' + version + ' analysis finished. Static VM-lifted Luau was generated.'
-        : '⚠️ Luraph v' + version + ' analysis finished. The result is labelled as partial recovery.',
-      components: [],
-    });
-  } catch (error) {
-    await capturePartialArtifact(error, ["outputPath"]);
-    await progress.fail(error);
-    throw error;
-  } finally {
-    progress.stop();
-    await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
-  }
-}
-
 async function processLuraphV15(message, prompt, input, displayLabel = 'Luraph v15', gameId = null) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-v15-'));
   const inputPath = path.join(tempRoot, 'input.lua');
@@ -1909,7 +1817,7 @@ async function processFlowAuth(message, prompt, input) {
   const detected = detectFlowAuthLuraphVersion(input.source);
   if (detected.unsupported) {
     await prompt.edit({
-      content: 'FlowAuth detected Luraph v' + detected.version + ', but no matching engine is available. Supported versions are 14.7, 14.8, 14.9, 15 and 15.1.',
+      content: 'FlowAuth detected Luraph v' + detected.version + ', but this bot now supports only Luraph v15 and v15.1.',
       components: [],
     });
     return;
@@ -1917,17 +1825,13 @@ async function processFlowAuth(message, prompt, input) {
   const displayVersion = 'Luraph v' + detected.version;
   const versionNote = detected.explicit
     ? 'Version identified by ' + detected.detectedBy + '.'
-    : 'No Luraph version marker was found. Trying the documented current v15.1 route; older v14.7–v14.9 builds may need a visible version marker.';
+    : 'No Luraph version marker was found. Trying the current v15.1 engine.';
 
   await prompt.edit({
     content: '🧬 **FlowAuth selected**\n' + versionNote +
       '\nUsing the matching Luraph analysis engine: **' + displayVersion + '**.',
     components: [],
   });
-
-  if (/^14\./.test(detected.version)) {
-    return processLuraphV14(message, prompt, input, detected.version);
-  }
 
   const gameId = await collectFlowAuthGameId(message, prompt);
   if (detected.version === '15') {
@@ -2552,20 +2456,6 @@ async function startWorkflow(message, inlineText = null) {
     ),
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`deobf-v14.7:${message.author.id}`)
-        .setLabel('Luraph 14.7')
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`deobf-v14.8:${message.author.id}`)
-        .setLabel('Luraph 14.8')
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`deobf-v14.9:${message.author.id}`)
-        .setLabel('Luraph 14.9')
-        .setStyle(ButtonStyle.Secondary),
-    ),
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
         .setCustomId(`deobf-cancel:${message.author.id}`)
         .setLabel('Cancel')
         .setStyle(ButtonStyle.Secondary),
@@ -2594,17 +2484,6 @@ async function startWorkflow(message, inlineText = null) {
         await processFlowAuth(message, prompt, input);
       } catch (error) {
         await showDeobfFailure(message, prompt, 'FlowAuth analysis failed', error);
-      }
-      return;
-    }
-    const v14Match = interaction.customId.match(/^deobf-v(14\.[789]):/);
-    if (v14Match) {
-      await interaction.deferUpdate();
-      componentCollector.stop('selected');
-      try {
-        await processLuraphV14(message, prompt, input, v14Match[1]);
-      } catch (error) {
-        await showDeobfFailure(message, prompt, 'Luraph v' + v14Match[1] + ' failed', error);
       }
       return;
     }

@@ -3265,8 +3265,11 @@ async function resolveDeobfTargetSource(input) {
 
   // Prefer a downloaded child over the original root bootstrap. If there are
   // no child captures, keep the root as the fallback and report that fact.
+  // Inline loadstring chunks inherit their parent's URL in the resolver,
+  // but they are separate source payloads, not the bootstrap itself. Keep
+  // those eligible even when their source URL equals the original URL.
   const childCandidates = candidates.filter((capture) =>
-    capture.url && (!input.url || capture.url !== input.url)
+    capture.inline || (capture.url && (!input.url || capture.url !== input.url))
   );
   const selected = childCandidates[0] || null;
   if (!selected) {

@@ -442,6 +442,7 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
   let stopped = false;
   let completed = false;
   let failed = false;
+  let lastEngineOutputAt = Date.now();
 
   function stageFor(value) {
     const text = String(value || '').toLowerCase();
@@ -492,6 +493,15 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
       ? elapsedText
       : workCount.toLocaleString('en-US') + ' ' + workLabel + ' • ' + elapsedText));
     if (failed && detail) lines.push('', '-# ' + detail.slice(0, 240));
+    if (!failed && !completed) {
+      lines.push('', '-# Stage: ' + phase.slice(0, 140));
+      const silentForMs = Date.now() - lastEngineOutputAt;
+      if (silentForMs >= 20_000) {
+        lines.push('-# ⏳ No new engine diagnostics for ' + formatDuration(silentForMs) + '. The process is still running; the 25-minute engine limit remains active.');
+      } else if (detail) {
+        lines.push('-# ' + detail.slice(0, 220));
+      }
+    }
     return lines.join('\n');
   }
 
@@ -511,6 +521,7 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
   function onLine(rawLine) {
     const line = String(rawLine || '').replace(/\x1b\[[0-9;]*m/g, '').trim();
     if (!line) return;
+    lastEngineOutputAt = Date.now();
     let match;
 
     if ((match = line.match(/obfuscator:\s*(.+)/i))) {

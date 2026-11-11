@@ -329,7 +329,7 @@ async function inputFromUrlText(text) {
   const filename = /\.(?:lua|luau|pureluau|txt)$/i.test(path.extname(result.filename))
     ? result.filename
     : 'downloaded-script.lua';
-  return { source: decodeSource(result.bytes), filename, url: parsed.toString() };
+  return { source: decodeSource(result.bytes), filename, url: parsed.toString(), originalText: String(text || '') };
 }
 
 function isClearlyPlainLuau(source) {
@@ -2571,38 +2571,47 @@ function helpText() {
 
 async function processVantarmorFetcher(message, prompt, input) {
   const source = String(input.source || '');
-  const loaderMatch = source.match(/https:\/\/[^\s"'<>]+\/files\/v1\/loaders\/([a-fA-F0-9]{32,64})\.lua/i);
-  const keyMatch = source.match(/(?:getgenv\(\)\.script_key|script_key)\s*=\s*["']([^"']+)["']/i);
-  if (!loaderMatch) throw new Error('No Vantarmor loader URL was found. Expected /files/v1/loaders/HASH.lua.');
-  if (!keyMatch) throw new Error('No script_key was found. Paste the loader and its script_key together.');
-
-  const loaderUrl = new URL(loaderMatch[0]);
-  if (loaderUrl.protocol !== 'https:' || loaderUrl.hostname !== 'vantarmor.up.railway.app' ||
-      loaderUrl.username || loaderUrl.password) {
-    throw new Error('The loader must use the official HTTPS Vantarmor host.');
+  const originalText = String(input.originalText || '');
+  const combinedInput = originalText + '\n' + source;
+  const loaderUrlText = input.url || (combinedInput.match(/https:\/\/[^\s"'<>]+\/files\/v1\/loaders\/[^\s"'<>]+/i) || [])[0];
+  if (!loaderUrlText) {
+    throw new Error('No Vantarmor loader URL was found. The URL must use /files/v1/loaders/HASH.lua.');
   }
-  const base = loaderUrl.origin;
-  const hash = loaderMatch[1].toLowerCase();
-  const key = keyMatch[1].trim();
-  const hwidMatch = source.match(/\bhwid\s*=\s*["']([^"']+)["']/i);
-  const rbxidMatch = source.match(/\brbxid\s*=\s*["']([^"']+)["']/i);
-  const params = new URLSearchParams({
-    s: hash,
-    key,
-    hwid: hwidMatch ? hwidMatch[1] : 'va-deob-hwid-0001',
-    rbxid: rbxidMatch ? rbxidMatch[1] : '1',
-  });
+
+  let loaderUrl;
+  try {
+    loaderUrl = new URL(loaderUrlText.replace(/[)\]},.;]+$/g, ''));
+  } catch {
+    throw new Error('The Vantarmor loader URL is invalid.');
+  }
+  if (loaderUrl.protocol !== 'https:' || loaderUrl.hostname !== 'vantarmor.up.railway.app' ||
+      loaderUrl.username || loaderUrl.password || !/^\/files\/v1\/loaders\/[^/]+\.lua$/i.test(loaderUrl.pathname)) {
+    throw new Error('Expected an official Vantarmor HTTPS loader URL under /files/v1/loaders/.');
+  }
+
+  const hash = loaderUrl.pathname.match(/^\/files\/v1\/loaders\/(.+)\.lua$/i)[1];
+  const keyMatch = combinedInput.match(/(?:getgenv\(\)\.script_key|script_key)\s*=\s*["']([^"']+)["']/i);
+  if (!keyMatch) {
+    throw new Error('No script_key was found. Include script_key = "YOUR_KEY" with the Vantarmor loader URL.');
+  }
+
+  const params = new URLSearchParams({ s: hash, key: keyMatch[1].trim() });
+  const hwidMatch = combinedInput.match(/\bhwid\s*=\s*["']([^"']+)["']/i);
+  const rbxidMatch = combinedInput.match(/\brbxid\s*=\s*["']([^"']+)["']/i);
+  if (hwidMatch) params.set('hwid', hwidMatch[1]);
+  if (rbxidMatch) params.set('rbxid', rbxidMatch[1]);
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 40000);
   const outputPath = path.join(os.tmpdir(), 'daily-vantarmor-' + message.id + '.lua');
 
   try {
     await prompt.edit({
-      content: '🔄 **Vantarmor Fetcher**\nRequesting the server-delivered Lua source using the supplied loader and key.',
+      content: '🔄 **Vantarmor Fetcher**\nRequesting the server-delivered Lua source using the supplied loader URL and script key.',
       embeds: [],
       components: [],
     });
-    const response = await fetch(base + '/v1/a?' + params.toString(), {
+    const response = await fetch(loaderUrl.origin + '/v1/a?' + params.toString(), {
       headers: { 'User-Agent': 'Roblox/WinInet', Accept: '*/*' },
       signal: controller.signal,
     });
@@ -2613,7 +2622,7 @@ async function processVantarmorFetcher(message, prompt, input) {
 
     if (body.startsWith('!VANTARMOR:TOKEN\n')) {
       const token = body.slice('!VANTARMOR:TOKEN\n'.length).trim();
-      const postResponse = await fetch(base + '/v1/p', {
+      const postResponse = await fetch(loaderUrl.origin + '/v1/p', {
         method: 'POST',
         headers: {
           'User-Agent': 'Roblox/WinInet',

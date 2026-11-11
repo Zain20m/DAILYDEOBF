@@ -26,6 +26,7 @@ const {
 const TOKEN = process.env.DISCORD_TOKEN;
 const PREFIX = '.deobf';
 const MAX_OUTPUT_BYTES = 18 * 1024 * 1024;
+const MAX_INPUT_BYTES = 18 * 1024 * 1024;
 const MAX_PURELUA_CHARS = 4_000_000;
 const MAX_PURELUA_BYTES = 8 * 1024 * 1024;
 const MAX_GET_FILES = 50;
@@ -264,7 +265,7 @@ async function fetchPublicText(rawUrl) {
 
     // Do not reject a response only because the host labelled it text/html.
     // Some script hosts mislabel plain Luau. decodeSource checks the body itself.
-    const bytes = await readResponse(response);
+    const bytes = await readResponse(response, MAX_INPUT_BYTES);
     const contentType = String(response.headers.get('content-type') || 'unknown')
       .split(';')[0].trim().toLowerCase();
 
@@ -303,7 +304,7 @@ async function inputFromAttachment(attachment) {
     headers: { 'user-agent': 'DAILY-DEOBF/1.0' },
   });
   if (!response.ok) throw new Error(`Could not download the Discord attachment (HTTP ${response.status}).`);
-  const bytes = await readResponse(response);
+  const bytes = await readResponse(response, MAX_INPUT_BYTES);
   return { source: decodeSource(bytes), filename };
 }
 
@@ -327,6 +328,65 @@ async function inputFromUrlText(text) {
     ? result.filename
     : 'downloaded-script.lua';
   return { source: decodeSource(result.bytes), filename, url: parsed.toString() };
+}
+
+function isClearlyPlainLuau(source) {
+  const text = String(source || '').replace(/^\uFEFF/, '').trim();
+  if (!text) return false;
+
+  // Strong signatures always stay on the selected deobfuscation path.
+  if (/This file was protected using Luraph|Luraph Obfuscator|IronBrew|MoonSec|Prometheus Obfuscator|LPH_CRASH|return\s+setmetatable\s*\(\s*\{/i.test(text)) {
+    return false;
+  }
+
+  const signals = [
+    /\bbit32\.(?:bxor|band|bor|bnot)\s*\(/i,
+    /\bstring\.char\s*\([^)]{30,}\)/i,
+    /\b(?:loadstring|load)\s*\(/i,
+    /\bgetfenv\s*\(|\bsetfenv\s*\(/i,
+    /\bwhile\s+true\s+do\b/i,
+    /(?:\\x[0-9a-f]{2}){8,}/i,
+    /(?:\\\d{3}){8,}/,
+    /[A-Za-z0-9+/]{1200,}={0,2}/,
+  ];
+  let signalCount = 0;
+  for (const pattern of signals) if (pattern.test(text)) signalCount++;
+
+  const lines = text.split(/\r?\n/).filter((line) => line.trim());
+  const identifiers = text.match(/\b[A-Za-z_]\w*\b/g) || [];
+  const shortIdentifiers = identifiers.filter((name) => name.length <= 2).length;
+  const mostlyShortNames = identifiers.length >= 80 &&
+    shortIdentifiers / identifiers.length > 0.62;
+  const heavilyMinified = lines.length <= 3 && text.length > 1800;
+  const giantString = /(["'])(?:\\.|(?!\1)[\s\S]){5000,}?\1/.test(text);
+
+  return signalCount < 2 && !mostlyShortNames && !heavilyMinified && !giantString;
+}
+
+async function sendOriginalLua(message, prompt, input, reason) {
+  const source = String(input.source || '');
+  const data = Buffer.from(source, 'utf8');
+  if (!data.length) throw new Error('The input did not contain readable Lua/Luau source.');
+  if (data.length > MAX_OUTPUT_BYTES) {
+    throw new Error('The unchanged source exceeds the 18 MB Discord output limit.');
+  }
+
+  const original = path.basename(String(input.filename || 'script.lua'));
+  const extension = path.extname(original);
+  const base = path.basename(original, extension).replace(/[^A-Za-z0-9._-]/g, '_') || 'script';
+  const outputName = /\.(?:lua|luau)$/i.test(original)
+    ? base + extension.toLowerCase()
+    : base + '.lua';
+
+  await message.reply({
+    embeds: [dailyEmbed('Lua source returned unchanged', reason, DAILY_COLORS.success)],
+    files: [new AttachmentBuilder(data, { name: outputName })],
+    allowedMentions: { repliedUser: false },
+  });
+  await prompt.edit({
+    content: '✅ No supported obfuscation signature was detected. Returned the original source unchanged as **' + outputName + '**.',
+    components: [],
+  }).catch(() => {});
 }
 
 async function collectInput(message, prompt) {
@@ -2002,6 +2062,15 @@ async function startGetWorkflow(message, inlineSource = null) {
   });
 
   if (!resolution.discovered) {
+    if (input.source && input.source.trim()) {
+      await sendOriginalLua(
+        message,
+        prompt,
+        input,
+        'No static HTTP/HTTPS source links were found. The submitted Lua/Luau file is attached unchanged.'
+      );
+      return;
+    }
     throw new Error(
       'No literal HTTP/HTTPS URL was found in the source. .get scans HttpGet/HttpGetAsync, ' +
       'HttpService GetAsync/PostAsync/RequestAsync, request/http_request and common aliases, ' +
@@ -2379,7 +2448,7 @@ function helpText() {
 
 async function startWorkflow(message, inlineText = null) {
   const prompt = await message.reply({
-    embeds: [dailyEmbed('New deobfuscation', 'Upload a **.lua**, **.luau**, **.pureluau** or **.txt** file, or paste a direct script URL.\n\n**Maximum input:** 2 MB', DAILY_COLORS.primary)],
+    embeds: [dailyEmbed('New deobfuscation', 'Upload a **.lua**, **.luau**, **.pureluau** or **.txt** file, paste source, or send a direct HTTP/HTTPS script URL.\n\n**Maximum input:** 18 MB', DAILY_COLORS.primary)],
     allowedMentions: { repliedUser: false },
   });
   // Accept an attachment, a URL / HttpGet expression on the command,
@@ -2388,6 +2457,17 @@ async function startWorkflow(message, inlineText = null) {
   const input = firstAttachment
     ? await inputFromAttachment(firstAttachment)
     : (inlineText ? await inputFromUrlText(inlineText) : await collectInput(message, prompt));
+
+  if (isClearlyPlainLuau(input.source)) {
+    await sendOriginalLua(
+      message,
+      prompt,
+      input,
+      'The source looks like ordinary Lua/Luau rather than a protected VM payload. No deobfuscation pass was run.'
+    );
+    return;
+  }
+
   const chooseRows = [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()

@@ -90,6 +90,47 @@ jobs:
               missing = [name for name in required if root + name not in names]
               if missing:
                   raise SystemExit("Newest archive is missing: " + ", ".join(missing))
+
+              # Audit every runtime/source module from the archive, not just a
+              # hand-picked list. DailyDeobf intentionally patches five files
+              # and rebuilds portable binaries for the host CPU.
+              prefixes = ("core/", "src/", "runtime/", "bin/", "test/")
+              patched = {
+                  "src/detect.js", "src/tidy.js", "src/harness.js",
+                  "src/driver.js", "runtime/envlog.luau",
+              }
+              rebuilt = {
+                  "bin/luau", "bin/luau-ast", "bin/luau.exe", "bin/luau-ast.exe",
+              }
+              absent = []
+              different = []
+              for entry in names:
+                  if not entry.startswith(root):
+                      continue
+                  rel = entry[len(root):]
+                  if not rel.startswith(prefixes) or rel.endswith("/"):
+                      continue
+                  if "__pycache__" in rel.split("/") or rel.endswith((".pyc", ".pyo")):
+                      continue
+                  target = Path("luraph-v15.1-engine") / rel
+                  if not target.is_file():
+                      absent.append(rel)
+                  elif rel not in patched and rel not in rebuilt:
+                      if target.read_bytes() != z.read(entry):
+                          different.append(rel)
+              for rel in ("LICENSE", "package.json", "deob.js", "protocol.json",
+                          "build_luau.py", "README.md", "TECHNICAL.md"):
+                  entry = root + rel
+                  target = Path("luraph-v15.1-engine") / rel
+                  if entry in names and not target.is_file():
+                      absent.append(rel)
+                  elif entry in names and rel not in ("README.md", "TECHNICAL.md") and target.read_bytes() != z.read(entry):
+                      different.append(rel)
+              if absent or different:
+                  raise SystemExit("Archive audit failed; missing=" + repr(absent) +
+                                   "; unexpected differences=" + repr(different))
+              print("ARCHIVE AUDIT OK: all core/src/runtime/bin/test files present; only documented patches and portable binaries differ")
+
               sample = root + "samples_v15.1_deobfuscated/2153b779fa7a87f2_obfuscated.lua"
               expected = root + "samples_v15.1_deobfuscated/2153b779fa7a87f2_Deobfuscated.lua"
               if sample not in names or expected not in names:

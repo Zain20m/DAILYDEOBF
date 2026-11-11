@@ -124,7 +124,7 @@ jobs:
                   target = Path("luraph-v15.1-engine") / rel
                   if entry in names and not target.is_file():
                       absent.append(rel)
-                  elif entry in names and rel not in ("README.md", "TECHNICAL.md") and target.read_bytes() != z.read(entry):
+                  elif entry in names and target.is_file() and target.read_bytes() != z.read(entry):
                       different.append(rel)
               if absent or different:
                   raise SystemExit("Archive audit failed; missing=" + repr(absent) +

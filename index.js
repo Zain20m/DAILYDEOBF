@@ -2294,6 +2294,7 @@ async function collectGetInput(message, prompt) {
             source: '',
             filename: path.basename(parsed.pathname) || 'remote-url.lua',
             url: parsed.toString(),
+            originalText: value,
             curlOptions,
           });
           return;
@@ -2358,6 +2359,63 @@ function redactSpyUrl(raw) {
   } catch { return String(raw || '<dynamic URL>').slice(0, 500); }
 }
 
+async function fetchVantarmorLoaderSource(rawUrl, credentialText = '') {
+  const loaderUrl = new URL(rawUrl);
+  const isVantarmor = loaderUrl.protocol === 'https:' &&
+    loaderUrl.hostname.toLowerCase() === 'vantarmor.up.railway.app' &&
+    /^\/files\/v1\/loaders\/[^/]+\.lua$/i.test(loaderUrl.pathname);
+  if (!isVantarmor) return null;
+
+  const keyMatch = String(credentialText || '').match(/(?:getgenv\(\)\.script_key|script_key)\s*=\s*["']([^"']+)["']/i);
+  if (!keyMatch) {
+    throw new Error('Vantarmor loader detected, but no script_key was found in the supplied source. Include script_key = "YOUR_KEY" with the loader URL or Lua source.');
+  }
+
+  const hash = loaderUrl.pathname.match(/^\/files\/v1\/loaders\/(.+)\.lua$/i)[1];
+  const params = new URLSearchParams({ s: hash, key: keyMatch[1].trim() });
+  const hwidMatch = String(credentialText || '').match(/\bhwid\s*=\s*["']([^"']+)["']/i);
+  const rbxidMatch = String(credentialText || '').match(/\brbxid\s*=\s*["']([^"']+)["']/i);
+  if (hwidMatch) params.set('hwid', hwidMatch[1]);
+  if (rbxidMatch) params.set('rbxid', rbxidMatch[1]);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 40000);
+  try {
+    const headers = { 'User-Agent': 'Roblox/WinInet', Accept: '*/*' };
+    const first = await fetch(loaderUrl.origin + '/v1/a?' + params.toString(), {
+      headers, signal: controller.signal, redirect: 'error',
+    });
+    let body = (await first.text()).replace(/\r\n/g, '\n');
+    if (!first.ok) throw new Error('Vantarmor returned HTTP ' + first.status + '.');
+    let errorLine = body.trim().match(/^!VANTARMOR:([A-Z0-9_]+)$/);
+    if (errorLine) throw new Error('Vantarmor rejected the request: ' + errorLine[1] + '.');
+
+    if (body.startsWith('!VANTARMOR:TOKEN\n')) {
+      const token = body.slice('!VANTARMOR:TOKEN\n'.length).trim();
+      const second = await fetch(loaderUrl.origin + '/v1/p', {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'text/plain' },
+        body: token,
+        signal: controller.signal,
+        redirect: 'error',
+      });
+      body = (await second.text()).replace(/\r\n/g, '\n');
+      if (!second.ok) throw new Error('Vantarmor payload request returned HTTP ' + second.status + '.');
+    }
+
+    errorLine = body.trim().match(/^!VANTARMOR:([A-Z0-9_]+)$/);
+    if (errorLine) throw new Error('Vantarmor rejected the payload: ' + errorLine[1] + '.');
+    if (!body.startsWith('!VANTARMOR:CODE\n')) {
+      throw new Error('Unexpected Vantarmor response. Expected a CODE or TOKEN response.');
+    }
+    const source = body.slice('!VANTARMOR:CODE\n'.length).replace(/\r\n/g, '\n');
+    if (!source.trim()) throw new Error('Vantarmor returned an empty source file.');
+    return source;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function startGetWorkflow(message, inlineSource = null) {
   const prompt = await message.reply({
     content: inlineSource
@@ -2388,6 +2446,7 @@ async function startGetWorkflow(message, inlineSource = null) {
         source: '',
         filename: path.basename(parsed.pathname) || 'remote-url.lua',
         url: parsed.toString(),
+        originalText: inlineSource,
         curlOptions,
       };
     } else {
@@ -2469,6 +2528,16 @@ async function startGetWorkflow(message, inlineSource = null) {
           source: input.source,
           finalUrl: input.url,
           contentType: 'input source',
+          status: 200,
+        };
+      }
+      const credentialText = String(input.originalText || '') + '\\n' + String(input.source || '');
+      const vantarmorSource = await fetchVantarmorLoaderSource(rawUrl, credentialText);
+      if (vantarmorSource !== null) {
+        return {
+          source: vantarmorSource,
+          finalUrl: rawUrl,
+          contentType: 'application/lua',
           status: 200,
         };
       }

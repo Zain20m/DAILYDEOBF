@@ -336,6 +336,15 @@ function isClearlyPlainLuau(source) {
   const text = String(source || '').replace(/^\uFEFF/, '').trim();
   if (!text) return false;
 
+  // A URL may return a webpage or JavaScript bundle instead of Lua source.
+  // Never classify those as plain Luau, because that would skip the engine picker.
+  if (/<\\/?(?:!doctype|html|head|body|script)\\b/i.test(text) ||
+      /\\b(?:document\\.(?:getElementById|querySelector|querySelectorAll|createElement)|window\\.(?:location|document)|navigator\\.clipboard)\\b/i.test(text) ||
+      /\\b(?:const|let|var)\\s+[A-Za-z_$][\\w$]*\\s*=|=>|\\.addEventListener\\s*\\(/.test(text) ||
+      /\\b(?:innerHTML|textContent|createElement|querySelector)\\b/.test(text)) {
+    return false;
+  }
+
   // Strong signatures always stay on the selected deobfuscation path.
   if (/This file was protected using Luraph|Luraph Obfuscator|IronBrew|MoonSec|Prometheus Obfuscator|LPH_CRASH|return\s+setmetatable\s*\(\s*\{/i.test(text)) {
     return false;

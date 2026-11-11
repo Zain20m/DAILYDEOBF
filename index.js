@@ -2582,24 +2582,22 @@ async function processVantarmorFetcher(message, prompt, input) {
   const source = String(input.source || '');
   const originalText = String(input.originalText || '');
   const combinedInput = originalText + '\n' + source;
-  const loaderUrlText = input.url || (combinedInput.match(/https:\/\/[^\s"'<>]+\/files\/v1\/loaders\/[^\s"'<>]+/i) || [])[0];
-  if (!loaderUrlText) {
-    throw new Error('No Vantarmor loader URL was found. The URL must use /files/v1/loaders/HASH.lua.');
+  const loaderUrlText = input.url || (combinedInput.match(/https?:\/\/[^\s"'<>]+/i) || [])[0];
+  let loaderUrl = null;
+  if (loaderUrlText) {
+    try {
+      loaderUrl = new URL(loaderUrlText.replace(/[)\]},.;]+$/g, ''));
+    } catch {
+      throw new Error('The loader URL is invalid.');
+    }
+    if (loaderUrl.username || loaderUrl.password || !['https:', 'http:'].includes(loaderUrl.protocol)) {
+      throw new Error('The loader URL must be a valid HTTP or HTTPS URL.');
+    }
   }
 
-  let loaderUrl;
-  try {
-    loaderUrl = new URL(loaderUrlText.replace(/[)\]},.;]+$/g, ''));
-  } catch {
-    throw new Error('The Vantarmor loader URL is invalid.');
-  }
-  if (loaderUrl.username || loaderUrl.password || !['https:', 'http:'].includes(loaderUrl.protocol)) {
-    throw new Error('The loader URL must be a valid HTTP or HTTPS URL.');
-  }
-
-  const isVantarmor = loaderUrl.protocol === 'https:' &&
+  const isVantarmor = Boolean(loaderUrl && loaderUrl.protocol === 'https:' &&
     loaderUrl.hostname.toLowerCase() === 'vantarmor.up.railway.app' &&
-    /^\/files\/v1\/loaders\/[^/]+\.lua$/i.test(loaderUrl.pathname);
+    /^\/files\/v1\/loaders\/[^/]+\.lua$/i.test(loaderUrl.pathname));
 
   // For other hosts, return exactly what the public loader URL served.
   // Generic loaders do not share a standard API, so never guess vendor endpoints

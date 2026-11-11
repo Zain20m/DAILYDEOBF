@@ -55,6 +55,15 @@ jobs:
               print(f"PYTHON_SYNTAX_OK: {engine} ({len(files)} source files)")
           PY
           python3 -m unittest discover -s luraph-v15-engine -p 'test_detection.py' -v
+          python3 - <<'PY'
+          from pathlib import Path
+          compat = Path("luraph-v15.1-engine/core/obfuscators/luraph_v14")
+          required = ("__init__.py", "driver.py", "vmmap.py", "devirt.py")
+          missing = [name for name in required if not (compat / name).is_file()]
+          if missing:
+              raise SystemExit("Imported v15.1 package is missing bundled compatibility modules: " + ", ".join(missing))
+          print("V15_ARCHIVE_COMPAT_MODULE_OK: all bundled files are present")
+          PY
           python3 -m unittest discover -s centurion-engine -p 'test_*.py' -v
           python3 scripts/test-151-loadstring-capture.py
           python3 luraph-v15-engine/obfuscators/ironbrew1/test_smoothdamp.py

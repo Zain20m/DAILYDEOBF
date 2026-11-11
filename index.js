@@ -2729,9 +2729,10 @@ async function processVantarmorFetcher(message, prompt, input) {
         return lines.join('\n');
       }),
       '',
-      'Only non-mutating/read-oriented methods plus a bodyless POST were sent.',
-      'State-changing methods such as PUT, PATCH, DELETE, MOVE, COPY, LOCK and UNLOCK were not sent.',
-      'Other protocols such as FTP, SFTP, SMTP, WebSocket and MQTT are not HTTP methods and are not handled by this HTTP fetcher.',
+      'Automatically tested: GET (initial download), HEAD, OPTIONS, bodyless POST, PROPFIND, SEARCH, REPORT, QUERY and TRACE.',
+      'IANA HTTP method registry inventory (not all are sent): ACL, BASELINE-CONTROL, BIND, CHECKIN, CHECKOUT, CONNECT, COPY, DELETE, GET, HEAD, LABEL, LINK, LOCK, MERGE, MKACTIVITY, MKCALENDAR, MKCOL, MKREDIRECTREF, MKWORKSPACE, MOVE, OPTIONS, ORDERPATCH, PATCH, POST, PRI, PROPFIND, PROPPATCH, PUT, QUERY, REBIND, REPORT, SEARCH, TRACE, UNBIND, UNCHECKOUT, UNLINK, UNLOCK, UPDATE, UPDATEREDIRECTREF, VERSION-CONTROL.',
+      'State-changing methods and tunnel/connection methods are listed for reference but not automatically sent.',
+      'GraphQL is an API format usually carried over HTTP, not a method; it needs a specific query and endpoint. FTP, SFTP, SMTP, WebSocket and MQTT are separate protocols and are not HTTP methods.',
     ].join('\n');
 
     const files = [new AttachmentBuilder(data, { name: 'fetched_loader.lua' })];

@@ -1,7 +1,20 @@
 'use strict';
 
 const assert = require('assert');
+const { isBootstrapFailureBeforePayload } = require('../src/driver');
 const { tidy, stripPreamble, stripAnnotations } = require('../src/tidy');
+
+
+const pcR01Failure = [
+  '-- run status: script error: [string "Luraph"]:1: attempt to get length of a number value',
+  'warn("JNKIE: Environment compatibility check failed (PC-R01).")',
+].join('\\n');
+assert.strictEqual(isBootstrapFailureBeforePayload(pcR01Failure), true,
+  'PC-R01 plus the known bootstrap length error must stop before expensive VM lifting');
+assert.strictEqual(isBootstrapFailureBeforePayload('-- run status: script error: attempt to get length of a number value'),
+  false, 'a length error without PC-R01 must not be classified as this bootstrap failure');
+assert.strictEqual(isBootstrapFailureBeforePayload('warn("Environment compatibility check failed (PC-R01)")'),
+  false, 'PC-R01 without the matching length error must not skip lifting');
 
 const trace = [
   '-- run status: script error: JNKIE: Environment compatibility check failed (PC-R01).',

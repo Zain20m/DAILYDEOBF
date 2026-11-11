@@ -400,10 +400,13 @@ const DAILY_COLORS = {
 function dailyEmbed(title, description, color = DAILY_COLORS.primary) {
   return new EmbedBuilder()
     .setColor(color)
-    .setAuthor({ name: 'DAILY DEOBF', iconURL: 'https://cdn.discordapp.com/embed/avatars/5.png' })
-    .setTitle(String(title || 'DAILY DEOBF').slice(0, 256))
+    .setAuthor({
+      name: 'D A I L Y   D E O B F  /  LUАU ANALYSIS',
+      iconURL: 'https://cdn.discordapp.com/embed/avatars/5.png',
+    })
+    .setTitle('◆  ' + String(title || 'DAILY DEOBF').slice(0, 250))
     .setDescription(String(description || ' ').slice(0, 4000))
-    .setFooter({ text: 'DAILY DEOBF  •  Luau analysis toolkit' })
+    .setFooter({ text: 'DAILY DEOBF  •  STATIC + DYNAMIC ANALYSIS  •  SYSTEM ONLINE' })
     .setTimestamp();
 }
 
@@ -461,13 +464,14 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
     const now = Date.now();
     const elapsed = now - startedAt;
     const silence = now - lastOutputAt;
-    const barSize = 16;
+    const barSize = 18;
     const filled = phaseMetric
       ? Math.max(0, Math.min(barSize, Math.floor((Math.min(100, phaseMetric.current / phaseMetric.total * 100) / 100) * barSize)))
       : 0;
+    const pulse = Math.floor(now / 900) % barSize;
     const bar = phaseMetric
       ? '▰'.repeat(filled) + '▱'.repeat(barSize - filled)
-      : '▱'.repeat(barSize);
+      : '▱'.repeat(pulse) + '◆' + '▱'.repeat(barSize - pulse - 1);
     const recent = activity.slice(-3).map((item) => {
       const age = formatDuration(now - item.at);
       return '• ' + item.text + ' · ' + age + ' ago';
@@ -478,20 +482,26 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
     const frames = ['◐', '◓', '◑', '◒'];
     const spinner = frames[Math.floor(now / 900) % frames.length];
     const description = [
-      '**' + spinner + ' ' + phase + '**',
-      bar,
+      '╭─ **' + spinner + '  ' + phase.toUpperCase() + '**',
+      '╰ ' + bar,
       metricText(),
       '',
-      '**Input**  ' + safeName + ' · ' + formatBytes(inputBytes),
-      '**Elapsed**  ' + formatDuration(elapsed),
+      '▸ **INPUT**  `' + safeName + '`  ·  ' + formatBytes(inputBytes),
+      '▸ **RUNTIME**  ' + formatDuration(elapsed),
       idleLine,
       '',
-      '**Recent activity**',
-      ...(recent.length ? recent : ['Waiting for engine activity...']),
+      '**ACTIVITY FEED**',
+      ...(recent.length ? recent.map((item) => '› ' + item) : ['› Waiting for engine activity...']),
       '',
+      '┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈',
       detail,
     ].join('\n');
-    return dailyEmbed(label + ' · Live analysis', description, DAILY_COLORS.primary);
+    return dailyEmbed(label + '  /  LIVE SESSION', description, DAILY_COLORS.primary)
+      .addFields(
+        { name: 'ENGINE', value: label, inline: true },
+        { name: 'SESSION', value: 'LIVE', inline: true },
+        { name: 'INPUT SIZE', value: formatBytes(inputBytes), inline: true },
+      );
   }
 
   async function publish(force = false) {

@@ -1,0 +1,28 @@
+name: Inspect uploaded Luraph replacement
+on:
+  push:
+    paths:
+      - '.github/workflows/inspect-new-luraph-upload.yml'
+permissions:
+  contents: read
+  actions: write
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract uploaded archive
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/new-luraph
+          unzip -q "upload/Luraph-v15.1-Deobfuscator-main.zip" -d /tmp/new-luraph
+          find /tmp/new-luraph -maxdepth 4 -type f -printf '%P\t%s bytes\n' | sort | tee /tmp/archive-files.txt
+          echo "## Archive contents" >> "$GITHUB_STEP_SUMMARY"
+          echo '```text' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/archive-files.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extracted-luraph-v15-source
+          path: /tmp/new-luraph/
+          retention-days: 1

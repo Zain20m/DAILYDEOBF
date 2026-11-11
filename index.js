@@ -1223,6 +1223,31 @@ async function sendAnalysisOutput(message, input, config) {
     files: attachments,
     allowedMentions: { repliedUser: false },
   });
+
+  // Keep the original large protected input downloadable beside the recovered
+  // result. These are sent separately so the input cannot consume the output
+  // attachment budget and prevent the reconstructed Luau from being delivered.
+  if (Array.isArray(config.extraArtifacts) && config.extraArtifacts.length) {
+    const extraFiles = [];
+    let extraBytes = 0;
+    for (const artifact of config.extraArtifacts) {
+      const artifactPath = path.join(outputDir, artifact.path);
+      const bytes = await fileSize(artifactPath);
+      if (!bytes || bytes > MAX_OUTPUT_BYTES || extraBytes + bytes > MAX_OUTPUT_BYTES) continue;
+      extraFiles.push(new AttachmentBuilder(await fs.readFile(artifactPath), {
+        name: artifact.name || path.basename(artifactPath),
+      }));
+      extraBytes += bytes;
+    }
+    if (extraFiles.length) {
+      await message.reply({
+        content: '📎 Original protected input and reconstruction support files:',
+        files: extraFiles,
+        allowedMentions: { repliedUser: false },
+      });
+    }
+  }
+
   return { hasLiftedSource, hasLiftCandidate, prototypeCount, chunks: chunkFiles.length, validation };
 }
 
@@ -2219,6 +2244,20 @@ async function startGetWorkflow(message, inlineSource = null) {
   const runtimeSpyFile = runtimeSpyBuffer
     ? new AttachmentBuilder(runtimeSpyBuffer, { name: 'http-spy-runtime.luau' })
     : null;
+  if (input.source && input.source.trim() && !/^https?:\/\/\S+$/i.test(input.source.trim())) {
+    const originalBytes = Buffer.from(input.source, 'utf8');
+    if (originalBytes.length <= MAX_OUTPUT_BYTES) {
+      const originalName = path.basename(String(input.filename || 'get-input.lua'));
+      const originalBase = path.basename(originalName, path.extname(originalName))
+        .replace(/[^A-Za-z0-9._-]/g, '_') || 'get-input';
+      await message.reply({
+        content: '📎 Original .get input:',
+        files: [new AttachmentBuilder(originalBytes, { name: originalBase + '.lua' })],
+        allowedMentions: { repliedUser: false },
+      });
+    }
+  }
+
   const batches = [];
   for (let i = 0; i < attachments.length; i += 10) {
     batches.push(attachments.slice(i, i + 10));

@@ -1991,6 +1991,12 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
             DEVIRT_ERRS: '1',
             DEVIRT_TB: '1',
             DEVIRT_WALK_LIMIT: '750000',
+            // Recover oversized lazy-constant batches by merging fitting subsets;
+            // if that cannot be reconciled, bisect and retain the constants that fit.
+            DEVIRT_MERGE: '1',
+            DEVIRT_MERGE_BUDGET: '32',
+            DEVIRT_BISECT: '1',
+            DEVIRT_BISECT_BUDGET: '16',
           },
           onProgress: progress.onLine,
         },
@@ -2221,7 +2227,7 @@ async function collectLuraphGameId(message, prompt, label = 'Luraph') {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       collector.stop('timeout');
-      reject(new Error('GameId prompt timed out. Run .deobf and choose FlowAuth again.'));
+      reject(new Error('GameId prompt timed out. Run .deobf and choose ' + label + ' again.'));
     }, PICKER_WAIT_MS + 1000);
 
     collector.once('collect', (reply) => {
@@ -2242,7 +2248,7 @@ async function collectLuraphGameId(message, prompt, label = 'Luraph') {
     collector.once('end', (_collected, reason) => {
       if (reason === 'time' && collector.collected.size === 0) {
         clearTimeout(timeout);
-        reject(new Error('GameId prompt timed out. Run .deobf and choose FlowAuth again.'));
+        reject(new Error('GameId prompt timed out. Run .deobf and choose ' + label + ' again.'));
       }
     });
   });

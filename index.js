@@ -545,14 +545,36 @@ async function inputFromUrlText(text) {
   };
 }
 
-function looksLikeViewerPageOrJavaScript(source) {
+function looksLikeViewerPageOrJavaScript(source, contentType = '') {
   const text = String(source || '').replace(/^\uFEFF/, '').trim();
   if (!text) return false;
-  return /\bfunction\s+(?:escapeHTML|highlightLua)\s*\(/i.test(text) ||
-    /\b(?:document\.(?:getElementById|querySelector|querySelectorAll|createElement)|window\.document|navigator\.clipboard)\b/i.test(text) ||
-    /\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=/.test(text) ||
-    /=>|\.addEventListener\s*\(|\binnerHTML\b|\btextContent\b/.test(text) ||
-    /<\/?(?:!doctype|html|head|body|script)\b/i.test(text);
+
+  // Content-Type is supporting evidence only: script hosts often mislabel Lua.
+  const type = String(contentType || '').toLowerCase();
+  const htmlType = /(?:text\/html|application\/xhtml\+xml)/.test(type);
+  const htmlMarkup = /^(?:<!doctype\s+html|<html\b|<head\b|<body\b)/i.test(text) ||
+    /<html\b[^>]*>[\s\S]{0,2000}<\/html\s*>/i.test(text);
+  if (htmlMarkup) return true;
+
+  // These signatures are specific to the viewer page used by this project.
+  if (/\bfunction\s+(?:escapeHTML|highlightLua)\s*\(/i.test(text)) return true;
+
+  // Do not reject obfuscated Luau merely because it contains words such as
+  // "const", "innerHTML", or an arrow inside a string. Require a coherent
+  // JavaScript/browser signature, and let Lua syntax take priority.
+  const hasLuaSyntax = /\b(?:local|return|then|elseif|end|repeat|until|function)\b/.test(text) ||
+    /\b(?:game|workspace|script|Instance|Enum|Vector3|CFrame|bit32)\b/.test(text) ||
+    /\b(?:loadstring|getfenv|setfenv)\s*\(/.test(text);
+  if (hasLuaSyntax) return false;
+
+  const browserApi = /\b(?:document\.(?:getElementById|querySelector|querySelectorAll|createElement)|window\.document|navigator\.clipboard)\b/i.test(text);
+  const jsDeclaration = /\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=/.test(text);
+  const jsStructure = /=>/.test(text) && /\.addEventListener\s*\(|\b(?:innerHTML|textContent)\b/.test(text);
+  const htmlish = /<\/?(?:!doctype|html|head|body|script)\b/i.test(text);
+  return htmlType && (jsDeclaration || browserApi || jsStructure) ||
+    browserApi && (jsDeclaration || jsStructure) ||
+    jsDeclaration && jsStructure && !hasLuaSyntax ||
+    htmlish && /\b(?:document|window|script)\b/i.test(text);
 }
 
 function isClearlyPlainLuau(source) {

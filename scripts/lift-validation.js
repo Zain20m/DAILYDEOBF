@@ -13,10 +13,13 @@ function maskLuaSource(source, maskStrings = true) {
     }
   };
   const longBracketEnd = (start) => {
-    const opener = text.slice(start).match(/^\[(=*)\[/);
-    if (!opener) return null;
-    const close = ']' + opener[1] + ']';
-    const bodyStart = start + opener[0].length;
+    if (text[start] !== '[') return null;
+    let cursor = start + 1;
+    while (text[cursor] === '=') cursor++;
+    if (text[cursor] !== '[') return null;
+    const equals = text.slice(start + 1, cursor);
+    const close = ']' + equals + ']';
+    const bodyStart = cursor + 1;
     const found = text.indexOf(close, bodyStart);
     return found < 0 ? text.length : found + close.length;
   };

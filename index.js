@@ -1257,7 +1257,7 @@ async function sendAnalysisOutput(message, input, config) {
   }
 
   if (candidateParts.length) {
-    summary = summary.replace(/Attached: [^\\r\\n]+/, 'Attached: ' + candidateParts.length +
+    summary = summary.replace(/Attached: .*$/, 'Attached: ' + candidateParts.length +
       ' ordered parts of ' + candidateOutputName + '.');
     summary += '\nThe file exceeded one attachment. Join the parts in numeric order to rebuild it.';
   }

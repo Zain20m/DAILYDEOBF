@@ -122,40 +122,57 @@ async function assertPublicUrl(url) {
   return addresses;
 }
 
-async function requestPinnedAddress(url, address) {
+async function requestPinnedAddress(url, address, options = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  const allowedMethods = new Set(['GET', 'HEAD', 'OPTIONS', 'POST', 'PROPFIND', 'SEARCH', 'REPORT', 'QUERY', 'TRACE']);
+  if (!allowedMethods.has(method)) {
+    throw new Error('That HTTP method is not enabled in the universal fetcher.');
+  }
+
   return new Promise((resolve, reject) => {
     const transport = url.protocol === 'https:' ? https : http;
     const family = net.isIP(address.address);
-    const lookup = (_hostname, options, callback) => {
-      if (options && options.all) {
+    const lookup = (_hostname, lookupOptions, callback) => {
+      if (lookupOptions && lookupOptions.all) {
         callback(null, [{ address: address.address, family }]);
       } else {
         callback(null, address.address, family);
       }
     };
 
+    const headers = {
+      'user-agent': 'Mozilla/5.0 (compatible; DAILY-DEOBF/1.0)',
+      accept: 'text/plain, text/*, application/luau, application/javascript, application/octet-stream, application/json, */*;q=0.8',
+      'accept-encoding': 'identity',
+      connection: 'close',
+      ...(method === 'PROPFIND' ? { depth: '0' } : {}),
+      ...(options.headers || {}),
+    };
+
     const request = transport.request(url, {
-      method: 'GET',
+      method,
       agent: false,
       autoSelectFamily: false,
       lookup,
-      signal: AbortSignal.timeout(30_000),
-      headers: {
-        'user-agent': 'Mozilla/5.0 (compatible; DAILY-DEOBF/1.0)',
-        accept: 'text/plain, text/*, application/luau, application/javascript, application/octet-stream, application/json, */*;q=0.8',
-        'accept-encoding': 'identity',
-        connection: 'close',
-      },
+      signal: AbortSignal.timeout(15_000),
+      headers,
     }, (response) => {
       const status = Number(response.statusCode || 0);
+      const responseHeaders = response.headers || {};
       resolve({
         status,
         statusText: response.statusMessage || '',
         ok: status >= 200 && status < 300,
         headers: {
           get(name) {
-            const value = response.headers[String(name).toLowerCase()];
+            const value = responseHeaders[String(name).toLowerCase()];
             return Array.isArray(value) ? value.join(', ') : (value ?? null);
+          },
+          entries() {
+            return Object.entries(responseHeaders).map(([name, value]) => [
+              name,
+              Array.isArray(value) ? value.join(', ') : String(value ?? ''),
+            ]);
           },
         },
         body: {
@@ -166,6 +183,7 @@ async function requestPinnedAddress(url, address) {
     });
 
     request.once('error', reject);
+    if (options.body !== undefined && options.body !== null) request.write(options.body);
     request.end();
   });
 }
@@ -282,6 +300,56 @@ async function fetchPublicText(rawUrl) {
   throw new Error('Could not download the URL after following redirects.');
 }
 
+async function probePublicHttpMethods(rawUrl) {
+  const methods = ['HEAD', 'OPTIONS', 'POST', 'PROPFIND', 'SEARCH', 'REPORT', 'QUERY', 'TRACE'];
+  const url = new URL(rawUrl);
+  url.hash = '';
+  const addresses = await assertPublicUrl(url);
+  const results = [];
+
+  for (const method of methods) {
+    let response = null;
+    let lastError = null;
+    for (const address of addresses) {
+      try {
+        response = await requestPinnedAddress(url, address, { method });
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (!response) {
+      results.push({ method, error: String(lastError && (lastError.message || lastError) || 'Request failed') });
+      continue;
+    }
+
+    const headers = response.headers.entries()
+      .filter(([name]) => /^(allow|accept|accept-patch|accept-post|content-type|content-length|content-disposition|dav|location|server|www-authenticate)$/i.test(name));
+    let body = Buffer.alloc(0);
+    let bodyError = null;
+    try {
+      body = await readResponse(response, 512 * 1024);
+    } catch (error) {
+      bodyError = String(error && (error.message || error) || 'Response body could not be read');
+      if (response.body && typeof response.body.cancel === 'function') {
+        await response.body.cancel().catch(() => {});
+      }
+    }
+
+    results.push({
+      method,
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+      body,
+      bodyError,
+    });
+  }
+
+  return results;
+}
+
 function decodeSource(bytes) {
   let source;
   try {
@@ -329,7 +397,15 @@ async function inputFromUrlText(text) {
   const filename = /\.(?:lua|luau|pureluau|txt)$/i.test(path.extname(result.filename))
     ? result.filename
     : 'downloaded-script.lua';
-  return { source: decodeSource(result.bytes), filename, url: parsed.toString(), originalText: String(text || '') };
+  return {
+    source: decodeSource(result.bytes),
+    filename,
+    url: parsed.toString(),
+    originalText: String(text || ''),
+    responseStatus: result.status,
+    responseContentType: result.contentType,
+    finalUrl: result.finalUrl,
+  };
 }
 
 function looksLikeViewerPageOrJavaScript(source) {
@@ -2622,29 +2698,67 @@ async function processVantarmorFetcher(message, prompt, input) {
         'That URL returned a website page or its JavaScript viewer (for example, escapeHTML/highlightLua), not the Lua script. Use the raw/direct download URL for the script instead of the webpage URL.'
       );
     }
+    if (!loaderUrl) {
+      throw new Error('Send a direct HTTP/HTTPS loader URL so the fetcher can test its request methods.');
+    }
+
+    await prompt.edit({
+      content: '🔄 **Vantarmor and Universal Loader Fetcher**\\nFetching the loader and checking supported HTTP request methods...',
+      embeds: [],
+      components: [],
+    });
+
     const data = Buffer.from(recovered.endsWith('\n') ? recovered : recovered + '\n', 'utf8');
     if (data.length > MAX_OUTPUT_BYTES) {
       throw new Error('Fetched source exceeds the 18 MB Discord output limit.');
     }
-    const outputPath = path.join(os.tmpdir(), 'daily-loader-' + message.id + '.lua');
-    try {
-      await fs.writeFile(outputPath, data, { mode: 0o600 });
-      await message.reply({
-        embeds: [dailyEmbed(
-          'Loader source fetched',
-          'Retrieved ' + formatBytes(data.length) + ' directly from the supplied URL. This is the server response as delivered; vendor-specific protected payloads may require that vendor’s own protocol.',
-          DAILY_COLORS.success
-        )],
-        files: [new AttachmentBuilder(outputPath, { name: 'fetched_loader.lua' })],
-        allowedMentions: { repliedUser: false },
-      });
-      await prompt.edit({
-        content: '✅ Direct loader source fetched. Attached as **fetched_loader.lua**.',
-        components: [],
-      }).catch(() => {});
-    } finally {
-      await fs.rm(outputPath, { force: true }).catch(() => {});
+
+    const results = await probePublicHttpMethods(loaderUrl.toString());
+    const report = [
+      'DAILY DEOBF - UNIVERSAL LOADER FETCH REPORT',
+      'URL: ' + loaderUrl.toString(),
+      'Initial GET: HTTP ' + String(input.responseStatus || 'unknown') + ' (' + String(input.responseContentType || 'unknown') + ')',
+      '',
+      'HTTP method results:',
+      ...results.map((result) => {
+        if (result.error) return result.method + ': ERROR - ' + result.error;
+        const lines = [result.method + ': HTTP ' + result.status + ' ' + result.statusText];
+        for (const [name, value] of result.headers || []) lines.push('  ' + name + ': ' + value);
+        if (result.bodyError) lines.push('  Body: ' + result.bodyError);
+        else lines.push('  Body bytes: ' + (result.body ? result.body.length : 0));
+        return lines.join('\n');
+      }),
+      '',
+      'Only non-mutating/read-oriented methods plus a bodyless POST were sent.',
+      'State-changing methods such as PUT, PATCH, DELETE, MOVE, COPY, LOCK and UNLOCK were not sent.',
+      'Other protocols such as FTP, SFTP, SMTP, WebSocket and MQTT are not HTTP methods and are not handled by this HTTP fetcher.',
+    ].join('\n');
+
+    const files = [new AttachmentBuilder(data, { name: 'fetched_loader.lua' })];
+    const reportBuffer = Buffer.from(report + '\n', 'utf8');
+    files.push(new AttachmentBuilder(reportBuffer, { name: 'http_method_report.txt' }));
+
+    for (const result of results) {
+      if (!result.body || !result.body.length || result.bodyError) continue;
+      const contentType = String((result.headers || []).find(([name]) => name.toLowerCase() === 'content-type')?.[1] || '');
+      const extension = /(?:json|text|xml|javascript|luau|lua)/i.test(contentType) ? 'txt' : 'bin';
+      files.push(new AttachmentBuilder(result.body, { name: 'response_' + result.method.toLowerCase() + '.' + extension }));
     }
+
+    await message.reply({
+      embeds: [dailyEmbed(
+        'Universal loader fetch complete',
+        'Fetched ' + formatBytes(data.length) + ' from the loader URL and tested ' + (results.length + 1) +
+          ' HTTP methods. The report includes response statuses and useful headers; response bodies are attached when present.',
+        DAILY_COLORS.success
+      )],
+      files: files.slice(0, 10),
+      allowedMentions: { repliedUser: false },
+    });
+    await prompt.edit({
+      content: '✅ Loader fetched. HTTP method report and returned response files are attached.',
+      components: [],
+    }).catch(() => {});
     return;
   }
 

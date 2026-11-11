@@ -2137,8 +2137,8 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
     });
 
     await progress.setPhase(
-      'Validating and packaging the best candidate',
-      'Comparing structural errors, placeholder functions, unresolved nil values and Luau AST validity.'
+      'Validating and packaging the selected candidate',
+      'Checking structural errors, placeholder functions, unresolved nil values and Luau AST validity for the selected engine output.'
     );
 
     const summary = await sendAnalysisOutput(message, input, {
@@ -2163,6 +2163,7 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
              normalized.removedBytes + ' malformed trailing bytes were removed.']
           : []),
         'deep_reconstruction_instructions.txt contains the requested behavior-preserving follow-up checklist.',
+        'The v15 compatibility engine runs only if the dedicated Luraph v' + version + ' engine produces no source candidate; a partial dedicated candidate is retained.',
         'The checklist is an instruction for a separate reconstruction pass, not proof that every item was automatically completed.',
         ...(gameId ? ['Target Universe/GameId supplied to the sandbox: ' + gameId + '.'] : ['No target Universe/GameId was supplied; game-locked builds may stop in their bootstrap layer.']),
         ...((/buffer access out of bounds|size out of range/i).test(dedicatedLogs + '\n' + compatibilityLogs)

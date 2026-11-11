@@ -96,6 +96,9 @@ async function run(job) {
     for (const [key, src] of found) {
       if (!chunks[key]) {
         rawChunks[key] = src;
+        // Persist the raw child immediately. A later VM/prototype failure must
+        // not erase a loadstring payload that was already captured.
+        job.write(job.path(`.chunk_${key}.luau`), src, 'latin1');
         chunks[key] = patchChunk(src, job.outdir, key);
         if (spin) chunks[key] = vmmap.patchSpin(chunks[key]);
         added++;
@@ -164,8 +167,8 @@ async function run(job) {
     } else {
       job.write(ppath, protosJson);
       if (devirtOn) {
-        const chunkPaths = Object.entries(rawChunks).map(([k, src]) =>
-          job.write(job.path(`.chunk_${k}.luau`), src, 'latin1')
+        const chunkPaths = Object.keys(rawChunks).map((k) =>
+          job.path(`.chunk_${k}.luau`)
         );
 
         const cfgData = {

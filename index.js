@@ -342,10 +342,10 @@ async function fetchPublicText(rawUrl, curlOptions = {}) {
       let errorBody = '';
       try {
         errorBody = (await readResponse(response, 8 * 1024)).toString('utf8')
-          .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')
-          .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')
+          .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+          .replace(/<style[\s\S]*?<\/style>/gi, ' ')
           .replace(/<[^>]+>/g, ' ')
-          .replace(/\\s+/g, ' ')
+          .replace(/\s+/g, ' ')
           .trim()
           .slice(0, 280);
       } catch {

@@ -3068,6 +3068,10 @@ async function startWorkflow(message, inlineText = null) {
       : (inlineText ? await inputFromUrlText(inlineText) : await collectInput(message, prompt));
   } catch (error) {
     const errorText = String(error && error.message || error);
+    // A URL may be supplied in the follow-up message collected by collectInput(),
+    // not only inline with .deobf. Route Cloudflare failures from either path
+    // through the same file/paste fallback and retain the original error for
+    // the engine picker.
     if (/HTTP 403|Cloudflare browser challenge|Cloudflare Access denied/i.test(errorText)) {
       input = await collectInputAfterUrlFailure(message, prompt, error);
       input.downloadError = errorText;

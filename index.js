@@ -401,7 +401,7 @@ function dailyEmbed(title, description, color = DAILY_COLORS.primary) {
   return new EmbedBuilder()
     .setColor(color)
     .setAuthor({
-      name: 'D A I L Y   D E O B F  /  LUАU ANALYSIS',
+      name: 'D A I L Y   D E O B F  /  LUAU ANALYSIS',
       iconURL: 'https://cdn.discordapp.com/embed/avatars/5.png',
     })
     .setTitle('◆  ' + String(title || 'DAILY DEOBF').slice(0, 250))

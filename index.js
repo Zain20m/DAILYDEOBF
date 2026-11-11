@@ -293,9 +293,21 @@ async function fetchPublicText(rawUrl, curlOptions = {}) {
 
     let response;
     const connectionErrors = [];
+    const requestHeaders = { ...(curlOptions.headers || {}) };
+
+    // A server-side token may exempt only this bot's own loader endpoint.
+    // Never attach it to other hosts or unrelated paths, including redirects.
+    if (
+      current.hostname.toLowerCase() === 'jnkie.com' &&
+      current.pathname.startsWith('/files/v4/loaders/') &&
+      process.env.JNKIE_FETCH_TOKEN
+    ) {
+      requestHeaders['x-dailydeobf-token'] = process.env.JNKIE_FETCH_TOKEN;
+    }
+
     for (const address of addresses) {
       try {
-        response = await requestPinnedAddress(current, address, { method: curlOptions.method || 'GET', headers: curlOptions.headers || {}, body: curlOptions.body, compressed: curlOptions.compressed, maxTime: curlOptions.maxTime, connectTimeout: curlOptions.connectTimeout });
+        response = await requestPinnedAddress(current, address, { method: curlOptions.method || 'GET', headers: requestHeaders, body: curlOptions.body, compressed: curlOptions.compressed, maxTime: curlOptions.maxTime, connectTimeout: curlOptions.connectTimeout });
         break;
       } catch (error) {
         const reason = error && (

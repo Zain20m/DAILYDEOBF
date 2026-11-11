@@ -19,7 +19,6 @@ on:
       - "scripts/deep-reconstruction-prompt.txt"
       - "scripts/setup-engines.js"
       - "scripts/test-151-loadstring-capture.py"
-      - "luraph-v14-engine/**"
       - "luraph-v15-engine/**"
       - "luraph-v15.1-engine/**"
       - "centurion-engine/**"
@@ -48,96 +47,86 @@ jobs:
           node scripts/setup-engines.js
           python3 - <<'PY'
           from pathlib import Path
-          for engine in (Path("luraph-v14-engine"), Path("luraph-v15-engine"), Path("luraph-v15.1-engine"), Path("centurion-engine")):
+          for engine in (Path("luraph-v15-engine"), Path("luraph-v15.1-engine"), Path("centurion-engine")):
               files = list(engine.rglob("*.py"))
               for path in files:
                   if "__pycache__" not in path.parts:
                       compile(path.read_text(encoding="utf-8"), str(path), "exec")
               print(f"PYTHON_SYNTAX_OK: {engine} ({len(files)} source files)")
-          v14 = Path("luraph-v14-engine")
-          for version in ("7", "8", "9"):
-              if not (v14 / "obfuscators" / f"luraph_v14_{version}" / "driver.py").is_file():
-                  raise SystemExit(f"Missing Luraph v14.{version} engine")
-          if (v14 / "obfuscators" / "luraph_v15").exists():
-              raise SystemExit("The separate v14 package must not duplicate the v15 engine")
-          import subprocess
-          subprocess.run(["python3", str(v14 / "cli.py"), "--help"], check=True, stdout=subprocess.DEVNULL)
-          print("V14_FRONTENDS_OK: dedicated 14.7 / 14.8 / 14.9; no copied v15 plugin")
           PY
-          python3 -m unittest discover -s luraph-v14-engine -p 'test_*.py' -v
           python3 -m unittest discover -s luraph-v15-engine -p 'test_detection.py' -v
           python3 -m unittest discover -s centurion-engine -p 'test_*.py' -v
           python3 scripts/test-151-loadstring-capture.py
           python3 luraph-v15-engine/obfuscators/ironbrew1/test_smoothdamp.py
 
-      - name: Verify 15.1 full-lift routing
+      - name: Verify integrated 15.1 full-lift output
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y 7zip
-          SEVEN="$(command -v 7zz || command -v 7z)"
-          export SEVEN
           python3 - <<'PY'
           from pathlib import Path
           from zipfile import ZipFile
-          import os
           import subprocess
           import tempfile
 
-          wrapper = Path("upload/Luraph_v15_1_Deobfuscator_Newest.zip")
-          if not wrapper.is_file():
-              raise SystemExit("Missing uploaded Luraph 15.1 archive")
-          with ZipFile(wrapper) as z:
-              entries = [x for x in z.infolist() if not x.is_dir()]
-              rar_entries = [x for x in entries if x.filename.lower().endswith(".rar")]
-              if len(rar_entries) != 1:
-                  raise SystemExit("Expected one nested RAR inside the uploaded ZIP")
-              rar_data = z.read(rar_entries[0])
-
-          with tempfile.TemporaryDirectory(prefix="daily-deobf-151-detect-") as temp:
-              tmp = Path(temp)
-              rar = tmp / "payload.rar"
-              extracted = tmp / "rar"
-              extracted.mkdir()
-              rar.write_bytes(rar_data)
-              subprocess.run([os.environ["SEVEN"], "x", "-y", f"-o{extracted}", str(rar)], check=True)
-
-              sample = extracted / "v15_tool_attempt_source" / "samples_v15.1_deobfuscated" / "2153b779fa7a87f2_obfuscated.lua"
-              if not sample.is_file():
-                  raise SystemExit("Bundled 15.1 regression input is missing")
-
-              result = subprocess.run(
-                  ["python3", str(Path("luraph-v15-engine/deob.py").resolve()), str(sample), "--detect"],
-                  cwd="luraph-v15-engine",
-                  capture_output=True,
-                  text=True,
-                  check=True,
-              )
-              print("15.1 compatibility detection:", result.stdout.strip())
-              if "luraph_v15" not in result.stdout:
-                  raise SystemExit("The v15-compatible engine did not recognize the 15.1 beta sample")
-
-          source = Path("index.js").read_text(encoding="utf-8")
-          start = source.index("async function processLuraph151(")
-          end = source.index("async function startWorkflow(", start)
-          pipeline = source[start:end]
-          for required in ("runPythonEngine(", "'--max-runs', '16'", "'--devirt-rounds', '200'", "'--budget', '60'", "'--timeout', '180'"):
-              if required not in pipeline:
-                  raise SystemExit("15.1 full-analysis pipeline is missing: " + required)
-          if "DEVIRT_FULL_ROUNDS: '1'" not in pipeline:
-              raise SystemExit("15.1 full-lift-every-round mode was not restored")
-          for required in (
-              "Running the dedicated 15.1 engine",
-              "if (!dedicatedValidation.complete)",
-              "inspectLiftFile(",
-              "Running the v15 compatibility pass",
-          ):
-              if required not in pipeline:
-                  raise SystemExit("15.1 strict validation/routing is missing: " + required)
-          validator = Path("scripts/lift-validation.js").read_text(encoding="utf-8")
-          for required in ("devirtErrors", "nilCalls", "nilIndexes", "runtimeStubDefinitions"):
-              if required not in validator:
-                  raise SystemExit("Strict lift validator is missing check: " + required)
-          print("15.1 ROUTING OK: dedicated engine first, strict candidate validation, compatibility fallback")
+          archive = Path("upload/Luraph-v15.1-Deobfuscator-main.zip")
+          if not archive.is_file():
+              raise SystemExit("Missing newest uploaded Luraph v15.1 archive")
+          with ZipFile(archive) as z:
+              names = set(z.namelist())
+              root = "Luraph-v15.1-Deobfuscator-main/"
+              required = [
+                  "core/obfuscators/luraph_v15/driver.py",
+                  "core/obfuscators/luraph_v15/devirt.py",
+                  "src/driver.js",
+                  "src/harness.js",
+                  "src/parallel.js",
+                  "runtime/envlog.luau",
+                  "runtime/roblox_api.luau",
+                  "deob.js",
+                  "protocol.json",
+                  "build_luau.py",
+              ]
+              missing = [name for name in required if root + name not in names]
+              if missing:
+                  raise SystemExit("Newest archive is missing: " + ", ".join(missing))
+              sample = root + "samples_v15.1_deobfuscated/2153b779fa7a87f2_obfuscated.lua"
+              expected = root + "samples_v15.1_deobfuscated/2153b779fa7a87f2_Deobfuscated.lua"
+              if sample not in names or expected not in names:
+                  raise SystemExit("Bundled v15.1 regression sample pair is missing")
+              with tempfile.TemporaryDirectory(prefix="daily-deobf-151-") as temp:
+                  tmp = Path(temp)
+                  z.extract(sample, tmp)
+                  z.extract(expected, tmp)
+                  source = tmp / sample
+                  reference = tmp / expected
+                  output = tmp / "result.lua"
+                  command = [
+                      "node", "luraph-v15.1-engine/deob.js", str(source),
+                      "--plugin", "luraph_v15", "--debug", "--timeout", "90",
+                      "--budget", "30", "--max-runs", "4", "--devirt-rounds", "20",
+                      "-o", str(output),
+                  ]
+                  result = subprocess.run(command, env={**__import__("os").environ, "DEOB_FAST": "1"},
+                                          cwd=Path.cwd(), capture_output=True, text=True, timeout=180)
+                  if result.returncode:
+                      print(result.stdout)
+                      print(result.stderr)
+                      raise SystemExit("Integrated v15.1 engine failed on its bundled sample")
+                  if output.read_bytes() != reference.read_bytes():
+                      raise SystemExit("Integrated v15.1 output differs from the bundled expected output")
+          print("15.1 INTEGRATION OK: required archive modules present and sample output matches byte-for-byte")
           PY
+          node - <<'JS'
+          const fs = require('node:fs');
+          const source = fs.readFileSync('index.js', 'utf8');
+          for (const marker of [
+            "const ENGINE_151_CLI = path.join(ENGINE_151_DIR, 'deob.js')",
+            "return processLuraph151(message, prompt, input, gameId, '15')",
+            "isClearlyPlainLuau(input.source)",
+            "async function sendOriginalLua("
+          ]) {
+            if (!source.includes(marker)) throw new Error("Missing Discord routing feature: " + marker);
+          }
+          console.log("DISCORD ROUTING OK: v15/v15.1 dedicated engine and plain-source passthrough");
+          JS

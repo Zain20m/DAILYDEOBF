@@ -277,11 +277,98 @@ function _communicate(cmd, timeoutMs, stallMs) {
 
 function takeChunks(body) {
   const found = [];
-  body = body.replace(new RegExp(mark('CHUNK ') + '(\\S+)\\n([0-9a-f]*)\\n', 'g'), (_, k, hx) => {
-    found.push([k, Buffer.from(hx, 'hex').toString('latin1')]);
-    return '';
-  });
-  return { chunks: found, body };
+  const incomplete = [];
+  const segmented = new Map();
+  const kept = [];
+  const lines = String(body || '').split(/\r?\n/);
+  const legacyPrefix = mark('CHUNK ');
+  const dataPrefix = mark('CHUNKDATA ');
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (line.startsWith(legacyPrefix)) {
+      const fields = line.slice(legacyPrefix.length).trim().split(/\s+/);
+      if (fields.length === 3 &&
+          /^\d+$/.test(fields[1]) && /^\d+$/.test(fields[2])) {
+        const expectedBytes = Number(fields[1]);
+        const expectedParts = Number(fields[2]);
+        if (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0 ||
+            !Number.isSafeInteger(expectedParts) || expectedParts < 1 || expectedParts > 100000) {
+          incomplete.push({ key: fields[0], reason: 'invalid chunk header' });
+          continue;
+        }
+        segmented.set(fields[0], {
+          expectedBytes,
+          expectedParts,
+          parts: new Array(expectedParts),
+        });
+        continue;
+      }
+
+      // Backward compatibility with the previous single-line hex protocol.
+      if (fields.length === 1 && i + 1 < lines.length) {
+        const hex = lines[i + 1];
+        if (/^[0-9a-f]*$/i.test(hex) && hex.length % 2 === 0) {
+          found.push([fields[0], Buffer.from(hex, 'hex').toString('latin1')]);
+          i++;
+          continue;
+        }
+        incomplete.push({ key: fields[0], reason: 'legacy hex payload was truncated or malformed' });
+        continue;
+      }
+    }
+
+    if (line.startsWith(dataPrefix)) {
+      const payload = line.slice(dataPrefix.length);
+      const match = payload.match(/^(\S+) (\d+) ([0-9a-f]+)$/i);
+      if (!match) {
+        incomplete.push({ key: 'unknown', reason: 'malformed chunk data record' });
+        continue;
+      }
+      const entry = segmented.get(match[1]);
+      const part = Number(match[2]);
+      if (!entry || !Number.isSafeInteger(part) || part < 1 || part > entry.expectedParts) {
+        incomplete.push({ key: match[1], reason: 'chunk data arrived without a matching header' });
+        continue;
+      }
+      if (entry.parts[part - 1] !== undefined) {
+        incomplete.push({ key: match[1], reason: 'duplicate chunk data record ' + part });
+        continue;
+      }
+      entry.parts[part - 1] = match[3];
+      continue;
+    }
+
+    kept.push(line);
+  }
+
+  for (const [key, entry] of segmented) {
+    const missing = [];
+    for (let i = 0; i < entry.parts.length; i++) {
+      if (entry.parts[i] === undefined) missing.push(i + 1);
+    }
+    if (missing.length) {
+      incomplete.push({ key, reason: 'missing chunk data record(s): ' + missing.slice(0, 12).join(', ') });
+      continue;
+    }
+    const hex = entry.parts.join('');
+    if (hex.length % 2 !== 0) {
+      incomplete.push({ key, reason: 'chunk data ended on a partial byte' });
+      continue;
+    }
+    const bytes = Buffer.from(hex, 'hex');
+    if (bytes.length !== entry.expectedBytes) {
+      incomplete.push({
+        key,
+        reason: 'captured ' + bytes.length + ' bytes, expected ' + entry.expectedBytes,
+      });
+      continue;
+    }
+    found.push([key, bytes.toString('latin1')]);
+  }
+
+  return { chunks: found, incomplete, body: kept.join('\n') };
 }
 
 class HarnessServer {

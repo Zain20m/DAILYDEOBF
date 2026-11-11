@@ -142,8 +142,11 @@ async function requestPinnedAddress(url, address, options = {}) {
     };
 
     const headers = {
-      'user-agent': 'Mozilla/5.0 (compatible; DAILY-DEOBF/1.0)',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
       accept: 'text/plain, text/*, application/luau, application/javascript, application/octet-stream, application/json, */*;q=0.8',
+      'accept-language': 'en-US,en;q=0.9',
+      'cache-control': 'no-cache',
+      pragma: 'no-cache',
       'accept-encoding': options.compressed ? 'gzip, deflate, br' : 'identity',
       connection: 'close',
       ...(method === 'PROPFIND' ? { depth: '0' } : {}),
@@ -332,14 +335,36 @@ async function fetchPublicText(rawUrl, curlOptions = {}) {
 
     if (!response.ok) {
       const retryAfter = response.headers.get('retry-after');
-      if (response.body && typeof response.body.cancel === 'function') {
-        await response.body.cancel().catch(() => {});
+      const server = response.headers.get('server');
+      const requestId = response.headers.get('cf-ray') ||
+        response.headers.get('x-request-id') ||
+        response.headers.get('x-amz-cf-id');
+      let errorBody = '';
+      try {
+        errorBody = (await readResponse(response, 8 * 1024)).toString('utf8')
+          .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')
+          .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\\s+/g, ' ')
+          .trim()
+          .slice(0, 280);
+      } catch {
+        if (response.body && typeof response.body.cancel === 'function') {
+          await response.body.cancel().catch(() => {});
+        }
       }
-      throw new Error(
-        'HTTP ' + response.status + ' ' + (response.statusText || '') +
-        ' while downloading from ' + current.hostname +
-        (retryAfter ? '. Retry-After: ' + retryAfter : '')
-      );
+      const details = [
+        'HTTP ' + response.status + ' ' + (response.statusText || ''),
+        'while downloading from ' + current.hostname,
+        server ? 'Server: ' + server : '',
+        requestId ? 'Request ID: ' + requestId : '',
+        retryAfter ? 'Retry-After: ' + retryAfter : '',
+        errorBody ? 'Response: ' + errorBody : '',
+        response.status === 403
+          ? 'The host denied this request. Check that the URL is public and does not require login, cookies, an API key, or browser verification. The downloader cannot override the host access rules.'
+          : '',
+      ].filter(Boolean);
+      throw new Error(details.join('. '));
     }
 
     // Do not reject a response only because the host labelled it text/html.

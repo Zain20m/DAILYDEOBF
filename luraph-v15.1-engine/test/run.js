@@ -3,6 +3,49 @@
 const assert = require('assert');
 const { isBootstrapFailureBeforePayload } = require('../src/driver');
 const { tidy, stripPreamble, stripAnnotations } = require('../src/tidy');
+const harness = require('../src/harness');
+
+// The child-chunk protocol uses bounded stdout records. Test byte-exact
+// reconstruction, backward compatibility, and explicit incomplete-capture reporting.
+harness.buildHarness('return nil', {});
+const chunkMark = harness.mark;
+const payload = 'local payload = "' + 'x'.repeat(5000) + '"\nreturn payload';
+const payloadBytes = Buffer.from(payload, 'latin1');
+const partSize = 2048;
+const partCount = Math.ceil(payloadBytes.length / partSize);
+const key = payloadBytes.length + '_testhash';
+const records = [chunkMark('CHUNK ' + key + ' ' + payloadBytes.length + ' ' + partCount)];
+for (let i = 0; i < partCount; i++) {
+  const part = payloadBytes.subarray(i * partSize, Math.min((i + 1) * partSize, payloadBytes.length));
+  records.push(chunkMark('CHUNKDATA ' + key + ' ' + (i + 1) + ' ' + part.toString('hex')));
+}
+records.push('trace line after captured chunk');
+const parsedChunks = harness.takeChunks(records.join('\n'));
+assert.strictEqual(parsedChunks.chunks.length, 1, 'segmented child chunk must be reconstructed');
+assert.strictEqual(parsedChunks.chunks[0][0], key, 'segmented child chunk key must be preserved');
+assert.deepStrictEqual(Buffer.from(parsedChunks.chunks[0][1], 'latin1'), payloadBytes,
+  'segmented child chunk must be byte-exact');
+assert.deepStrictEqual(parsedChunks.incomplete, [], 'complete segmented child chunk must not report errors');
+assert.strictEqual(parsedChunks.body, 'trace line after captured chunk', 'chunk protocol records must be removed from trace');
+
+const legacySource = 'return "legacy chunk"';
+const legacyKey = '21_legacy';
+const legacyHex = Buffer.from(legacySource, 'latin1').toString('hex');
+const legacyParsed = harness.takeChunks([
+  chunkMark('CHUNK ' + legacyKey),
+  legacyHex,
+  'legacy trace line',
+].join('\n'));
+assert.strictEqual(legacyParsed.chunks[0][1], legacySource, 'previous single-line chunk protocol must remain supported');
+
+const incompleteParsed = harness.takeChunks([
+  chunkMark('CHUNK ' + key + ' ' + payloadBytes.length + ' ' + partCount),
+  records[1],
+  records[3],
+].join('\n'));
+assert.strictEqual(incompleteParsed.chunks.length, 0, 'incomplete child chunks must not be used');
+assert.strictEqual(incompleteParsed.incomplete.length, 1, 'incomplete child chunks must be reported');
+
 
 
 const pcR01Failure = [

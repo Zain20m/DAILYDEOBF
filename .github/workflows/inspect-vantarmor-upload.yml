@@ -1,0 +1,29 @@
+name: Inspect Vantarmor upload
+on:
+  push:
+    paths:
+      - '.github/workflows/inspect-vantarmor-upload.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: write
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract uploaded archive
+        run: |
+          mkdir -p /tmp/vantarmor
+          unzip -q upload/VantarmorDeobf.zip -d /tmp/vantarmor
+          find /tmp/vantarmor -type f -printf '%P %s bytes\n'
+          cp /tmp/vantarmor/vantarmor_deobf.py ./vantarmor_deobf.py
+          cp /tmp/vantarmor/README.md ./VANTARMOR_README.md
+          cp /tmp/vantarmor/DISCORD.md ./VANTARMOR_DISCORD.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vantarmor-source-inspection
+          path: |
+            vantarmor_deobf.py
+            VANTARMOR_README.md
+            VANTARMOR_DISCORD.md

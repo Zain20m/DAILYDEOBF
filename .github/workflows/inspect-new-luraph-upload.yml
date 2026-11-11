@@ -141,7 +141,14 @@ jobs:
           node scripts/setup-engines.js
           TMP=$(mktemp -d)
           SRC=/tmp/new-luraph/Luraph-v15.1-Deobfuscator-main
-          DEOB_FAST=1 node luraph-v15.1-engine/deob.js "$SRC/samples_v15.1_deobfuscated/2153b779fa7a87f2_obfuscated.lua" --plugin luraph_v15 --debug --timeout 90 --budget 30 --max-runs 4 --devirt-rounds 20 -o "$TMP/result.lua"
+          ls -l luraph-v15.1-engine/bin/luau luraph-v15.1-engine/bin/luau-ast
+          file luraph-v15.1-engine/bin/luau
+          luraph-v15.1-engine/bin/luau --version
+          set +e
+          DEOB_FAST=1 DEOB_RAW="$TMP/raw.log" node luraph-v15.1-engine/deob.js "$SRC/samples_v15.1_deobfuscated/2153b779fa7a87f2_obfuscated.lua" --plugin luraph_v15 --debug --timeout 90 --budget 30 --max-runs 4 --devirt-rounds 20 -o "$TMP/result.lua"
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then echo '--- raw Luau output ---'; cat "$TMP/raw.log" 2>/dev/null || true; exit "$rc"; fi
           cmp "$TMP/result.lua" "$SRC/samples_v15.1_deobfuscated/2153b779fa7a87f2_Deobfuscated.lua"
       - name: Commit validated engine replacement
         run: |

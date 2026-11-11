@@ -1960,7 +1960,10 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
         ],
         {
           env: {
-            DEOB_FAST: '1',
+            // Keep the full seed/candidate search enabled. The bundled 15.1
+            // lifter can produce very different coverage across Python hash seeds;
+            // forcing DEOB_FAST=1 silently reduced this to a single attempt.
+            DEOB_FAST: '',
             DEVIRT_LOADERS: '1',
             DEVIRT_FULL_ROUNDS: '1',
             DEVIRT_TIMING: '1',

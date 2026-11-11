@@ -102,12 +102,13 @@ jobs:
                   raise SystemExit("Newest archive is missing: " + ", ".join(missing))
 
               # Audit every runtime/source module from the archive, not just a
-              # hand-picked list. DailyDeobf intentionally patches five files
+              # hand-picked list. DailyDeobf intentionally applies documented integration patches
               # and rebuilds portable binaries for the host CPU.
               prefixes = ("core/", "src/", "runtime/", "bin/", "test/")
               patched = {
                   "src/detect.js", "src/tidy.js", "src/harness.js",
-                  "src/driver.js", "runtime/envlog.luau",
+                  "src/driver.js", "src/parallel.js", "runtime/envlog.luau",
+                  "core/obfuscators/luraph_v15/driver.py",
               }
               rebuilt = {
                   "bin/luau", "bin/luau-ast", "bin/luau.exe", "bin/luau-ast.exe",
@@ -143,7 +144,7 @@ jobs:
               engine_package = json.loads(Path("luraph-v15.1-engine/package.json").read_text(encoding="utf-8"))
               if engine_package.get("main") != "deob.js" or engine_package.get("type") != "commonjs":
                   raise SystemExit("Integrated engine package metadata is not configured for its CLI")
-              print("ARCHIVE AUDIT OK: all core/src/runtime/bin/test files present; only documented source patches, portable binaries and local CLI package metadata differ")
+              print("ARCHIVE AUDIT OK: all core/src/runtime/bin/test files present; only documented integration patches, portable binaries and local CLI package metadata differ")
 
               engine_root = Path("luraph-v15.1-engine")
               sample_prefix = root + "samples_v15.1_deobfuscated/"

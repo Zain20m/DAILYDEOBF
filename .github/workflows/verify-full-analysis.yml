@@ -75,8 +75,9 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           from zipfile import ZipFile
+          import os
           import subprocess
-          import tempfile
+          import sys
 
           archive = Path("upload/Luraph-v15.1-Deobfuscator-main.zip")
           if not archive.is_file():
@@ -144,32 +145,46 @@ jobs:
                   raise SystemExit("Integrated engine package metadata is not configured for its CLI")
               print("ARCHIVE AUDIT OK: all core/src/runtime/bin/test files present; only documented source patches, portable binaries and local CLI package metadata differ")
 
-              sample = root + "samples_v15.1_deobfuscated/2153b779fa7a87f2_obfuscated.lua"
-              expected = root + "samples_v15.1_deobfuscated/2153b779fa7a87f2_Deobfuscated.lua"
-              if sample not in names or expected not in names:
-                  raise SystemExit("Bundled v15.1 regression sample pair is missing")
-              with tempfile.TemporaryDirectory(prefix="daily-deobf-151-") as temp:
-                  tmp = Path(temp)
-                  z.extract(sample, tmp)
-                  z.extract(expected, tmp)
-                  source = tmp / sample
-                  reference = tmp / expected
-                  output = tmp / "result.lua"
-                  command = [
-                      "node", "luraph-v15.1-engine/deob.js", str(source),
-                      "--plugin", "luraph_v15", "--debug", "--timeout", "90",
-                      "--budget", "30", "--max-runs", "4", "--devirt-rounds", "20",
-                      "-o", str(output),
-                  ]
-                  result = subprocess.run(command, env={**__import__("os").environ, "DEOB_FAST": "1"},
-                                          cwd=Path.cwd(), capture_output=True, text=True, timeout=180)
-                  if result.returncode:
-                      print(result.stdout)
-                      print(result.stderr)
-                      raise SystemExit("Integrated v15.1 engine failed on its bundled sample")
-                  if output.read_bytes() != reference.read_bytes():
-                      raise SystemExit("Integrated v15.1 output differs from the bundled expected output")
-          print("15.1 INTEGRATION OK: required archive modules present and sample output matches byte-for-byte")
+              engine_root = Path("luraph-v15.1-engine")
+              sample_prefix = root + "samples_v15.1_deobfuscated/"
+              sample_inputs = sorted(
+                  name for name in names
+                  if name.startswith(sample_prefix) and name.endswith("_obfuscated.lua")
+              )
+              runner_entry = root + "tests/run_samples.py"
+              if not sample_inputs:
+                  raise SystemExit("No bundled v15.1 regression inputs were found")
+              if runner_entry not in names:
+                  raise SystemExit("The upstream v15.1 sample regression runner is missing")
+
+              # Use the archive's complete public sample suite against the
+              # integrated engine tree, not just one hand-picked fixture.
+              for entry in names:
+                  if entry == runner_entry or entry.startswith(sample_prefix):
+                      relative = entry[len(root):]
+                      target = engine_root / relative
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      target.write_bytes(z.read(entry))
+
+              env = os.environ.copy()
+              env.pop("DEOB_FAST", None)
+              env["DEOB_PY_CANDIDATES"] = "python:1,python:2,python:3"
+              print("Running all %d bundled v15.1 regression inputs" % len(sample_inputs))
+              result = subprocess.run(
+                  [sys.executable, "tests/run_samples.py"],
+                  cwd=engine_root,
+                  env=env,
+                  capture_output=True,
+                  text=True,
+                  timeout=1200,
+              )
+              if result.stdout:
+                  print(result.stdout)
+              if result.stderr:
+                  print(result.stderr)
+              if result.returncode:
+                  raise SystemExit("Integrated v15.1 regression suite failed")
+          print("15.1 INTEGRATION OK: archive audit passed and all bundled sample regressions passed")
           PY
           node - <<'JS'
           const fs = require('node:fs');
@@ -178,7 +193,10 @@ jobs:
             "const ENGINE_151_CLI = path.join(ENGINE_151_DIR, 'deob.js')",
             "return processLuraph151(message, prompt, input, gameId, '15')",
             "isClearlyPlainLuau(input.source)",
-            "async function sendOriginalLua("
+            "async function sendOriginalLua(",
+            "async function collectLuraphGameId(",
+            "DEVIRT_MERGE_BUDGET: '32'",
+            "const candidateMatch = receivedLine.match("
           ]) {
             if (!source.includes(marker)) throw new Error("Missing Discord routing feature: " + marker);
           }

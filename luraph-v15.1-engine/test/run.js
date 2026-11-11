@@ -54,7 +54,7 @@ const pcR01FinalWarning = [
   '-- 15 statements recorded in 0.01s',
   'local payloadStarted = true',
   'warn("JNKIE: Environment compatibility check failed (PC-R01).")',
-].join('\\n');
+].join('\n');
 assert.strictEqual(isBootstrapFailureBeforePayload(pcR01FinalWarning), false,
   'a final JNKIE warning must not be mistaken for the runtime abort or skip VM lifting');
 
@@ -62,7 +62,7 @@ const pcR01RuntimeAbort = [
   '-- run status: script error: JNKIE: Environment compatibility check failed (PC-R01).',
   '--   traceback:',
   '-- 0 statements recorded in 0.00s',
-].join('\\n');
+].join('\n');
 assert.strictEqual(isBootstrapFailureBeforePayload(pcR01RuntimeAbort), true,
   'an explicit PC-R01 runtime error must still stop before expensive VM lifting');
 

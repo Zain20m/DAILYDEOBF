@@ -18,6 +18,8 @@ jobs:
         run: |
           set -euo pipefail
           git show HEAD:luraph-v15.1-engine/src/harness.js > /tmp/current-harness.js
+          git show HEAD:luraph-v15.1-engine/src/tidy.js > /tmp/current-tidy.js
+          git show HEAD:luraph-v15.1-engine/src/detect.js > /tmp/current-detect.js
           mkdir -p /tmp/new-luraph
           unzip -q 'upload/Luraph-v15.1-Deobfuscator-main.zip' -d /tmp/new-luraph
           SRC=/tmp/new-luraph/Luraph-v15.1-Deobfuscator-main
@@ -26,6 +28,8 @@ jobs:
           test -f "$SRC/src/parallel.js"
           rsync -a --delete --exclude='__pycache__/' "$SRC/core/" "$DST/core/"
           rsync -a --delete "$SRC/src/" "$DST/src/"
+          cp /tmp/current-tidy.js "$DST/src/tidy.js"
+          cp /tmp/current-detect.js "$DST/src/detect.js"
           rsync -a --delete "$SRC/runtime/" "$DST/runtime/"
           rsync -a --delete "$SRC/bin/" "$DST/bin/"
           cp "$SRC/deob.js" "$DST/deob.js"

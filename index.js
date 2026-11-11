@@ -1257,8 +1257,9 @@ async function sendAnalysisOutput(message, input, config) {
   }
 
   if (candidateParts.length) {
-    summary += '\\nThe source exceeded one attachment. It is split into ' + candidateParts.length +
-      ' ordered parts; join the files in numeric order to rebuild the complete output.';
+    summary = summary.replace(/Attached: [^\\n]+/, 'Attached: ' + candidateParts.length +
+      ' ordered parts of ' + candidateOutputName + '.');
+    summary += '\nThe file exceeded one attachment. Join the parts in numeric order to rebuild it.';
   }
 
   await message.reply({
@@ -1271,7 +1272,7 @@ async function sendAnalysisOutput(message, input, config) {
     const part = candidateParts[index];
     await message.reply({
       content: '📄 Output part ' + (index + 1) + '/' + candidateParts.length +
-        ' · ' + part.name + '\\nJoin these files in numeric order. No source bytes were discarded.',
+        ' · ' + part.name + '\nJoin these files in numeric order. No source bytes were discarded.',
       files: [new AttachmentBuilder(part.data, { name: part.name })],
       allowedMentions: { repliedUser: false },
     });

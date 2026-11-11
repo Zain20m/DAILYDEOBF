@@ -3275,7 +3275,7 @@ async function resolveDeobfTargetSource(input) {
 
   const candidates = (resolution.captures || [])
     .filter((capture) => capture && typeof capture.source === 'string' && capture.source.trim())
-    .filter((capture) => !looksLikeViewerPageOrJavaScript(capture.source))
+    .filter((capture) => !looksLikeViewerPageOrJavaScript(capture.source, capture.contentType))
     .map((capture) => {
       const bytes = Buffer.byteLength(capture.source, 'utf8');
       const protectedSource = !isClearlyPlainLuau(capture.source);

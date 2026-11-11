@@ -832,7 +832,7 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
   const stages = [
     payloadLabel,
     'Lifting VM functions',
-    'Preparing download',
+    'Validating and packaging output',
   ];
   const loadingEmoji = '🔄';
   const doneEmoji = '✅';

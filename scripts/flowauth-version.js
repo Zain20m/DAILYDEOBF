@@ -5,7 +5,7 @@ function detectFlowAuthLuraphVersion(source) {
   const banner = text.match(/Luraph(?:\s+Obfuscator)?\s+v?(\d+(?:\.\d+)*)/i);
   if (banner) {
     const version = banner[1];
-    const supported = new Set(['14.7', '14.8', '14.9', '15', '15.1']);
+    const supported = new Set(['15', '15.1']);
     if (!supported.has(version)) {
       return { version, detectedBy: 'unsupported Luraph version banner', explicit: true, unsupported: true };
     }
@@ -15,7 +15,7 @@ function detectFlowAuthLuraphVersion(source) {
   // FlowAuth's documented macro families identify the pinned Luraph version
   // when the original macro names are still visible in the supplied source.
   if (/\b(?:LPH_NO_VIRTUALIZE|LPH_JIT_MAX)\b/.test(text)) {
-    return { version: '14.9', detectedBy: 'v14.9 macro markers', explicit: true };
+    return { version: '14.9', detectedBy: 'unsupported v14 macro markers', explicit: true, unsupported: true };
   }
   if (/\b(?:LPH_ATTRIBUTES|LPH_PRECHECK|LPH_ASSUME|LPH_ENCBUF)\b/.test(text)) {
     return { version: '15.1', detectedBy: 'v15 macro markers', explicit: true };

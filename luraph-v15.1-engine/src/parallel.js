@@ -19,6 +19,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const { StringDecoder } = require('string_decoder');
 const { getPythonBin } = require('./pyenv');
 
 const ROOT = path.join(__dirname, '..');
@@ -73,13 +74,30 @@ async function runCandidates(cfgData, job) {
     if (c.seed !== null) env.PYTHONHASHSEED = c.seed;
     const t0 = Date.now();
     const proc = spawn(c.exe, [bridgePy, 'pipeline', cfgPath], { env, stdio: ['ignore', 'ignore', 'pipe'] });
-    const run = { c, own, cfgPath, proc, log: '', done: false, t0 };
-    proc.stderr.on('data', d => {
-      const s = d.toString();
-      run.log += s;
-      if (cands.length === 1) process.stderr.write(s);     // single run: live progress as before
-    });
+    const decoder = new StringDecoder('utf8');
+    const run = { c, own, cfgPath, proc, log: '', lineBuffer: '', done: false, t0 };
+    function forwardDiagnostics(chunk, final = false) {
+      if (chunk) run.lineBuffer += decoder.write(chunk);
+      if (final) run.lineBuffer += decoder.end();
+      let newline;
+      while ((newline = run.lineBuffer.indexOf('\n')) !== -1) {
+        const line = run.lineBuffer.slice(0, newline).replace(/\r$/, '');
+        run.lineBuffer = run.lineBuffer.slice(newline + 1);
+        run.log += line + '\n';
+        // When candidates run in parallel, forward each one live. Buffering all
+        // diagnostics until process exit made Discord appear frozen for minutes.
+        process.stderr.write(cands.length > 1 ? '[candidate ' + c.label + '] ' + line + '\n' : line + '\n');
+      }
+      if (final && run.lineBuffer) {
+        const line = run.lineBuffer.replace(/\r$/, '');
+        run.lineBuffer = '';
+        run.log += line;
+        process.stderr.write(cands.length > 1 ? '[candidate ' + c.label + '] ' + line + '\n' : line + '\n');
+      }
+    }
+    proc.stderr.on('data', d => forwardDiagnostics(d));
     run.promise = new Promise(resolve => proc.on('close', code => {
+      forwardDiagnostics(null, true);
       run.done = true;
       run.code = code;
       run.secs = (Date.now() - t0) / 1000;

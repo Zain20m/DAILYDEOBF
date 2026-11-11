@@ -15,6 +15,7 @@ const https = require('node:https');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const zlib = require('node:zlib');
 const { inspectLiftText } = require('./scripts/lift-validation');
 const { convertToPureLuau } = require('./pureluau');
 const { detectFlowAuthLuraphVersion } = require('./scripts/flowauth-version');
@@ -143,7 +144,7 @@ async function requestPinnedAddress(url, address, options = {}) {
     const headers = {
       'user-agent': 'Mozilla/5.0 (compatible; DAILY-DEOBF/1.0)',
       accept: 'text/plain, text/*, application/luau, application/javascript, application/octet-stream, application/json, */*;q=0.8',
-      'accept-encoding': 'identity',
+      'accept-encoding': options.compressed ? 'gzip, deflate, br' : 'identity',
       connection: 'close',
       ...(method === 'PROPFIND' ? { depth: '0' } : {}),
       ...(options.headers || {}),
@@ -203,7 +204,45 @@ async function readResponse(response, maxBytes = Infinity) {
   return Buffer.concat(chunks, total);
 }
 
-async function fetchPublicText(rawUrl) {
+function parseCurlStyleOptions(rawText) {
+  const tokens = String(rawText || '').match(/"[^"]*"|'[^']*'|\\S+/g) || [];
+  const args = tokens.map((token) => token.replace(/^["']|["']$/g, ''));
+  const options = { headers: {}, flags: [], followRedirects: true, compressed: false };
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    const next = () => args[++i] || '';
+    if (arg === '-H' || arg === '--header') {
+      const value = next(); const split = value.indexOf(':');
+      if (split > 0) options.headers[value.slice(0, split).trim().toLowerCase()] = value.slice(split + 1).trim();
+    } else if (arg === '-A' || arg === '--user-agent') options.headers['user-agent'] = next();
+    else if (arg === '-e' || arg === '--referer') options.headers.referer = next();
+    else if (arg === '-r' || arg === '--range') {
+      const value = next(); options.headers.range = /^bytes=/i.test(value) ? value : 'bytes=' + value;
+    } else if (arg === '-X' || arg === '--request') {
+      const method = next().toUpperCase();
+      if (!['GET', 'HEAD', 'OPTIONS', 'POST'].includes(method)) throw new Error('Custom curl methods are limited to GET, HEAD, OPTIONS and POST.');
+      options.method = method;
+    } else if (arg === '-d' || arg === '--data' || arg === '--data-raw') {
+      options.body = next(); options.method = options.method || 'POST';
+      if (options.method !== 'POST') throw new Error('Curl --data is only enabled with POST.');
+      options.headers['content-type'] = options.headers['content-type'] || 'application/x-www-form-urlencoded';
+    } else if (arg === '-G' || arg === '--get') options.getMode = true;
+    else if (arg === '--compressed') options.compressed = true;
+    else if (arg === '-L' || arg === '--location') options.followRedirects = true;
+    else if (arg === '--max-time') options.maxTime = Math.min(30, Math.max(1, Number(next()) || 15));
+    else if (arg === '--connect-timeout') options.connectTimeout = Math.min(15, Math.max(1, Number(next()) || 10));
+    else if (['-i','--include','-I','--head','-v','--verbose','-w','--write-out','-D','--dump-header','-o','--output','-O','--remote-name','-C','--continue-at'].includes(arg)) {
+      options.flags.push(arg);
+      if (['-w','--write-out','-D','--dump-header','-o','--output','-C','--continue-at'].includes(arg)) next();
+    }
+  }
+  if (options.getMode && options.body) {
+    options.queryData = options.body; delete options.body; options.method = 'GET';
+  }
+  return options;
+}
+
+async function fetchPublicText(rawUrl, curlOptions = {}) {
   let current = new URL(rawUrl);
   current.hash = '';
 
@@ -233,7 +272,7 @@ async function fetchPublicText(rawUrl) {
     const connectionErrors = [];
     for (const address of addresses) {
       try {
-        response = await requestPinnedAddress(current, address);
+        response = await requestPinnedAddress(current, address, { method: curlOptions.method || 'GET', headers: curlOptions.headers || {}, body: curlOptions.body, compressed: curlOptions.compressed });
         break;
       } catch (error) {
         const reason = error && (
@@ -251,7 +290,7 @@ async function fetchPublicText(rawUrl) {
       );
     }
 
-    if ([301, 302, 303, 307, 308].includes(response.status)) {
+    if (curlOptions.followRedirects !== false && [301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.get('location');
       if (!location) {
         throw new Error('HTTP ' + response.status + ' redirect did not include a Location header.');
@@ -285,7 +324,11 @@ async function fetchPublicText(rawUrl) {
 
     // Do not reject a response only because the host labelled it text/html.
     // Some script hosts mislabel plain Luau. decodeSource checks the body itself.
-    const bytes = await readResponse(response, MAX_INPUT_BYTES);
+    let bytes = await readResponse(response, MAX_INPUT_BYTES);
+    const encoding = String(response.headers.get('content-encoding') || '').toLowerCase();
+    if (encoding === 'gzip') bytes = zlib.gunzipSync(bytes);
+    else if (encoding === 'deflate') bytes = zlib.inflateSync(bytes);
+    else if (encoding === 'br') bytes = zlib.brotliDecompressSync(bytes);
     const contentType = String(response.headers.get('content-type') || 'unknown')
       .split(';')[0].trim().toLowerCase();
 
@@ -300,7 +343,7 @@ async function fetchPublicText(rawUrl) {
   throw new Error('Could not download the URL after following redirects.');
 }
 
-async function probePublicHttpMethods(rawUrl) {
+async function probePublicHttpMethods(rawUrl, curlOptions = {}) {
   const url = new URL(rawUrl);
   url.hash = '';
   const addresses = await assertPublicUrl(url);
@@ -311,7 +354,7 @@ async function probePublicHttpMethods(rawUrl) {
     let lastError = null;
     for (const address of addresses) {
       try {
-        response = await requestPinnedAddress(url, address, { method, headers });
+        response = await requestPinnedAddress(url, address, { method, headers: { ...(curlOptions.headers || {}), ...headers }, compressed: curlOptions.compressed });
         break;
       } catch (error) {
         lastError = error;
@@ -408,7 +451,10 @@ async function inputFromUrlText(text) {
   if (!['http:', 'https:'].includes(parsed.protocol)) {
     throw new Error('Only HTTP and HTTPS URLs are supported.');
   }
-  const result = await fetchPublicText(parsed.toString());
+  const curlOptions = parseCurlStyleOptions(text);
+  if (curlOptions.queryData) for (const [key, value] of new URLSearchParams(curlOptions.queryData)) parsed.searchParams.append(key, value);
+  if (curlOptions.method === 'HEAD') throw new Error('HEAD (-I) only returns headers. Use the Universal Loader Fetcher report for header inspection.');
+  const result = await fetchPublicText(parsed.toString(), curlOptions);
   const filename = /\.(?:lua|luau|pureluau|txt)$/i.test(path.extname(result.filename))
     ? result.filename
     : 'downloaded-script.lua';
@@ -420,6 +466,7 @@ async function inputFromUrlText(text) {
     responseStatus: result.status,
     responseContentType: result.contentType,
     finalUrl: result.finalUrl,
+    curlOptions,
   };
 }
 
@@ -2728,12 +2775,18 @@ async function processVantarmorFetcher(message, prompt, input) {
       throw new Error('Fetched source exceeds the 18 MB Discord output limit.');
     }
 
-    const results = await probePublicHttpMethods(loaderUrl.toString());
+    const curlOptions = input.curlOptions || {};
+    const results = await probePublicHttpMethods(loaderUrl.toString(), curlOptions);
     const report = [
       'DAILY DEOBF - UNIVERSAL LOADER FETCH REPORT',
       'URL: ' + loaderUrl.toString(),
       'Initial GET: HTTP ' + String(input.responseStatus || 'unknown') + ' (' + String(input.responseContentType || 'unknown') + ')',
       '',
+      'Curl-style flags: ' + ((curlOptions.flags || []).join(', ') || 'defaults'),
+      'Custom method: ' + String(curlOptions.method || 'GET'),
+      'Custom headers: ' + Object.keys(curlOptions.headers || {}).join(', '),
+      'Compressed responses: ' + (curlOptions.compressed ? 'enabled' : 'disabled'),
+      'Redirect following: ' + (curlOptions.followRedirects ? 'enabled' : 'disabled'),
       'HTTP method results:',
       ...results.map((result) => {
         if (result.error) return result.method + ': ERROR - ' + result.error;
@@ -2745,7 +2798,7 @@ async function processVantarmorFetcher(message, prompt, input) {
         return lines.join('\n');
       }),
       '',
-      'Automatically tested: GET (initial download), HEAD, OPTIONS, bodyless POST, PROPFIND, SEARCH, REPORT, QUERY, TRACE, byte-range GET, conditional GET (when validators exist), and Accept-header content negotiation.',
+      'Curl-style support: -I/--head, -i/--include, -L/--location, -v/--verbose, -X/--request, -H/--header, -d/--data (explicit POST body), -G/--get, -r/--range, -A/--user-agent, -e/--referer, -w/--write-out, -D/--dump-header, -o/--output, -O/--remote-name, --compressed, --max-time and --connect-timeout. -C/--continue-at is listed but requires a prior partial file to resume.
       'IANA HTTP method registry inventory (not all are sent): ACL, BASELINE-CONTROL, BIND, CHECKIN, CHECKOUT, CONNECT, COPY, DELETE, GET, HEAD, LABEL, LINK, LOCK, MERGE, MKACTIVITY, MKCALENDAR, MKCOL, MKREDIRECTREF, MKWORKSPACE, MOVE, OPTIONS, ORDERPATCH, PATCH, POST, PRI, PROPFIND, PROPPATCH, PUT, QUERY, REBIND, REPORT, SEARCH, TRACE, UNBIND, UNCHECKOUT, UNLINK, UNLOCK, UPDATE, UPDATEREDIRECTREF, VERSION-CONTROL.',
       'State-changing methods and tunnel/connection methods are listed for reference but not automatically sent.',
       'GraphQL is an API format usually carried over HTTP, not a method; it needs a specific query and endpoint. FTP, SFTP, SMTP, WebSocket and MQTT are separate protocols and are not HTTP methods.',

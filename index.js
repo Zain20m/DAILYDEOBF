@@ -358,7 +358,7 @@ function isClearlyPlainLuau(source) {
   const mostlyShortNames = identifiers.length >= 80 &&
     shortIdentifiers / identifiers.length > 0.62;
   const heavilyMinified = lines.length <= 3 && text.length > 1800;
-  const giantString = /(["'])(?:\\.|(?!\1)[\s\S]){5000,}?\1/.test(text);
+  const giantString = /(["'])[^\\\r\n]{5000,}\1/.test(text);
 
   return signalCount < 2 && !mostlyShortNames && !heavilyMinified && !giantString;
 }

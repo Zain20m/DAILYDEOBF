@@ -1,33 +1,61 @@
-name: Inspect uploaded Luraph replacement
+name: Integrate uploaded Luraph v15/v15.1 engine
 on:
   push:
     paths:
       - '.github/workflows/inspect-new-luraph-upload.yml'
 permissions:
-  contents: read
-  actions: write
+  contents: write
 jobs:
-  inspect:
+  replace-engine:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Extract uploaded archive
+        with:
+          fetch-depth: 0
+      - name: Extract and integrate uploaded engine
+        shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/new-luraph
-          unzip -q "upload/Luraph-v15.1-Deobfuscator-main.zip" -d /tmp/new-luraph
-          find /tmp/new-luraph -maxdepth 4 -type f -printf '%P\t%s bytes\n' | sort | tee /tmp/archive-files.txt
-          echo "## Archive contents" >> "$GITHUB_STEP_SUMMARY"
-          echo '```text' >> "$GITHUB_STEP_SUMMARY"
-          cat /tmp/archive-files.txt >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: extracted-luraph-v15-source
-          path: /tmp/new-luraph/
-          retention-days: 1
-      - uses: actions/upload-artifact@v4
-        with:
-          name: current-luraph-v15-1-engine
-          path: luraph-v15.1-engine/
-          retention-days: 1
+          unzip -q 'upload/Luraph-v15.1-Deobfuscator-main.zip' -d /tmp/new-luraph
+          SRC=/tmp/new-luraph/Luraph-v15.1-Deobfuscator-main
+          DST=luraph-v15.1-engine
+          test -f "$SRC/core/obfuscators/luraph_v15/driver.py"
+          test -f "$SRC/src/parallel.js"
+          rsync -a --delete --exclude='__pycache__/' "$SRC/core/" "$DST/core/"
+          rsync -a "$SRC/runtime/" "$DST/runtime/"
+          cp "$SRC/src/parallel.js" "$DST/src/parallel.js"
+          cp "$SRC/build_luau.py" "$DST/build_luau.py"
+          rm -rf "$DST/core/obfuscators/luraph_v14"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('luraph-v15.1-engine/src/driver.js')
+          s = p.read_text()
+          start = s.find("        const cfgPath = job.path('.cfg.json');")
+          end = s.find("      } else if (devirtOn && pcR01BeforePayload)", start)
+          if start < 0 or end < 0:
+              raise SystemExit('Could not locate the existing Python bridge block; no replacement committed')
+          s = s[:start] + "        await require('./parallel').runCandidates(cfgData, job);\n" + s[end:]
+          p.write_text(s)
+          PY
+          rm -rf luraph-v14-engine
+          find luraph-v15.1-engine -type d -name __pycache__ -prune -exec rm -rf {} +
+          find luraph-v15.1-engine -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+      - name: Validate Discord engine entry point and regression suite
+        run: |
+          set -euo pipefail
+          npm run check
+          TMP=$(mktemp -d)
+          SRC=/tmp/new-luraph/Luraph-v15.1-Deobfuscator-main
+          node luraph-v15.1-engine/deob.js "$SRC/samples_v15.1_deobfuscated/2153b779fa7a87f2_obfuscated.lua" --plugin luraph_v15 --debug --timeout 90 --budget 30 --max-runs 4 --devirt-rounds 20 -o "$TMP/result.lua"
+          cmp "$TMP/result.lua" "$SRC/samples_v15.1_deobfuscated/2153b779fa7a87f2_Deobfuscated.lua"
+      - name: Commit validated engine replacement
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A luraph-v15.1-engine luraph-v14-engine
+          if git diff --cached --quiet; then echo 'No engine changes to commit'; exit 0; fi
+          git commit -m 'Replace v15 and v15.1 engine with uploaded build'
+          git push

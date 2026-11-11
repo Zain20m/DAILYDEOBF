@@ -26,3 +26,8 @@ jobs:
           name: extracted-luraph-v15-source
           path: /tmp/new-luraph/
           retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: current-luraph-v15-1-engine
+          path: luraph-v15.1-engine/
+          retention-days: 1

@@ -3189,6 +3189,84 @@ async function processVantarmorFetcher(message, prompt, input) {
   }
 }
 
+async function resolveDeobfTargetSource(input) {
+  const rootSource = String(input && input.source || '');
+  if (!rootSource.trim() || /^https?:\/\/\S+$/i.test(rootSource.trim())) return null;
+
+  const resolution = await resolveStaticSources(rootSource, {
+    maxFiles: 30,
+    maxUrls: 100,
+    maxAttempts: 100,
+    maxDepth: 8,
+    fetchText: async (rawUrl) => {
+      const credentialText = String(input.originalText || '') + '\n' + rootSource;
+      const vantarmorSource = await fetchVantarmorLoaderSource(rawUrl, credentialText);
+      if (vantarmorSource !== null) {
+        return {
+          source: vantarmorSource,
+          finalUrl: rawUrl,
+          contentType: 'application/lua',
+          status: 200,
+        };
+      }
+      const fetched = await fetchPublicText(rawUrl, {});
+      return {
+        source: decodeSource(fetched.bytes),
+        finalUrl: fetched.finalUrl || rawUrl,
+        contentType: fetched.contentType || 'unknown',
+        status: fetched.status || null,
+      };
+    },
+  });
+
+  const rootBytes = Buffer.byteLength(rootSource, 'utf8');
+  const candidates = (resolution.captures || [])
+    .filter((capture) => capture && typeof capture.source === 'string' && capture.source.trim())
+    .filter((capture) => !looksLikeViewerPageOrJavaScript(capture.source))
+    .map((capture) => {
+      const bytes = Buffer.byteLength(capture.source, 'utf8');
+      const protectedSource = !isClearlyPlainLuau(capture.source);
+      const hasProtectionMarkers = /Luraph|LPH_|IronBrew|MoonSec|Centurion|Prometheus|bit32\.(?:bxor|band|bor)|loadstring\s*\(/i.test(capture.source);
+      return { ...capture, bytes, protectedSource, hasProtectionMarkers };
+    })
+    .filter((capture) => capture.protectedSource && capture.bytes > rootBytes)
+    .sort((left, right) =>
+      Number(right.hasProtectionMarkers) - Number(left.hasProtectionMarkers) ||
+      right.bytes - left.bytes ||
+      right.depth - left.depth
+    );
+
+  if (!candidates.length) {
+    return {
+      selected: null,
+      discovered: resolution.discovered || 0,
+      fetched: (resolution.captures || []).length,
+      failures: (resolution.failures || []).length,
+    };
+  }
+
+  const selected = candidates[0];
+  let filename = selected.name || 'deobf-target.lua';
+  try {
+    const url = selected.finalUrl || selected.url;
+    if (url) filename = path.basename(new URL(url).pathname) || filename;
+  } catch {}
+  if (!/\.(?:lua|luau|pureluau|txt)$/i.test(filename)) filename += '.lua';
+
+  return {
+    selected: {
+      source: selected.source,
+      filename,
+      url: selected.finalUrl || selected.url || null,
+      bytes: selected.bytes,
+      depth: selected.depth,
+    },
+    discovered: resolution.discovered || 0,
+    fetched: (resolution.captures || []).length,
+    failures: (resolution.failures || []).length,
+  };
+}
+
 async function startWorkflow(message, inlineText = null) {
   const prompt = await message.reply({
     embeds: [dailyEmbed('New deobfuscation', 'Upload a **.lua**, **.luau**, **.pureluau** or **.txt** file, paste source, or send a direct HTTP/HTTPS script URL.\n\n**Maximum input:** 18 MB', DAILY_COLORS.primary)],
@@ -3215,6 +3293,41 @@ async function startWorkflow(message, inlineText = null) {
       };
     } else {
       throw error;
+    }
+  }
+
+  let targetResolution = null;
+  if (input.source && !input.pendingUrlFailure) {
+    try {
+      targetResolution = await resolveDeobfTargetSource(input);
+      if (targetResolution && targetResolution.selected) {
+        const original = {
+          source: input.source,
+          filename: input.filename,
+          url: input.url || null,
+        };
+        input = {
+          ...input,
+          source: targetResolution.selected.source,
+          filename: targetResolution.selected.filename,
+          selectedTarget: targetResolution.selected,
+          originalInput: original,
+        };
+        await prompt.edit({
+          embeds: [dailyEmbed(
+            'Payload target selected',
+            'Found a larger protected Lua payload at depth ' + targetResolution.selected.depth +
+              ' (' + formatBytes(targetResolution.selected.bytes) + '). Using **' +
+              targetResolution.selected.filename + '** for the selected deobfuscation engine.',
+            DAILY_COLORS.success
+          )],
+        });
+      }
+    } catch (error) {
+      targetResolution = {
+        selected: null,
+        error: String(error && error.message || error).slice(0, 500),
+      };
     }
   }
 
@@ -3271,7 +3384,12 @@ async function startWorkflow(message, inlineText = null) {
         : '') +
       (input.pendingUrlFailure
         ? 'Choose an engine now. After selecting one, attach the Lua/Luau file or paste its source.'
-        : 'Select the analysis engine for this file.'),
+        : (input.selectedTarget
+          ? 'The larger protected payload was selected automatically. Choose an engine for that payload.'
+          : 'Select the analysis engine for this file.' +
+            (targetResolution && targetResolution.discovered
+              ? '\\n\\nNo larger protected payload was identified; keeping the original input.'
+              : ''))),
       input.downloadError ? DAILY_COLORS.warning : DAILY_COLORS.primary
     )],
     components: chooseRows,

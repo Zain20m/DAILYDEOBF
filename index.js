@@ -2774,7 +2774,7 @@ async function startWorkflow(message, inlineText = null) {
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`deobf-vantarmor:${message.author.id}`)
-        .setLabel('Universal Loader Fetcher')
+        .setLabel('Vantarmor and Universal Loader Fetcher')
         .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
         .setCustomId(`deobf-cancel:${message.author.id}`)

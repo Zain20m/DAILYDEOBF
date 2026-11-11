@@ -3219,7 +3219,6 @@ async function resolveDeobfTargetSource(input) {
     },
   });
 
-  const rootBytes = Buffer.byteLength(rootSource, 'utf8');
   const candidates = (resolution.captures || [])
     .filter((capture) => capture && typeof capture.source === 'string' && capture.source.trim())
     .filter((capture) => !looksLikeViewerPageOrJavaScript(capture.source))
@@ -3229,10 +3228,10 @@ async function resolveDeobfTargetSource(input) {
       const hasProtectionMarkers = /Luraph|LPH_|IronBrew|MoonSec|Centurion|Prometheus|bit32\.(?:bxor|band|bor)|loadstring\s*\(/i.test(capture.source);
       return { ...capture, bytes, protectedSource, hasProtectionMarkers };
     })
-    .filter((capture) => capture.protectedSource && capture.bytes > rootBytes)
+    .filter((capture) => capture.protectedSource || capture.hasProtectionMarkers)
     .sort((left, right) =>
-      Number(right.hasProtectionMarkers) - Number(left.hasProtectionMarkers) ||
       right.bytes - left.bytes ||
+      Number(right.hasProtectionMarkers) - Number(left.hasProtectionMarkers) ||
       right.depth - left.depth
     );
 
@@ -3316,7 +3315,7 @@ async function startWorkflow(message, inlineText = null) {
         await prompt.edit({
           embeds: [dailyEmbed(
             'Payload target selected',
-            'Found a larger protected Lua payload at depth ' + targetResolution.selected.depth +
+            'Found the largest protected Lua payload in the static loader chain at depth ' + targetResolution.selected.depth +
               ' (' + formatBytes(targetResolution.selected.bytes) + '). Using **' +
               targetResolution.selected.filename + '** for the selected deobfuscation engine.',
             DAILY_COLORS.success

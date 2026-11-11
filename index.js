@@ -155,7 +155,7 @@ async function requestPinnedAddress(url, address, options = {}) {
       agent: false,
       autoSelectFamily: false,
       lookup,
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(Math.min(30, Math.max(1, Number(options.maxTime) || 15)) * 1000),
       headers,
     }, (response) => {
       const status = Number(response.statusCode || 0);
@@ -349,12 +349,12 @@ async function probePublicHttpMethods(rawUrl, curlOptions = {}) {
   const addresses = await assertPublicUrl(url);
   const results = [];
 
-  async function runProbe(label, method, headers = {}) {
+  async function runProbe(label, method, headers = {}, body = undefined) {
     let response = null;
     let lastError = null;
     for (const address of addresses) {
       try {
-        response = await requestPinnedAddress(url, address, { method, headers: { ...(curlOptions.headers || {}), ...headers }, compressed: curlOptions.compressed });
+        response = await requestPinnedAddress(url, address, { method, headers: { ...(curlOptions.headers || {}), ...headers }, body, compressed: curlOptions.compressed, maxTime: curlOptions.maxTime });
         break;
       } catch (error) {
         lastError = error;
@@ -379,7 +379,7 @@ async function probePublicHttpMethods(rawUrl, curlOptions = {}) {
     return result;
   }
 
-  await runProbe('HEAD', 'HEAD');
+  await runProbe('HEAD (-I/--head)', 'HEAD');
   await runProbe('OPTIONS', 'OPTIONS');
   await runProbe('POST (empty body)', 'POST');
   await runProbe('PROPFIND', 'PROPFIND');
@@ -405,6 +405,9 @@ async function probePublicHttpMethods(rawUrl, curlOptions = {}) {
   }
   await runProbe('GET Accept: application/json', 'GET', { accept: 'application/json, */*;q=0.5' });
   await runProbe('GET Accept: text/plain', 'GET', { accept: 'text/plain, */*;q=0.5' });
+  if (curlOptions.method && curlOptions.method !== 'GET') {
+    await runProbe('Custom curl -X ' + curlOptions.method, curlOptions.method, {}, curlOptions.body);
+  }
   return results;
 }
 
@@ -453,8 +456,7 @@ async function inputFromUrlText(text) {
   }
   const curlOptions = parseCurlStyleOptions(text);
   if (curlOptions.queryData) for (const [key, value] of new URLSearchParams(curlOptions.queryData)) parsed.searchParams.append(key, value);
-  if (curlOptions.method === 'HEAD') throw new Error('HEAD (-I) only returns headers. Use the Universal Loader Fetcher report for header inspection.');
-  const result = await fetchPublicText(parsed.toString(), curlOptions);
+  const result = await fetchPublicText(parsed.toString(), { headers: curlOptions.headers, compressed: curlOptions.compressed, maxTime: curlOptions.maxTime });
   const filename = /\.(?:lua|luau|pureluau|txt)$/i.test(path.extname(result.filename))
     ? result.filename
     : 'downloaded-script.lua';
@@ -2785,7 +2787,9 @@ async function processVantarmorFetcher(message, prompt, input) {
       'Curl-style flags: ' + ((curlOptions.flags || []).join(', ') || 'defaults'),
       'Custom method: ' + String(curlOptions.method || 'GET'),
       'Custom headers: ' + Object.keys(curlOptions.headers || {}).join(', '),
-      'Compressed responses: ' + (curlOptions.compressed ? 'enabled' : 'disabled'),
+      'Compressed responses: ' + (curlOptions.compressed ? 'enabled (gzip/deflate/br)' : 'disabled'),
+      'Timeout: ' + String(curlOptions.maxTime || 15) + ' seconds (connect timeout option: ' + String(curlOptions.connectTimeout || 'default') + '),
+      'Verbose/header/write-out details: included in http_method_report.txt and response attachments.',
       'Redirect following: ' + (curlOptions.followRedirects ? 'enabled' : 'disabled'),
       'HTTP method results:',
       ...results.map((result) => {

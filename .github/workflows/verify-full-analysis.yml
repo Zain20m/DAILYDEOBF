@@ -118,7 +118,7 @@ jobs:
                   elif rel not in patched and rel not in rebuilt:
                       if target.read_bytes() != z.read(entry):
                           different.append(rel)
-              for rel in ("LICENSE", "package.json", "deob.js", "protocol.json",
+              for rel in ("LICENSE", "deob.js", "protocol.json",
                           "build_luau.py", "README.md", "TECHNICAL.md"):
                   entry = root + rel
                   target = Path("luraph-v15.1-engine") / rel
@@ -129,7 +129,11 @@ jobs:
               if absent or different:
                   raise SystemExit("Archive audit failed; missing=" + repr(absent) +
                                    "; unexpected differences=" + repr(different))
-              print("ARCHIVE AUDIT OK: all core/src/runtime/bin/test files present; only documented patches and portable binaries differ")
+              import json
+              engine_package = json.loads(Path("luraph-v15.1-engine/package.json").read_text(encoding="utf-8"))
+              if engine_package.get("main") != "deob.js" or engine_package.get("type") != "commonjs":
+                  raise SystemExit("Integrated engine package metadata is not configured for its CLI")
+              print("ARCHIVE AUDIT OK: all core/src/runtime/bin/test files present; only documented source patches, portable binaries and local CLI package metadata differ")
 
               sample = root + "samples_v15.1_deobfuscated/2153b779fa7a87f2_obfuscated.lua"
               expected = root + "samples_v15.1_deobfuscated/2153b779fa7a87f2_Deobfuscated.lua"

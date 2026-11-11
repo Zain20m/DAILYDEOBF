@@ -106,34 +106,30 @@ jobs:
           new_take = old_take + "\n    for (const item of incomplete) process.stderr.write(`[!] dynamic VM chunk ${item.key} was not reconstructed: ${item.reason}\\n`);"
           ds = ds.replace(old_take, 'const { chunks: found, incomplete = [], body: cleanBody } = harness.takeChunks(body);' + new_take[len(old_take):], 1)
           old_chunk = '''      if (!chunks[key]) {
-                  rawChunks[key] = src;
-                  chunks[key] = patchChunk(src, job.outdir, key);'''
+        rawChunks[key] = src;
+        chunks[key] = patchChunk(src, job.outdir, key);'''
           new_chunk = '''      if (!chunks[key]) {
-                  rawChunks[key] = src;
-                  # Persist the raw child before later prototype/lift failures.
-                  job.write(job.path(`.chunk_${key}.luau`), src, 'latin1');
-                  chunks[key] = patchChunk(src, job.outdir, key);'''
+        rawChunks[key] = src;
+        // Persist the raw child before later prototype/lift failures.
+        job.write(job.path(`.chunk_${key}.luau`), src, 'latin1');
+        chunks[key] = patchChunk(src, job.outdir, key);'''
           if old_chunk not in ds: raise SystemExit('raw child chunk persistence patch did not match')
           ds = ds.replace(old_chunk, new_chunk, 1)
-          old_paths = '''        const chunkPaths = Object.entries(rawChunks).map(([k, src]) =>
+          old_devirt = '''      if (devirtOn) {
+        const chunkPaths = Object.entries(rawChunks).map(([k, src]) =>
           job.write(job.path(`.chunk_${k}.luau`), src, 'latin1')
         );'''
-          new_paths = '''        const chunkPaths = Object.keys(rawChunks).map((k) =>
+          new_devirt = '''      const pcR01BeforePayload = isBootstrapFailureBeforePayload(body);
+      if (devirtOn && !pcR01BeforePayload) {
+        const chunkPaths = Object.keys(rawChunks).map((k) =>
           job.path(`.chunk_${k}.luau`)
         );'''
-          if old_paths not in ds: raise SystemExit('raw child chunk path patch did not match')
-          ds = ds.replace(old_paths, new_paths, 1)
-          ds = ds.replace('''      if (devirtOn) {
-                const chunkPaths = Object.entries(rawChunks).map(([k, src]) =>
-                  job.write(job.path(`.chunk_${k}.luau`), src, 'latin1')
-                );''', '''      const pcR01BeforePayload = isBootstrapFailureBeforePayload(body);
-              if (devirtOn && !pcR01BeforePayload) {
-                const chunkPaths = Object.keys(rawChunks).map((k) => job.path(`.chunk_${k}.luau`));''', 1)
-          ds = ds.replace('''        await require('./parallel').runCandidates(cfgData, job);
-              }''', '''        await require('./parallel').runCandidates(cfgData, job);
-              } else if (devirtOn && pcR01BeforePayload) {
-                process.stderr.write('[!] skipping VM lifting: PC-R01 is present in the runtime error block before payload execution\\n');
-              }''', 1)
+          if old_devirt not in ds: raise SystemExit('PC-R01 / raw chunk path patch did not match')
+          ds = ds.replace(old_devirt, new_devirt, 1)
+          old_close = "        await require('./parallel').runCandidates(cfgData, job);\n      }"
+          new_close = "        await require('./parallel').runCandidates(cfgData, job);\n      } else if (devirtOn && pcR01BeforePayload) {\n        process.stderr.write('[!] skipping VM lifting: PC-R01 is present in the runtime error block before payload execution\\n');\n      }"
+          if old_close not in ds: raise SystemExit('PC-R01 devirtualization guard close did not match')
+          ds = ds.replace(old_close, new_close, 1)
           ds = ds.replace('module.exports = { run, runGeneric };', 'module.exports = { run, runGeneric, isBootstrapFailureBeforePayload };')
           dp.write_text(ds)
           PY

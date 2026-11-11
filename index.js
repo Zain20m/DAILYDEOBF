@@ -2477,14 +2477,14 @@ function buildScriptFetchedEmbed(attachment, batchIndex, batchCount, totalFiles,
   const source = String(capture.source || '');
   const codeMark = String.fromCharCode(96);
   const filename = String(attachment && attachment.name || capture.name || 'fetched.lua')
-    .replace(/[\\r\\n*_~|]/g, '')
+    .replace(/[\r\n*_~|]/g, '')
     .slice(0, 100);
   let host = 'uploaded or inline source';
   const rawUrl = capture.finalUrl || capture.url || null;
   if (rawUrl) {
     try { host = new URL(rawUrl).host; } catch {}
   }
-  let preview = source.replace(/\\r\\n?/g, '\\n').split('\\n').slice(0, 5).join('\\n');
+  let preview = source.replace(/\r\n?/g, '\n').split('\n').slice(0, 5).join('\n');
   preview = preview.replace(/\x60\x60\x60/g, "'''");
   if (preview.length > 850) preview = preview.slice(0, 847) + '...';
   if (!preview.trim()) preview = '-- No readable preview available';
@@ -2501,7 +2501,7 @@ function buildScriptFetchedEmbed(attachment, batchIndex, batchCount, totalFiles,
     '',
     '**Detection complete**',
     'The source was fetched successfully. Use .deobf to choose an analysis engine for this file.',
-  ].join('\\n');
+  ].join('\n');
 
   return dailyEmbed(
     batchIndex === 0 ? 'Script fetched' : 'Additional scripts fetched',

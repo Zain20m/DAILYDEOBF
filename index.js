@@ -2026,10 +2026,10 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
         : 'Validation found: ' + (dedicatedValidation.issues || []).slice(0, 3).join('; ')
     );
 
-    if (!dedicatedValidation.complete) {
+    if (!dedicatedValidation.candidate) {
       await progress.setPhase(
-        'Running the v15 compatibility pass',
-        'The dedicated 15.1 output did not pass validation. Running the independent v15 compatibility engine and comparing both candidates.'
+        'Running the v15 compatibility fallback',
+        'The dedicated 15.1 engine produced no source candidate. Running v15 only as a fallback; any partial 15.1 candidate is preserved and never replaced.'
       );
 
       try {
@@ -2081,9 +2081,9 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
       );
 
       await progress.setPhase(
-        'Comparing both reconstruction candidates',
-        'Dedicated candidate: ' + (dedicatedValidation.complete ? 'validated' : 'partial / failed validation') +
-        '. Compatibility candidate: ' + (compatibilityValidation.complete ? 'validated' : 'partial / failed validation') + '.'
+        'Checking compatibility fallback',
+        'The dedicated 15.1 engine produced no source candidate. Compatibility candidate: ' +
+        (compatibilityValidation.complete ? 'validated' : (compatibilityValidation.candidate ? 'partial / failed validation' : 'not produced')) + '.'
       );
 
       const dedicatedScore = dedicatedValidation.score ?? -1;
@@ -2174,7 +2174,9 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
     await progress.complete(summary.hasLiftedSource
       ? 'A Luau candidate passed structural checks and syntax validation.'
       : (summary.hasLiftCandidate
-        ? 'Both engines were checked. The best source candidate remains partial and is labelled as such.'
+        ? (chosen === dedicated
+          ? 'The dedicated Luraph v' + version + ' candidate is partial and was preserved; the v15 fallback was skipped.'
+          : 'The v15 compatibility fallback produced a partial candidate; it is labelled as such.')
         : 'Neither engine completed the VM lift. Trace and diagnostic artifacts are attached.'));
 
     const bootstrapBoundsError = /buffer access out of bounds|size out of range/i.test(dedicatedLogs + '\n' + compatibilityLogs);

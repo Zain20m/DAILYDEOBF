@@ -2393,12 +2393,9 @@ async function fetchVantarmorLoaderSource(rawUrl, credentialText = '') {
   if (!isVantarmor) return null;
 
   const keyMatch = String(credentialText || '').match(/(?:getgenv\(\)\.script_key|script_key)\s*=\s*["']([^"']+)["']/i);
-  if (!keyMatch) {
-    throw new Error('Vantarmor loader detected, but no script_key was found in the supplied source. Include script_key = "YOUR_KEY" with the loader URL or Lua source.');
-  }
-
   const hash = loaderUrl.pathname.match(/^\/files\/v1\/loaders\/(.+)\.lua$/i)[1];
-  const params = new URLSearchParams({ s: hash, key: keyMatch[1].trim() });
+  const params = new URLSearchParams({ s: hash });
+  if (keyMatch && keyMatch[1].trim()) params.set('key', keyMatch[1].trim());
   const hwidMatch = String(credentialText || '').match(/\bhwid\s*=\s*["']([^"']+)["']/i);
   const rbxidMatch = String(credentialText || '').match(/\brbxid\s*=\s*["']([^"']+)["']/i);
   if (hwidMatch) params.set('hwid', hwidMatch[1]);
@@ -2412,9 +2409,19 @@ async function fetchVantarmorLoaderSource(rawUrl, credentialText = '') {
       headers, signal: controller.signal, redirect: 'error',
     });
     let body = (await first.text()).replace(/\r\n/g, '\n');
-    if (!first.ok) throw new Error('Vantarmor returned HTTP ' + first.status + '.');
+    if (!first.ok) {
+      if (!keyMatch && (first.status === 401 || first.status === 403)) {
+        throw new Error('Vantarmor denied a keyless request. This loader requires a script_key unless its owner enables public access.');
+      }
+      throw new Error('Vantarmor returned HTTP ' + first.status + '.');
+    }
     let errorLine = body.trim().match(/^!VANTARMOR:([A-Z0-9_]+)$/);
-    if (errorLine) throw new Error('Vantarmor rejected the request: ' + errorLine[1] + '.');
+    if (errorLine) {
+      if (!keyMatch && /KEY|AUTH|TOKEN/.test(errorLine[1])) {
+        throw new Error('Vantarmor requires a script_key for this loader. Keyless fetching works only when the owner has enabled public access.');
+      }
+      throw new Error('Vantarmor rejected the request: ' + errorLine[1] + '.');
+    }
 
     if (body.startsWith('!VANTARMOR:TOKEN\n')) {
       const token = body.slice('!VANTARMOR:TOKEN\n'.length).trim();
@@ -3178,11 +3185,8 @@ async function processVantarmorFetcher(message, prompt, input) {
 
   const hash = loaderUrl.pathname.match(/^\/files\/v1\/loaders\/(.+)\.lua$/i)[1];
   const keyMatch = combinedInput.match(/(?:getgenv\(\)\.script_key|script_key)\s*=\s*["']([^"']+)["']/i);
-  if (!keyMatch) {
-    throw new Error('No script_key was found. Include script_key = "YOUR_KEY" with the Vantarmor loader URL.');
-  }
-
-  const params = new URLSearchParams({ s: hash, key: keyMatch[1].trim() });
+  const params = new URLSearchParams({ s: hash });
+  if (keyMatch && keyMatch[1].trim()) params.set('key', keyMatch[1].trim());
   const hwidMatch = combinedInput.match(/\bhwid\s*=\s*["']([^"']+)["']/i);
   const rbxidMatch = combinedInput.match(/\brbxid\s*=\s*["']([^"']+)["']/i);
   if (hwidMatch) params.set('hwid', hwidMatch[1]);
@@ -3203,9 +3207,19 @@ async function processVantarmorFetcher(message, prompt, input) {
       signal: controller.signal,
     });
     let body = (await response.text()).replace(/\r\n/g, '\n');
-    if (!response.ok) throw new Error('Vantarmor returned HTTP ' + response.status + '.');
+    if (!response.ok) {
+      if (!keyMatch && (response.status === 401 || response.status === 403)) {
+        throw new Error('Vantarmor denied a keyless request. This loader requires a script_key unless its owner enables public access.');
+      }
+      throw new Error('Vantarmor returned HTTP ' + response.status + '.');
+    }
     const errorLine = body.trim().match(/^!VANTARMOR:([A-Z0-9_]+)$/);
-    if (errorLine) throw new Error('Vantarmor rejected the request: ' + errorLine[1] + '.');
+    if (errorLine) {
+      if (!keyMatch && /KEY|AUTH|TOKEN/.test(errorLine[1])) {
+        throw new Error('Vantarmor requires a script_key for this loader. Keyless fetching works only when the owner has enabled public access.');
+      }
+      throw new Error('Vantarmor rejected the request: ' + errorLine[1] + '.');
+    }
 
     if (body.startsWith('!VANTARMOR:TOKEN\n')) {
       const token = body.slice('!VANTARMOR:TOKEN\n'.length).trim();

@@ -1,4 +1,5 @@
 """Regression tests for the Luraph v14 silent-loop watchdog."""
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -7,6 +8,7 @@ ENGINE_ROOT = Path(__file__).resolve().parent
 if str(ENGINE_ROOT) not in sys.path:
     sys.path.insert(0, str(ENGINE_ROOT))
 
+import harness  # noqa: E402
 from obfuscators.luraph_v14_9.driver import patch_entries, patch_spin  # noqa: E402
 
 
@@ -86,6 +88,34 @@ end
         self.assertIn("repeat", patched)
         self.assertIn("until false", patched)
         self.assertIn("local opcode = ops[pc];" + SPIN_SNIPPET, patched)
+
+
+class V14HarnessWatchdogTests(unittest.TestCase):
+    def test_silent_process_timeout_is_classified_as_heartbeat_stall(self):
+        with self.assertRaises(subprocess.TimeoutExpired) as caught:
+            harness._communicate(
+                [sys.executable, "-c", "import time; print('started', flush=True); time.sleep(2)"],
+                timeout=5,
+                stall=0.25,
+            )
+        error = caught.exception
+        self.assertEqual(getattr(error, "reason", None), "heartbeat")
+        self.assertIn(b"started", error.output or b"")
+
+    def test_total_timeout_is_distinguished_from_heartbeat_stall(self):
+        with self.assertRaises(subprocess.TimeoutExpired) as caught:
+            harness._communicate(
+                [sys.executable, "-c", "import time; print('started', flush=True); time.sleep(2)"],
+                timeout=0.25,
+                stall=None,
+            )
+        error = caught.exception
+        self.assertEqual(getattr(error, "reason", None), "overall")
+        self.assertIn(b"started", error.output or b"")
+
+    def test_v14_default_stall_window_allows_long_vm_operations(self):
+        self.assertGreaterEqual(harness.STALL, 60)
+        self.assertLess(harness.STALL, 600)
 
 
 if __name__ == "__main__":

@@ -79,12 +79,22 @@ async function run(job) {
 
     body = harness.takeP2d(body);
 
-    const { chunks: found, body: cleanBody } = harness.takeChunks(body);
+    const { chunks: found, incomplete, body: cleanBody } = harness.takeChunks(body);
     body = cleanBody;
+    for (const item of incomplete) {
+      process.stderr.write('[!] dynamic VM chunk ' + item.key + ' was not reconstructed: ' + item.reason + '\n');
+    }
     let added = 0;
     for (const [key, src] of found) {
-      if (!chunks[key]) {
+      if (!rawChunks[key]) {
         rawChunks[key] = src;
+        // Persist the untouched source immediately. If the instrumented retry
+        // fails, the original captured child chunk is still available to attach.
+        job.write(job.path('.chunk_' + key + '.luau'), src, 'latin1');
+        process.stderr.write('[+] captured dynamic VM chunk ' + key + ' (' +
+          Buffer.byteLength(src, 'latin1') + ' bytes)\n');
+      }
+      if (!chunks[key]) {
         chunks[key] = patchChunk(src, job.outdir, key);
         if (spin) chunks[key] = vmmap.patchSpin(chunks[key]);
         added++;

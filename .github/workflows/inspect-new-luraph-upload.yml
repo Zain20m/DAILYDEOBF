@@ -45,7 +45,15 @@ jobs:
       - name: Validate Discord engine entry point and regression suite
         run: |
           set -euo pipefail
-          npm run check
+          node --check index.js
+          node --check luraph-v15.1-engine/deob.js
+          node --check luraph-v15.1-engine/src/driver.js
+          node --check luraph-v15.1-engine/src/parallel.js
+          node --check scripts/flowauth-version.js
+          node --test scripts/test-flowauth-version.js
+          node luraph-v15.1-engine/test/run.js
+          node scripts/test-lift-validation.js
+          node scripts/setup-engines.js
           TMP=$(mktemp -d)
           SRC=/tmp/new-luraph/Luraph-v15.1-Deobfuscator-main
           node luraph-v15.1-engine/deob.js "$SRC/samples_v15.1_deobfuscated/2153b779fa7a87f2_obfuscated.lua" --plugin luraph_v15 --debug --timeout 90 --budget 30 --max-runs 4 --devirt-rounds 20 -o "$TMP/result.lua"

@@ -854,6 +854,7 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
   let lastDiagnosticLine = '';
   let lastErrorLine = '';
   let statusEditError = '';
+  const candidateProgress = new Map();
 
   function stageFor(value) {
     const text = String(value || '').toLowerCase();
@@ -919,6 +920,12 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
         lines.push('-# ⏳ No new engine output for ' + formatDuration(silentForMs) + '. The subprocess has not reported completion; its configured timeout is still active.');
       }
     }
+    if (candidateProgress.size) {
+      lines.push('', '-# Candidate activity:');
+      for (const [name, status] of candidateProgress) {
+        lines.push('-# ' + name + ': ' + status.slice(0, 150));
+      }
+    }
     if (statusEditError) lines.push('-# Status update warning: ' + statusEditError.slice(0, 140));
     return lines.join('\n');
   }
@@ -945,6 +952,12 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
     const line = (candidateMatch ? candidateMatch[2] : receivedLine).trim();
     if (!line) return;
     const candidatePrefix = candidateMatch ? '[' + candidateMatch[1] + '] ' : '';
+    if (candidateMatch) {
+      candidateProgress.set(candidateMatch[1], line.slice(0, 150));
+      while (candidateProgress.size > 4) {
+        candidateProgress.delete(candidateProgress.keys().next().value);
+      }
+    }
     lastEngineOutputAt = Date.now();
     lastDiagnosticLine = (candidatePrefix + line).slice(0, 220);
     if (/\b(error|exception|traceback|failed|fatal)\b/i.test(line)) {
@@ -1956,19 +1969,16 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
     return false;
   }
 
-  const dedicated = await prepare('dedicated-v' + version);
-  const compatible = await prepare('v15-compatibility');
+  const dedicated = await prepare('selected-v' + version);
+  const selectedEngineDir = version === '15' ? ENGINE_V15_DIR : ENGINE_151_DIR;
   const inputBytes = Buffer.byteLength(input.source, 'utf8');
   const progress = createAnalysisProgress(prompt, input.filename, inputBytes, 'Luraph v' + version);
   const startedAt = Date.now();
   let dedicatedLogs = '';
-  let compatibilityLogs = '';
   let dedicatedError = null;
-  let compatibilityError = null;
   let chosen = dedicated;
-  let chosenEngineDir = ENGINE_151_DIR;
+  let chosenEngineDir = selectedEngineDir;
   let dedicatedValidation = null;
-  let compatibilityValidation = null;
 
   try {
     if (normalized.removedBytes > 0) {
@@ -1984,83 +1994,16 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
     );
 
     try {
-      const result = await runEngine(
-        ENGINE_151_DIR,
-        ENGINE_151_CLI,
-        dedicated.inputPath,
-        dedicated.outputPath,
-        ENGINE_TIMEOUT_MS,
-        false,
-        [
-          '--plugin', 'luraph_v15',
-          '--debug',
-          '--strings',
-          '--max-runs', '16',
-          '--devirt-rounds', '200',
-          '--budget', '60',
-          '--timeout', '180',
-          ...(gameId ? ['--cfg-json', JSON.stringify({ __superz_game_id: Number(gameId) })] : []),
-        ],
-        {
-          env: {
-            // Keep the full seed/candidate search enabled. The bundled 15.1
-            // lifter can produce very different coverage across Python hash seeds;
-            // forcing DEOB_FAST=1 silently reduced this to a single attempt.
-            DEOB_FAST: '',
-            DEVIRT_LOADERS: '1',
-            DEVIRT_FULL_ROUNDS: '1',
-            DEVIRT_TIMING: '1',
-            DEVIRT_ERRS: '1',
-            DEVIRT_TB: '1',
-            DEVIRT_WALK_LIMIT: '750000',
-            // Recover oversized lazy-constant batches by merging fitting subsets;
-            // if that cannot be reconciled, bisect and retain the constants that fit.
-            DEVIRT_MERGE: '1',
-            DEVIRT_MERGE_BUDGET: '32',
-            DEVIRT_BISECT: '1',
-            DEVIRT_BISECT_BUDGET: '16',
-          },
-          onProgress: progress.onLine,
-        },
-      );
-      dedicatedLogs += result.stderr || '';
-    } catch (error) {
-      dedicatedError = error;
-      dedicatedLogs += '\n[!] dedicated 15.1 engine: ' + String(error.message || error) + '\n';
-    }
-
-    await progress.setPhase(
-      'Checking the dedicated Luraph v' + version + ' candidate',
-      'The dedicated pass returned. Inspecting its actual output for unresolved VM values, placeholder functions and Luau syntax before deciding whether to run the compatibility engine.'
-    );
-
-    await cleanLuraph151Candidate(dedicated.base + '.devirt.luau', ENGINE_151_DIR);
-
-    dedicatedValidation = await inspectLiftFile(
-      dedicated.base + '.devirt.luau',
-      ENGINE_151_DIR
-    );
-
-    await progress.setPhase(
-      dedicatedValidation.complete ? 'Dedicated candidate passed validation' : 'Dedicated candidate has unresolved output',
-      dedicatedValidation.complete
-        ? 'Structural checks and Luau AST validation passed for the dedicated candidate.'
-        : 'Validation found: ' + (dedicatedValidation.issues || []).slice(0, 3).join('; ')
-    );
-
-    if (!dedicatedValidation.candidate) {
-      await progress.setPhase(
-        'Running the v15 compatibility fallback',
-        'The dedicated 15.1 engine produced no source candidate. Running v15 only as a fallback; any partial 15.1 candidate is preserved and never replaced.'
-      );
-
-      try {
-        const result = await runPythonEngine(
-          ENGINE_V15_DIR,
+      let result;
+      if (version === '15') {
+        // The legacy v15 button runs the legacy Python engine directly.
+        // It is no longer silently used as a fallback for a 15.1 selection.
+        result = await runPythonEngine(
+          selectedEngineDir,
           ENGINE_V15_CLI,
-          compatible.inputPath,
-          compatible.outputPath,
-          ENGINE_TIMEOUT_MS,
+          dedicated.inputPath,
+          dedicated.outputPath,
+          150_000,
           [
             '--obfuscator', 'luraph_v15',
             '--debug',
@@ -2068,7 +2011,7 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
             '--max-runs', '16',
             '--devirt-rounds', '200',
             '--budget', '60',
-            '--timeout', '180',
+            '--timeout', '120',
             '--no-pypy',
             ...(gameId ? ['--cfg', '__superz_game_id=' + gameId] : []),
           ],
@@ -2084,45 +2027,75 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
             onProgress: progress.onLine,
           },
         );
-        compatibilityLogs += result.stderr || '';
-      } catch (error) {
-        compatibilityError = error;
-        compatibilityLogs += '\n[!] v15 compatibility pass: ' + String(error.message || error) + '\n';
+      } else {
+        result = await runEngine(
+          selectedEngineDir,
+          ENGINE_151_CLI,
+          dedicated.inputPath,
+          dedicated.outputPath,
+          180_000,
+          false,
+          [
+            '--plugin', 'luraph_v15',
+            '--debug',
+            '--strings',
+            '--max-runs', '16',
+            '--devirt-rounds', '200',
+            '--budget', '60',
+            '--timeout', '180',
+            ...(gameId ? ['--cfg-json', JSON.stringify({ __superz_game_id: Number(gameId) })] : []),
+          ],
+          {
+            env: {
+              // Keep the seed search enabled, but bound every parallel candidate.
+              DEOB_FAST: '',
+              DEOB_CANDIDATE_TIMEOUT_MS: '120000',
+              DEOB_CANDIDATE_IDLE_TIMEOUT_MS: '75000',
+              DEVIRT_LOADERS: '1',
+              DEVIRT_FULL_ROUNDS: '1',
+              DEVIRT_TIMING: '1',
+              DEVIRT_ERRS: '1',
+              DEVIRT_TB: '1',
+              DEVIRT_WALK_LIMIT: '750000',
+              DEVIRT_MERGE: '1',
+              DEVIRT_MERGE_BUDGET: '32',
+              DEVIRT_BISECT: '1',
+              DEVIRT_BISECT_BUDGET: '16',
+            },
+            onProgress: progress.onLine,
+          },
+        );
       }
-
-      await progress.setPhase(
-        'Checking the v15 compatibility candidate',
-        'The compatibility pass returned. Measuring its reconstruction quality and syntax independently from the dedicated 15.1 result.'
-      );
-
-      await cleanLuraph151Candidate(compatible.base + '.devirt.luau', ENGINE_V15_DIR);
-
-      compatibilityValidation = await inspectLiftFile(
-        compatible.base + '.devirt.luau',
-        ENGINE_V15_DIR
-      );
-
-      await progress.setPhase(
-        'Checking compatibility fallback',
-        'The dedicated 15.1 engine produced no source candidate. Compatibility candidate: ' +
-        (compatibilityValidation.complete ? 'validated' : (compatibilityValidation.candidate ? 'partial / failed validation' : 'not produced')) + '.'
-      );
-
-      const dedicatedScore = dedicatedValidation.score ?? -1;
-      const compatibilityScore = compatibilityValidation.score ?? -1;
-      if (compatibilityValidation.candidate &&
-          (!dedicatedValidation.candidate || compatibilityScore > dedicatedScore)) {
-        chosen = compatible;
-        chosenEngineDir = ENGINE_V15_DIR;
-      }
+      dedicatedLogs += result.stderr || '';
+    } catch (error) {
+      dedicatedError = error;
+      dedicatedLogs += '\n[!] selected Luraph v' + version + ' engine: ' + String(error.message || error) + '\n';
     }
 
+    await progress.setPhase(
+      'Checking the selected Luraph v' + version + ' candidate',
+      'The selected engine returned. Inspecting its output for unresolved VM values, placeholder functions and Luau syntax.'
+    );
+
+    await cleanLuraph151Candidate(dedicated.base + '.devirt.luau', selectedEngineDir);
+
+    dedicatedValidation = await inspectLiftFile(
+      dedicated.base + '.devirt.luau',
+      selectedEngineDir
+    );
+
+    await progress.setPhase(
+      dedicatedValidation.complete ? 'Selected candidate passed validation' : 'Selected candidate has unresolved output',
+      dedicatedValidation.complete
+        ? 'Structural checks and Luau AST validation passed.'
+        : 'Validation found: ' + (dedicatedValidation.issues || []).slice(0, 3).join('; ')
+    );
+
     if (!(await hasArtifacts(chosen.base))) {
-      const errors = [
-        dedicatedError && ('Dedicated Luraph v' + version + ': ' + String(dedicatedError.message || dedicatedError)),
-        compatibilityError && ('v15 compatibility: ' + String(compatibilityError.message || compatibilityError)),
-      ].filter(Boolean);
-      throw new Error(errors.join('\n') || 'Neither 15.1 analysis engine produced any diagnostic artifacts.');
+        throw new Error(
+        String(dedicatedError && dedicatedError.message || '') ||
+        'The selected Luraph v' + version + ' engine produced no diagnostic artifacts.'
+      );
     }
 
     const deepPrompt = await fs.readFile(
@@ -2164,16 +2137,14 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
     );
 
     const summary = await sendAnalysisOutput(message, input, {
-      label: chosen === dedicated
-        ? 'Luraph v' + version + ' · dedicated engine'
-        : 'Luraph v' + version + ' · v15 compatibility engine',
-      engineName: chosen === dedicated ? 'Dedicated Luraph v' + version + ' engine' : 'v15 compatibility engine',
+      label: 'Luraph v' + version + ' · selected engine',
+      engineName: 'Selected Luraph v' + version + ' engine',
       engineDir: chosenEngineDir,
       base: chosen.base,
       outputDir: chosen.outputDir,
       elapsedMs: Date.now() - startedAt,
-      stderr: chosen === dedicated ? dedicatedLogs : compatibilityLogs,
-      otherEngineStderr: chosen === dedicated ? compatibilityLogs : dedicatedLogs,
+      stderr: dedicatedLogs,
+      otherEngineStderr: '',
       maxRuns: 16,
       devirtRounds: 200,
       loaderAnalysis: true,
@@ -2185,10 +2156,12 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
              normalized.removedBytes + ' malformed trailing bytes were removed.']
           : []),
         'deep_reconstruction_instructions.txt contains the requested behavior-preserving follow-up checklist.',
-        'The v15 compatibility engine runs only if the dedicated Luraph v' + version + ' engine produces no source candidate; a partial dedicated candidate is retained.',
+        version === '15.1'
+          ? 'Only the dedicated v15.1 engine was run. To try legacy v15, select Luraph v15 from the engine picker; it is now an explicit separate run.'
+          : 'Only the legacy v15 engine was run, because Luraph v15 was selected explicitly.',
         'The checklist is an instruction for a separate reconstruction pass, not proof that every item was automatically completed.',
         ...(gameId ? ['Target Universe/GameId supplied to the sandbox: ' + gameId + '.'] : ['No target Universe/GameId was supplied; game-locked builds may stop in their bootstrap layer.']),
-        ...((/buffer access out of bounds|size out of range/i).test(dedicatedLogs + '\n' + compatibilityLogs)
+        ...((/buffer access out of bounds|size out of range/i).test(dedicatedLogs)
           ? ['Runtime stopped during bootstrap with a buffer bounds/size error. This is not a recovered source result.', 'For a game-locked script, retry with its correct public Roblox Universe/GameId. A FlowAuth key-gated loader that requires a live authorization handshake will only expose its offline loader behaviour; the bot does not emulate or bypass that handshake.']
           : []),
       ],
@@ -2197,12 +2170,10 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
     await progress.complete(summary.hasLiftedSource
       ? 'A Luau candidate passed structural checks and syntax validation.'
       : (summary.hasLiftCandidate
-        ? (chosen === dedicated
-          ? 'The dedicated Luraph v' + version + ' candidate is partial and was preserved; the v15 fallback was skipped.'
-          : 'The v15 compatibility fallback produced a partial candidate; it is labelled as such.')
-        : 'Neither engine completed the VM lift. Trace and diagnostic artifacts are attached.'));
+        ? 'The selected Luraph v' + version + ' engine produced a partial candidate; no alternate engine was started.'
+        : 'The selected engine did not complete the VM lift. Trace and diagnostic artifacts are attached.'));
 
-    const bootstrapBoundsError = /buffer access out of bounds|size out of range/i.test(dedicatedLogs + '\n' + compatibilityLogs);
+    const bootstrapBoundsError = /buffer access out of bounds|size out of range/i.test(dedicatedLogs);
     await prompt.edit({
       content: summary.hasLiftedSource
         ? '✅ Luraph v' + version + ' finished. The best Luau candidate passed validation.'
@@ -2214,8 +2185,8 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
       components: [],
     });
   } catch (error) {
-    error.stdout = [dedicatedLogs, compatibilityLogs].filter(Boolean).join('\n\n');
-    error.stderr = error.stdout;
+    error.stdout = dedicatedLogs;
+    error.stderr = dedicatedLogs;
     if (input && input.source) {
       const originalData = Buffer.from(input.source, 'utf8');
       if (originalData.length > 0 && originalData.length <= MAX_OUTPUT_BYTES) {
@@ -2225,7 +2196,7 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
         };
       }
     }
-    await capturePartialArtifact(error, [chosen.base + '.devirt.luau', chosen.base + '.trace.luau', chosen.base + '.luau', dedicated.base + '.devirt.luau', compatible.base + '.devirt.luau']);
+    await capturePartialArtifact(error, [chosen.base + '.devirt.luau', chosen.base + '.trace.luau', chosen.base + '.luau', dedicated.base + '.devirt.luau']);
     await progress.fail(error);
     throw error;
   } finally {

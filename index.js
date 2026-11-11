@@ -2437,7 +2437,12 @@ async function fetchVantarmorLoaderSource(rawUrl, credentialText = '') {
     }
 
     errorLine = body.trim().match(/^!VANTARMOR:([A-Z0-9_]+)$/);
-    if (errorLine) throw new Error('Vantarmor rejected the payload: ' + errorLine[1] + '.');
+    if (errorLine) {
+      if (!keyMatch && /KEY|AUTH|TOKEN/.test(errorLine[1])) {
+        throw new Error('Vantarmor requires a script_key for this loader. Keyless fetching works only when the owner has enabled public access.');
+      }
+      throw new Error('Vantarmor rejected the payload: ' + errorLine[1] + '.');
+    }
     if (!body.startsWith('!VANTARMOR:CODE\n')) {
       throw new Error('Unexpected Vantarmor response. Expected a CODE or TOKEN response.');
     }
@@ -3238,7 +3243,12 @@ async function processVantarmorFetcher(message, prompt, input) {
     }
 
     const payloadError = body.trim().match(/^!VANTARMOR:([A-Z0-9_]+)$/);
-    if (payloadError) throw new Error('Vantarmor rejected the payload: ' + payloadError[1] + '.');
+    if (payloadError) {
+      if (!keyMatch && /KEY|AUTH|TOKEN/.test(payloadError[1])) {
+        throw new Error('Vantarmor requires a script_key for this loader. Keyless fetching works only when the owner has enabled public access.');
+      }
+      throw new Error('Vantarmor rejected the payload: ' + payloadError[1] + '.');
+    }
     if (!body.startsWith('!VANTARMOR:CODE\n')) {
       throw new Error('Unexpected Vantarmor response. Expected a CODE or TOKEN response.');
     }

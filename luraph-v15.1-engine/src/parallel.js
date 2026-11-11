@@ -48,8 +48,8 @@ async function runCandidates(cfgData, job) {
   const cands = candidateList();
   const bridgePy = path.join(__dirname, 'devirt_bridge.py');
   const coreDir = path.join(ROOT, 'core');
-  const hardTimeoutMs = readLimit('DEOB_CANDIDATE_TIMEOUT_MS', 120000);
-  const idleTimeoutMs = readLimit('DEOB_CANDIDATE_IDLE_TIMEOUT_MS', 75000);
+  const hardTimeoutMs = readLimit('DEOB_CANDIDATE_TIMEOUT_MS', 300000);
+  const idleTimeoutMs = readLimit('DEOB_CANDIDATE_IDLE_TIMEOUT_MS', 180000);
   process.stderr.write(
     '[*] starting ' + cands.length + ' candidate(s); per-candidate limit ' +
     Math.round(hardTimeoutMs / 1000) + 's, idle limit ' +

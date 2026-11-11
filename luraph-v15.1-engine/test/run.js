@@ -48,16 +48,28 @@ assert.strictEqual(incompleteParsed.incomplete.length, 1, 'incomplete child chun
 
 
 
-const pcR01Failure = [
+const pcR01FinalWarning = [
   '-- run status: script error: [string "Luraph"]:1: attempt to get length of a number value',
+  '--   traceback:',
+  '-- 15 statements recorded in 0.01s',
+  'local payloadStarted = true',
   'warn("JNKIE: Environment compatibility check failed (PC-R01).")',
 ].join('\\n');
-assert.strictEqual(isBootstrapFailureBeforePayload(pcR01Failure), true,
-  'PC-R01 plus the known bootstrap length error must stop before expensive VM lifting');
+assert.strictEqual(isBootstrapFailureBeforePayload(pcR01FinalWarning), false,
+  'a final JNKIE warning must not be mistaken for the runtime abort or skip VM lifting');
+
+const pcR01RuntimeAbort = [
+  '-- run status: script error: JNKIE: Environment compatibility check failed (PC-R01).',
+  '--   traceback:',
+  '-- 0 statements recorded in 0.00s',
+].join('\\n');
+assert.strictEqual(isBootstrapFailureBeforePayload(pcR01RuntimeAbort), true,
+  'an explicit PC-R01 runtime error must still stop before expensive VM lifting');
+
 assert.strictEqual(isBootstrapFailureBeforePayload('-- run status: script error: attempt to get length of a number value'),
   false, 'a length error without PC-R01 must not be classified as this bootstrap failure');
 assert.strictEqual(isBootstrapFailureBeforePayload('warn("Environment compatibility check failed (PC-R01)")'),
-  false, 'PC-R01 without the matching length error must not skip lifting');
+  false, 'a standalone warning without a runtime failure must not skip lifting');
 
 const trace = [
   '-- run status: script error: JNKIE: Environment compatibility check failed (PC-R01).',

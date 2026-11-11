@@ -420,187 +420,164 @@ async function prependDailyDeobfHeader(filePath) {
 
 function createAnalysisProgress(prompt, filename, inputBytes, label, options = {}) {
   const startedAt = Date.now();
-  const safeName = String(filename || 'script.lua').replaceAll(String.fromCharCode(96), '').replace(/[\r\n]/g, ' ');
-  const maxTracePasses = Number.isFinite(options.maxTracePasses) ? Math.max(1, options.maxTracePasses) : 16;
-  const maxDevirtRounds = Number.isFinite(options.maxDevirtRounds) ? Math.max(1, options.maxDevirtRounds) : 200;
+  const payloadLabel = /^Luraph\b/i.test(label)
+    ? 'Decrypting the Luraph payload'
+    : 'Decrypting the protected payload';
+  const stages = [
+    payloadLabel,
+    'Lifting VM functions',
+    'Preparing download',
+  ];
+  const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  const maxDevirtRounds = Number.isFinite(options.maxDevirtRounds)
+    ? Math.max(1, options.maxDevirtRounds)
+    : 200;
+  let stageIndex = 0;
+  let workCount = null;
+  let workLabel = 'VM functions processed';
   let phase = 'Queued engine startup';
-  let detail = 'Input accepted. Waiting for the selected engine to initialize.';
-  let phaseMetric = null;
-  let lastOutputAt = startedAt;
+  let detail = 'Waiting for the selected engine to initialize.';
   let lastEdit = 0;
   let editing = false;
   let stopped = false;
-  const activity = [];
-  const MAX_ACTIVITY = 4;
+  let completed = false;
+  let failed = false;
 
-  function recordActivity(message) {
-    const clean = String(message || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 180);
-    if (!clean || (activity.length && activity[activity.length - 1].text === clean)) return;
-    activity.push({ at: Date.now(), text: clean });
-    while (activity.length > MAX_ACTIVITY) activity.shift();
+  function stageFor(value) {
+    const text = String(value || '').toLowerCase();
+    if (/checking|packaging|validat|preparing download|collecting .*artifacts|attaching/.test(text)) return 2;
+    if (/lift|devirt|function|constant|reconstruct|coverage|unlifted|walk/.test(text)) return 1;
+    if (/trace|decrypt|initializ|prepar|fingerprint|runtime|captur|instrument|execut/.test(text)) return 0;
+    return null;
   }
 
-  function advance(nextPhase, nextDetail, activityText, metric = null) {
-    const phaseChanged = Boolean(nextPhase && nextPhase !== phase);
-    if (nextPhase) phase = nextPhase;
-    if (nextDetail) detail = nextDetail;
-    if (metric) phaseMetric = metric;
-    else if (phaseChanged) phaseMetric = null;
-    if (activityText) recordActivity(activityText);
-  }
-
-  function metricText() {
-    if (!phaseMetric || !Number.isFinite(phaseMetric.current) || !Number.isFinite(phaseMetric.total) || phaseMetric.total <= 0) {
-      return 'Not measurable for this stage; waiting for an engine work counter.';
+  function advance(nextPhase, nextDetail) {
+    if (nextPhase) {
+      phase = String(nextPhase);
+      const nextStage = stageFor(phase);
+      if (nextStage !== null) stageIndex = Math.max(stageIndex, nextStage);
     }
-    const current = Math.max(0, phaseMetric.current);
-    const total = Math.max(1, phaseMetric.total);
-    const ratio = Math.min(100, current / total * 100);
-    return phaseMetric.label + ': ' + current.toLocaleString('en-US') + '/' +
-      total.toLocaleString('en-US') + ' (' + ratio.toFixed(1) + '% of this stage limit)';
+    if (nextDetail) detail = String(nextDetail);
+  }
+
+  function updateCount(value, unit) {
+    const count = Number(String(value).replaceAll(',', ''));
+    if (!Number.isFinite(count) || count < 0) return;
+    workCount = Math.floor(count);
+    workLabel = unit || 'VM functions processed';
   }
 
   function render() {
-    const now = Date.now();
-    const elapsed = now - startedAt;
-    const silence = now - lastOutputAt;
-    const barSize = 18;
-    const filled = phaseMetric
-      ? Math.max(0, Math.min(barSize, Math.floor((Math.min(100, phaseMetric.current / phaseMetric.total * 100) / 100) * barSize)))
-      : 0;
-    const pulse = Math.floor(now / 900) % barSize;
-    const bar = phaseMetric
-      ? '▰'.repeat(filled) + '▱'.repeat(barSize - filled)
-      : '▱'.repeat(pulse) + '◆' + '▱'.repeat(barSize - pulse - 1);
-    const recent = activity.slice(-3).map((item) => {
-      const age = formatDuration(now - item.at);
-      return '• ' + item.text + ' · ' + age + ' ago';
-    });
-    const idleLine = silence >= 45_000
-      ? '**Engine output:** No new log output for ' + formatDuration(silence) + '. The process may be busy or stalled; elapsed time alone cannot distinguish those states.'
-      : '**Engine output:** Last log activity ' + formatDuration(silence) + ' ago.';
-    const frames = ['◐', '◓', '◑', '◒'];
-    const spinner = frames[Math.floor(now / 900) % frames.length];
-    const description = [
-      '╭─ **' + spinner + '  ' + phase.toUpperCase() + '**',
-      '╰ ' + bar,
-      metricText(),
-      '',
-      '▸ **INPUT**  `' + safeName + '`  ·  ' + formatBytes(inputBytes),
-      '▸ **RUNTIME**  ' + formatDuration(elapsed),
-      idleLine,
-      '',
-      '**ACTIVITY FEED**',
-      ...(recent.length ? recent.map((item) => '› ' + item) : ['› Waiting for engine activity...']),
-      '',
-      '┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈',
-      detail,
-    ].join('\n');
-    return dailyEmbed(label + '  /  LIVE SESSION', description, DAILY_COLORS.primary)
-      .addFields(
-        { name: 'ENGINE', value: label, inline: true },
-        { name: 'SESSION', value: 'LIVE', inline: true },
-        { name: 'INPUT SIZE', value: formatBytes(inputBytes), inline: true },
-      );
+    const elapsed = Date.now() - startedAt;
+    const frame = spinnerFrames[Math.floor(Date.now() / 180) % spinnerFrames.length];
+    const heading = failed
+      ? '## ❌ ' + label + ' Deobfuscator stopped'
+      : (completed
+        ? '## ✅ ' + label + ' Deobfuscator finished'
+        : '## ' + frame + ' Running ' + label + ' Deobfuscator');
+    const lines = [heading, 'Working on your sample.', ''];
+
+    for (let i = 0; i < stages.length; i++) {
+      const marker = completed || i < stageIndex
+        ? '✅'
+        : (i === stageIndex ? (failed ? '❌' : frame) : '▫');
+      const title = i === stageIndex && !completed
+        ? '**' + stages[i] + '**'
+        : stages[i];
+      lines.push(marker + ' ' + title);
+    }
+
+    lines.push('');
+    lines.push('-# ' + (workCount === null
+      ? formatDuration(elapsed) + ' elapsed'
+      : workCount.toLocaleString('en-US') + ' ' + workLabel + ' • ' + formatDuration(elapsed) + ' elapsed'));
+    if (failed && detail) lines.push('', '-# ' + detail.slice(0, 240));
+    return lines.join('\n');
   }
 
   async function publish(force = false) {
     if (stopped && !force) return;
     const now = Date.now();
-    if (!force && now - lastEdit < 3500) return;
+    if (!force && now - lastEdit < 2500) return;
     if (editing) return;
     editing = true;
     lastEdit = now;
-    try { await prompt.edit({ content: null, embeds: [render()], components: [] }); } catch {}
+    try {
+      await prompt.edit({ content: render(), embeds: [], components: [] });
+    } catch {}
     editing = false;
   }
 
   function onLine(rawLine) {
     const line = String(rawLine || '').replace(/\x1b\[[0-9;]*m/g, '').trim();
     if (!line) return;
-    lastOutputAt = Date.now();
     let match;
 
     if ((match = line.match(/obfuscator:\s*(.+)/i))) {
-      advance('Fingerprinting the input', 'Engine identified the obfuscator family: ' + match[1].slice(0, 100), 'Obfuscator fingerprint matched: ' + match[1]);
+      advance('Fingerprinting the input', 'Matched engine: ' + match[1].slice(0, 100));
     } else if ((match = line.match(/tracing .*?\(run\s+(\d+)\)/i))) {
-      const pass = Number(match[1]);
-      advance('Executing VM trace pass ' + pass, 'Observing runtime-created functions, constants, branches and VM state from this pass.', 'Runtime trace pass ' + pass + ' started; collecting VM behaviour.', {
-        label: 'Trace passes',
-        current: pass,
-        total: maxTracePasses,
-      });
+      advance('Executing VM trace pass ' + match[1], 'Tracing the protected payload and recording VM behavior.');
     } else if ((match = line.match(/([\d,]+) Path2D answers computed by the offline engine model/i))) {
-      advance('Resolving Roblox API-dependent values', match[1] + ' Path2D answers were computed by the offline engine model.', 'Resolved ' + match[1] + ' offline Path2D model answers.');
+      advance('Resolving Roblox API-dependent values', match[1] + ' Path2D answers resolved.');
     } else if ((match = line.match(/script loadstring.d\s+(\d+)\s+new VM chunk/i))) {
-      advance('Capturing dynamically loaded chunks', 'The runtime exposed ' + match[1] + ' new VM chunk(s); the engine is adding them to the analysis set.', 'Captured ' + match[1] + ' new VM chunk(s) from dynamic loading.');
+      advance('Capturing dynamically loaded chunks', 'Captured ' + match[1] + ' new VM chunk(s).');
     } else if (/anti-tamper trap|anti-tamper trigger|LPH_CRASH/i.test(line)) {
-      advance('Mapping protected execution paths', 'The engine reported an anti-tamper-related branch. Recording the event as an observed runtime condition.', 'Observed a protected branch / anti-tamper event in the trace.');
+      advance('Mapping protected execution paths', 'The engine observed an anti-tamper-related branch.');
     } else if ((match = line.match(/devirt round\s+(\d+):\s*([\d,]+) functions\s*\(([\d,]+) walked\),\s*([\d,]+) unlifted blocks,\s*([\d,]+) new constant requests/i))) {
-      const round = Number(match[1]);
-      advance('Lifting VM functions · round ' + round, match[2] + ' functions discovered · ' + match[3] + ' walked · ' + match[4] + ' blocks still unlifted · ' + match[5] + ' new constant requests.', 'Round ' + round + ': ' + match[2] + ' functions discovered, ' + match[3] + ' walked, ' + match[4] + ' blocks still unlifted.', {
-        label: 'Devirtualization rounds',
-        current: round,
-        total: maxDevirtRounds,
-      });
+      updateCount(match[3], 'VM functions walked');
+      advance('Lifting VM functions · round ' + match[1],
+        match[2] + ' functions discovered · ' + match[3] + ' walked · ' + match[4] + ' unlifted blocks.');
     } else if ((match = line.match(/devirtualizing\s+\(round\s+(\d+)\)/i))) {
-      const round = Number(match[1]);
-      advance('Reconstructing Luau control flow · round ' + round, 'The VM lifter is processing this round. The ratio is against the configured round limit, not a guarantee of total-job completion.', 'Started devirtualization round ' + round + '.', {
-        label: 'Devirtualization rounds',
-        current: round,
-        total: maxDevirtRounds,
-      });
+      advance('Reconstructing Luau control flow · round ' + match[1],
+        'The lifter is processing round ' + match[1] + ' of the configured limit ' + maxDevirtRounds + '.');
     } else if ((match = line.match(/([\d,]+) functions,\s*([\d,]+) unlifted blocks,\s*([\d,]+) unstructured jumps/i))) {
-      advance('Measuring lift coverage', match[1] + ' functions · ' + match[2] + ' unlifted blocks · ' + match[3] + ' unstructured jumps.', 'Lift coverage report: ' + match[1] + ' functions; ' + match[2] + ' unlifted blocks; ' + match[3] + ' unstructured jumps.');
+      updateCount(match[1], 'VM functions lifted');
+      advance('Measuring lift coverage',
+        match[1] + ' functions · ' + match[2] + ' unlifted blocks · ' + match[3] + ' unstructured jumps.');
+    } else if ((match = line.match(/([\d,]+)\s+(?:VM )?closures?\s+(?:made|created|discovered|walked)/i))) {
+      updateCount(match[1], /made|created/i.test(line) ? 'closures made' : 'closures discovered');
+      advance('Lifting VM functions', 'The engine reported ' + match[1] + ' closures.');
     } else if ((match = line.match(/constants decoded on request:\s*calls=(\d+)\s+decoded=(\d+).*?(\d+(?:\.\d+)?)s,\s*(\d+) buffer patches/i))) {
-      const calls = Number(match[1]);
-      const decoded = Number(match[2]);
-      const patches = Number(match[4]);
-      advance(
-        'Resolving deferred constants',
-        'Latest constant pass: ' + calls + ' calls, ' + decoded + ' decoded, ' + patches + ' buffer patches in ' + match[3] + 's. No completion percentage is available for this stage.',
-        calls === 0 && decoded === 0
-          ? 'Constant pass returned zero calls and zero decoded values.'
-          : 'Constant pass decoded ' + decoded + ' value(s) from ' + calls + ' call(s).'
-      );
+      advance('Resolving deferred constants',
+        'Latest pass: ' + match[1] + ' calls, ' + match[2] + ' decoded, ' + match[4] + ' buffer patches.');
     } else if (/constants decoded on request|constant request run/i.test(line)) {
-      advance('Resolving deferred constants', line.replace(/^\[\*\]\s*/, '').slice(0, 180), 'Engine requested another constant-resolution pass.');
+      advance('Resolving deferred constants', line.replace(/^\[\*\]\s*/, '').slice(0, 180));
     } else if (/corrupt\/encrypted register|symbolic value store|unlifted block|unstructured jump/i.test(line)) {
-      advance('Recording unresolved VM operations', line.replace(/^\[!\]\s*/, '').slice(0, 180), 'The engine reported an unresolved VM operation; it will be reflected in validation.');
+      advance('Recording unresolved VM operations', line.replace(/^\[!\]\s*/, '').slice(0, 180));
     } else if (/devirtualization failed|devirtualization produced no output|devirtualized output is broken/i.test(line)) {
-      advance('Reviewing incomplete reconstruction', line.replace(/^\[!\]\s*/, '').slice(0, 180), 'The engine reported a reconstruction issue; the candidate will not be assumed complete.');
+      advance('Reviewing incomplete reconstruction', line.replace(/^\[!\]\s*/, '').slice(0, 180));
     } else if (/result:|run status: finished|done:.*succeeded/i.test(line)) {
-      advance('Engine pass returned', line.replace(/^\[\*\]\s*/, '').slice(0, 180), 'An engine pass returned; artifact validation is next.');
+      advance('Checking reconstructed output', line.replace(/^\[\*\]\s*/, '').slice(0, 180));
     } else if (/^\[!\]|\bwarning\b|\berror\b/i.test(line)) {
-      advance('Inspecting engine diagnostic', line.slice(0, 180), line.slice(0, 180));
+      advance(phase, line.slice(0, 180));
     }
 
     void publish(false);
   }
 
-  const timer = setInterval(() => { void publish(false); }, 4000);
+  const timer = setInterval(() => { void publish(false); }, 1800);
 
   return {
     start: () => {
-      advance('Initializing selected engine', 'Preparing the engine process and analysis workspace.', 'Analysis workspace prepared; engine startup requested.');
-      lastOutputAt = Date.now();
+      advance('Initializing selected engine', 'Preparing the engine process and analysis workspace.');
       return publish(true);
     },
     onLine,
     setPhase: async (nextPhase, nextDetail) => {
-      const normalized = String(nextPhase || '');
-      advance(normalized, nextDetail || '', normalized + (nextDetail ? ': ' + nextDetail : ''), null);
+      advance(nextPhase, nextDetail);
       await publish(true);
     },
     complete: async (nextDetail) => {
-      phaseMetric = null;
-      advance('Finished', nextDetail || 'Engine run and output handling completed.', 'Run finished; final status is based on the output validation result.');
+      if (nextDetail) detail = String(nextDetail);
+      stageIndex = stages.length - 1;
       stopped = true;
+      completed = true;
       clearInterval(timer);
       await publish(true);
     },
     fail: async (error) => {
-      advance('Stopped with an error', String(error && (error.message || error) || 'Unknown engine error').slice(0, 500), 'Run stopped before completion.');
+      failed = true;
+      advance(phase, String(error && (error.message || error) || 'Unknown engine error').slice(0, 240));
       stopped = true;
       clearInterval(timer);
       await publish(true);
@@ -608,7 +585,6 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
     stop: () => { stopped = true; clearInterval(timer); },
   };
 }
-
 
 async function capturePartialArtifact(error, candidatePaths = []) {
   if (!error || error.partialArtifact) return;

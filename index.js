@@ -2471,11 +2471,59 @@ async function fetchVantarmorLoaderSource(rawUrl, credentialText = '') {
   }
 }
 
+
+function buildScriptFetchedEmbed(attachment, batchIndex, batchCount, totalFiles, totalUrls, failedUrls) {
+  const capture = attachment && attachment.capture || {};
+  const source = String(capture.source || '');
+  const codeMark = String.fromCharCode(96);
+  const filename = String(attachment && attachment.name || capture.name || 'fetched.lua')
+    .replace(/[\\r\\n*_~|]/g, '')
+    .slice(0, 100);
+  let host = 'uploaded or inline source';
+  const rawUrl = capture.finalUrl || capture.url || null;
+  if (rawUrl) {
+    try { host = new URL(rawUrl).host; } catch {}
+  }
+  let preview = source.replace(/\\r\\n?/g, '\\n').split('\\n').slice(0, 5).join('\\n');
+  preview = preview.replace(/\x60\x60\x60/g, "'''");
+  if (preview.length > 850) preview = preview.slice(0, 847) + '...';
+  if (!preview.trim()) preview = '-- No readable preview available';
+
+  const description = [
+    'Downloaded from **' + host + '**.',
+    '',
+    '**Preview (first 5 lines):**',
+    codeMark.repeat(3) + 'lua',
+    preview,
+    codeMark.repeat(3),
+    '',
+    '━━━━━━━━━━━━━━━━━━━━',
+    '',
+    '**Detection complete**',
+    'The source was fetched successfully. Use .deobf to choose an analysis engine for this file.',
+  ].join('\\n');
+
+  return dailyEmbed(
+    batchIndex === 0 ? 'Script fetched' : 'Additional scripts fetched',
+    description,
+    DAILY_COLORS.success
+  ).addFields(
+    { name: 'File', value: codeMark + (filename || 'fetched.lua') + codeMark, inline: true },
+    { name: 'Size', value: formatBytes(attachment.data.length), inline: true },
+    { name: 'Fetch results', value: totalFiles + ' file(s) · ' + totalUrls + ' URL(s) · ' + failedUrls + ' failed', inline: true },
+    ...(batchIndex > 0 ? [{ name: 'Batch', value: (batchIndex + 1) + ' / ' + batchCount, inline: true }] : [])
+  );
+}
+
 async function startGetWorkflow(message, inlineSource = null) {
   const prompt = await message.reply({
-    content: inlineSource
-      ? '🔎 DAILY DEOBF · .get\nFinding static HTTP URLs and downloading readable source text...'
-      : '🔎 DAILY DEOBF · .get\nAttach a script or send a URL. I will scan Roblox HTTP methods, request wrappers, URL fields, aliases and embedded loader strings.',
+    embeds: [dailyEmbed(
+      'Universal loader fetcher',
+      inlineSource
+        ? 'Scanning the supplied source for static HTTP URLs and retrieving readable Lua/Luau files...'
+        : 'Attach a script or send a URL. The fetcher scans Roblox HTTP methods, request wrappers, URL fields, aliases and embedded loader strings.',
+      DAILY_COLORS.primary
+    )],
     allowedMentions: { repliedUser: false },
   });
 
@@ -2802,28 +2850,52 @@ async function startGetWorkflow(message, inlineSource = null) {
 
   if (!batches.length) {
     const reason = resolution.failures.length
-      ? 'Every discovered URL failed to download. The attached report lists the exact HTTP, DNS, TLS or content error for each URL.'
-      : 'URLs were found, but no readable source files were returned. The attached report lists every discovery record.';
+      ? 'Every discovered URL failed to download. The attached report contains the exact HTTP, DNS, TLS or content error for each URL.'
+      : 'URLs were found, but no readable source files were returned. The attached report lists the discovery results.';
+    const failureEmbed = dailyEmbed(
+      'No script fetched',
+      reason + '\n\n**Detection complete**\nThe static scan finished without a downloadable source file.',
+      DAILY_COLORS.warning
+    ).addFields(
+      { name: 'URLs found', value: String(resolution.discovered), inline: true },
+      { name: 'Fetch attempts', value: String(resolution.attempts), inline: true },
+      { name: 'Failed URLs', value: String(resolution.failures.length), inline: true }
+    );
     await message.reply({
-      embeds: [dailyEmbed('Source scan complete', resolution.discovered + ' URL(s) found, but no source files downloaded.\n' + reason, DAILY_COLORS.warning)],
+      embeds: [failureEmbed],
       files: [new AttachmentBuilder(reportBuffer, { name: 'get_report.txt' }), ...(runtimeSpyFile ? [runtimeSpyFile] : [])],
       allowedMentions: { repliedUser: false },
     });
   } else {
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       const batch = batches[batchIndex];
+      const firstAttachment = batch[0];
       await message.reply({
-        embeds: [dailyEmbed(batchIndex === 0 ? 'Source files recovered' : 'Source files · Batch ' + (batchIndex + 1) + '/' + batches.length,
-          batchIndex === 0
-            ? attachments.length + ' source file(s) recovered. ' + resolution.discovered + ' URL(s) discovered; ' + resolution.failures.length + ' failed.'
-            : 'Additional recovered source files.', DAILY_COLORS.success)],
+        embeds: [buildScriptFetchedEmbed(
+          firstAttachment,
+          batchIndex,
+          batches.length,
+          attachments.length,
+          resolution.discovered,
+          resolution.failures.length
+        )],
         files: batch.map((item) => new AttachmentBuilder(item.data, { name: item.name })),
         allowedMentions: { repliedUser: false },
       });
     }
 
     await message.reply({
-      embeds: [dailyEmbed('Source scan report', resolution.discovered + ' URL(s) · ' + resolution.attempts + ' fetch attempt(s) · ' + resolution.failures.length + ' failed.', DAILY_COLORS.primary)],
+      embeds: [dailyEmbed(
+        'Fetch report',
+        'The complete URL-by-URL scan report is attached separately.',
+        DAILY_COLORS.primary
+      ).addFields(
+        { name: 'URLs discovered', value: String(resolution.discovered), inline: true },
+        { name: 'Fetch attempts', value: String(resolution.attempts), inline: true },
+        { name: 'Failed URLs', value: String(resolution.failures.length), inline: true },
+        { name: 'Source files', value: String(attachments.length), inline: true },
+        { name: 'Downloaded data', value: formatBytes(totalBytes), inline: true }
+      )],
       files: [new AttachmentBuilder(reportBuffer, { name: 'get_report.txt' }), ...(runtimeSpyFile ? [runtimeSpyFile] : [])],
       allowedMentions: { repliedUser: false },
     });
@@ -3429,66 +3501,93 @@ async function startWorkflow(message, inlineText = null) {
       new ButtonBuilder()
         .setCustomId(`deobf-flowauth:${message.author.id}`)
         .setLabel('FlowAuth')
-        .setStyle(ButtonStyle.Success),
+        .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(`deobf-luraph-v15:${message.author.id}`)
         .setLabel('Luraph v15')
-        .setStyle(ButtonStyle.Primary),
+        .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(`deobf-151:${message.author.id}`)
         .setLabel('Luraph 15.1')
-        .setStyle(ButtonStyle.Success),
+        .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(`deobf-centurion:${message.author.id}`)
         .setLabel('Centurion')
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId(`deobf-ironbrew1:${message.author.id}`)
-        .setLabel('IronBrew 1')
-        .setStyle(ButtonStyle.Success),
+        .setStyle(ButtonStyle.Secondary),
     ),
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
+        .setCustomId(`deobf-ironbrew1:${message.author.id}`)
+        .setLabel('IronBrew 1')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
         .setCustomId(`deobf-vantarmor:${message.author.id}`)
-        .setLabel('Vantarmor and Universal Loader Fetcher')
-        .setStyle(ButtonStyle.Success),
+        .setLabel('Vantarmor / Universal')
+        .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(`deobf-cancel:${message.author.id}`)
         .setLabel('Cancel')
         .setStyle(ButtonStyle.Secondary),
     ),
   ];
+  const pickerDescription = [
+    input.downloadError
+      ? '⚠️ **Original URL download error**\n' + input.downloadError.slice(0, 900)
+      : null,
+    input.pendingUrlFailure
+      ? 'The original URL could not be downloaded automatically. Choose an engine, then attach the Lua/Luau file or paste its source.'
+      : 'Select a deobfuscator below to analyze the supplied Lua/Luau source.',
+    '',
+    '**Detection complete**',
+    input.selectedTarget
+      ? 'A larger child payload was selected from the static loader chain.'
+      : (targetResolution
+        ? 'The static payload scan finished. No child payload was selected automatically, so the original input is kept.'
+        : 'The input is ready for engine selection.'),
+    targetResolution && targetResolution.error
+      ? '**Scan note:** ' + targetResolution.error.slice(0, 300)
+      : null,
+    targetResolution && targetResolution.captureDetails && targetResolution.captureDetails.length
+      ? '**Fetched files:**\n' + targetResolution.captureDetails.slice(0, 4).map((item) =>
+          '• ' + String(item.name || 'unnamed').slice(0, 65) + ' · ' + formatBytes(item.bytes) +
+          (item.excluded ? ' · ' + item.excluded : '')
+        ).join('\n')
+      : null,
+  ].filter(Boolean).join('\n');
+
+  const pickerEmbed = dailyEmbed('Choose a deobfuscator', pickerDescription, input.downloadError
+    ? DAILY_COLORS.warning
+    : DAILY_COLORS.primary);
+
+  const codeMark = String.fromCharCode(96);
+  if (input.filename || input.source) {
+    pickerEmbed.addFields({
+      name: 'Input file',
+      value: codeMark + String(input.filename || 'pasted-script.lua').replace(/[\r\n]/g, '').slice(0, 90) +
+        codeMark + ' · ' + formatBytes(Buffer.byteLength(String(input.source || ''), 'utf8')),
+      inline: true,
+    });
+  }
+  if (targetResolution) {
+    pickerEmbed.addFields({
+      name: 'Payload scan',
+      value: targetResolution.discovered + ' URL(s) · ' + targetResolution.fetched +
+        ' file(s) · ' + targetResolution.failures + ' failed',
+      inline: true,
+    });
+  }
+  if (input.selectedTarget) {
+    pickerEmbed.addFields({
+      name: 'Selected payload',
+      value: codeMark + String(input.selectedTarget.filename || 'payload.lua').replace(/[\r\n]/g, '').slice(0, 90) +
+        codeMark + ' · ' + formatBytes(input.selectedTarget.bytes) + ' · depth ' + input.selectedTarget.depth,
+      inline: false,
+    });
+  }
+
   await prompt.edit({
     content: null,
-    embeds: [dailyEmbed(
-      'Choose an engine',
-      (input.downloadError
-        ? '⚠️ **Original URL download error**\n' + input.downloadError.slice(0, 1200) + '\n\n'
-        : '') +
-      (input.pendingUrlFailure
-        ? 'Choose an engine now. After selecting one, attach the Lua/Luau file or paste its source.'
-        : (input.selectedTarget
-          ? 'The larger protected payload was selected automatically. Choose an engine for that payload.'
-          : 'Select the analysis engine for this file.' +
-            (targetResolution
-              ? '\n\nPayload scan: ' + targetResolution.discovered + ' URL(s) found, ' +
-                targetResolution.fetched + ' source file(s) fetched, ' +
-                targetResolution.failures + ' fetch failure(s).' +
-                (targetResolution.truncated ? ' Scan reached a configured limit.' : '') +
-                (targetResolution.failureDetails && targetResolution.failureDetails.length
-                  ? '\nFirst fetch error: ' + String(targetResolution.failureDetails[0].message || '').slice(0, 220)
-                  : '\nNo eligible child payload was selected; keeping the original input.') +
-                (targetResolution.captureDetails && targetResolution.captureDetails.length
-                  ? '\nFiles: ' + targetResolution.captureDetails.slice(0, 6).map((item) =>
-                      item.name + ' ' + formatBytes(item.bytes) + ' d' + item.depth +
-                      (item.inline ? ' inline' : '') +
-                      (item.excluded ? ' [' + item.excluded + ']' : ' [eligible]') +
-                      (item.contentType ? ' (' + item.contentType + ')' : '')
-                    ).join('; ')
-                  : '')
-              : ''))),
-      input.downloadError ? DAILY_COLORS.warning : DAILY_COLORS.primary
-    )],
+    embeds: [pickerEmbed],
     components: chooseRows,
   });
 

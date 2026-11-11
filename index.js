@@ -429,7 +429,8 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
     'Lifting VM functions',
     'Preparing download',
   ];
-  const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  const loadingEmoji = '<a:syncrypt_loading:1530485612354998293>';
+  const doneEmoji = '<a:syncrypt_done:1530485613856423988>';
   const maxDevirtRounds = Number.isFinite(options.maxDevirtRounds)
     ? Math.max(1, options.maxDevirtRounds)
     : 200;
@@ -470,18 +471,17 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
 
   function render() {
     const elapsed = Date.now() - startedAt;
-    const frame = spinnerFrames[Math.floor(Date.now() / 180) % spinnerFrames.length];
     const heading = failed
       ? '## ❌ ' + displayLabel + ' Deobfuscator stopped'
       : (completed
-        ? '## ✅ ' + displayLabel + ' Deobfuscator finished'
-        : '## ' + frame + ' Running ' + displayLabel + ' Deobfuscator');
+        ? '## ' + doneEmoji + ' ' + displayLabel + ' Deobfuscator finished'
+        : '## ' + loadingEmoji + ' Running ' + displayLabel + ' Deobfuscator');
     const lines = [heading, 'Working on your sample.', ''];
 
     for (let i = 0; i < stages.length; i++) {
       const marker = completed || i < stageIndex
-        ? '✅'
-        : (i === stageIndex ? (failed ? '❌' : frame) : '▫');
+        ? doneEmoji
+        : (i === stageIndex ? (failed ? '❌' : loadingEmoji) : '▫');
       const title = i === stageIndex && !completed
         ? '**' + stages[i] + '**'
         : stages[i];

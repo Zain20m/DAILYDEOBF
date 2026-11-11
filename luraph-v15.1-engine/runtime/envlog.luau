@@ -6590,9 +6590,23 @@ if CFG.devirt then
         if (CHAIN.unscrambled or 0) > 0 then R.print(MARK .. "UNSCRAMBLED " .. CHAIN.unscrambled) end
         R.print(MARK .. "PROTOS " .. (ok and js or ("error: " .. R.tostring(js))))
 end
+-- Keep protocol output lines small. A single hex line for a 200 KB VM chunk can
+-- be truncated by stdout/console pipes before the Node driver receives it.
+-- Each record is independently tagged so the driver can rebuild the exact bytes.
+local CHUNK_BYTES_PER_RECORD = 2048
 for _, key in R.ipairs(NEWCHUNKS) do
-        R.print(MARK .. "CHUNK " .. key)
-        R.print((R.gsub(NEWCHUNKS[key], ".", function(c) return R.fmt("%02x", R.byte(c)) end)))
+        local src = NEWCHUNKS[key]
+        local sourceBytes = #src
+        local partCount = (sourceBytes + CHUNK_BYTES_PER_RECORD - 1) // CHUNK_BYTES_PER_RECORD
+        R.print(MARK .. "CHUNK " .. key .. " " .. sourceBytes .. " " .. partCount)
+        for part = 1, partCount do
+                local first = (part - 1) * CHUNK_BYTES_PER_RECORD + 1
+                local last = first + CHUNK_BYTES_PER_RECORD - 1
+                if last > sourceBytes then last = sourceBytes end
+                local piece = R.sub(src, first, last)
+                local hex = R.gsub(piece, ".", function(c) return R.fmt("%02x", R.byte(c)) end)
+                R.print(MARK .. "CHUNKDATA " .. key .. " " .. part .. " " .. hex)
+        end
 end
 R.print(R.concat(header, "\n"))
 R.print("")

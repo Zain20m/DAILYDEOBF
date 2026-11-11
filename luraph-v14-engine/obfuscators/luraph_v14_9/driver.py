@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -25,11 +26,61 @@ SPIN_CHECKS = 24    # watchdog checks (2^20 VM steps each) without environment a
 
 
 def patch_spin(src):
-    """Spin watchdog (envlog's --cfg spin): every VM dispatch loop head counts
-    steps in __SPIN.n and calls __SPIN.f() every __SPIN.step of them. Table
-    operations only, plus that rare call (no locals: see patch_entries)."""
-    return re.sub(r"while true do (?:local )?[A-Za-z_]+(?:,[A-Za-z_]+)*=\s*\(?[A-Za-z_]+\[[A-Za-z_]+\]\)?;",
-                  lambda m: m.group(0) + "__SPIN.n=__SPIN.n+1;if __SPIN.n>=__SPIN.step then __SPIN.f()end;", src)
+    """Instrument recognized VM dispatchers so silent VM loops still heartbeat.
+
+    The regex-only version handled while-true but missed repeat/until-false
+    dispatchers. vmmap already recognizes both shapes structurally, so insert
+    the watchdog immediately after each dispatcher's first opcode fetch. No
+    locals are added to protected frames.
+    """
+    from obfuscators.luraph_v14_9 import vmmap
+
+    snippet = "__SPIN.n=__SPIN.n+1;if __SPIN.n>=__SPIN.step then __SPIN.f()end;"
+    temp_path = None
+    try:
+        fd, temp_path = tempfile.mkstemp(prefix="daily-v14-spin-", suffix=".luau")
+        with os.fdopen(fd, "w", encoding="latin-1", newline="") as stream:
+            stream.write(src)
+
+        root = vmmap.load_ast(temp_path)
+        dispatchers = vmmap.find_dispatchers(root)
+        lines = src.split("\n")
+        inserts = []
+        for dispatcher in dispatchers:
+            body = dispatcher.get("node", {}).get("body", {}).get("body", [])
+            if not body:
+                continue
+            _l1, _c1, end_line, end_col = vmmap.loc(body[0])
+            if end_line < 0 or end_line >= len(lines):
+                continue
+            line = lines[end_line]
+            if end_col < 0 or end_col > len(line):
+                continue
+            separator = "" if line[:end_col].rstrip().endswith(";") else ";"
+            inserts.append((end_line, end_col, separator + snippet))
+
+        if inserts:
+            for line_no, col, code in sorted(inserts, reverse=True):
+                lines[line_no] = lines[line_no][:col] + code + lines[line_no][col:]
+            print("[*] spin watchdog instrumented %d VM dispatcher loop(s)" % len(inserts),
+                  file=sys.stderr)
+            return "\n".join(lines)
+    except Exception as exc:
+        print("[!] AST spin instrumentation failed (%s); using the legacy while-loop matcher"
+              % str(exc)[:180], file=sys.stderr)
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
+    # Compatibility fallback for older/unrecognized VM loop shapes.
+    return re.sub(
+        r"while true do (?:local )?[A-Za-z_]+(?:,[A-Za-z_]+)*=\s*\(?[A-Za-z_]+\[[A-Za-z_]+\]\)?;",
+        lambda m: m.group(0) + snippet,
+        src,
+    )
 
 
 def patch_chunk(src, tmpdir):

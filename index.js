@@ -427,8 +427,8 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
     'Lifting VM functions',
     'Preparing download',
   ];
-  const loadingEmoji = '<a:syncrypt_loading:1530485612354998293>';
-  const doneEmoji = '<a:syncrypt_done:1530485613856423988>';
+  const loadingEmoji = '🔄';
+  const doneEmoji = '✅';
   const maxDevirtRounds = Number.isFinite(options.maxDevirtRounds)
     ? Math.max(1, options.maxDevirtRounds)
     : 200;

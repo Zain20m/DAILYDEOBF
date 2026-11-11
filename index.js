@@ -339,9 +339,11 @@ async function fetchPublicText(rawUrl, curlOptions = {}) {
       const requestId = response.headers.get('cf-ray') ||
         response.headers.get('x-request-id') ||
         response.headers.get('x-amz-cf-id');
+      let rawErrorBody = '';
       let errorBody = '';
       try {
-        errorBody = (await readResponse(response, 8 * 1024)).toString('utf8')
+        rawErrorBody = (await readResponse(response, 8 * 1024)).toString('utf8');
+        errorBody = rawErrorBody
           .replace(/<script[\s\S]*?<\/script>/gi, ' ')
           .replace(/<style[\s\S]*?<\/style>/gi, ' ')
           .replace(/<[^>]+>/g, ' ')
@@ -353,16 +355,30 @@ async function fetchPublicText(rawUrl, curlOptions = {}) {
           await response.body.cancel().catch(() => {});
         }
       }
+      const cfMitigated = String(response.headers.get('cf-mitigated') || '').toLowerCase();
+      const cloudflareChallenge = response.status === 403 && (
+        cfMitigated === 'challenge' ||
+        /cloudflare/i.test(server || '') && /__cf_chl|challenge-platform|cf-chl-|just a moment|verify you are human|enable javascript and cookies/i.test(rawErrorBody)
+      );
+      const cloudflareAccess = response.status === 403 && (
+        /cloudflare access/i.test(rawErrorBody) ||
+        /cloudflareaccess\.com/i.test(rawErrorBody)
+      );
+      const blockType = cloudflareChallenge
+        ? 'Cloudflare browser challenge detected. This HTTP downloader cannot complete the interactive challenge. If you own the zone, inspect Security Events for this Ray ID and configure an authenticated download route or narrowly scoped policy.'
+        : cloudflareAccess
+          ? 'Cloudflare Access denied this request. Check the Access application policy and use an approved service authentication method.'
+          : response.status === 403
+            ? 'HTTP 403 access denied. The origin or an edge security rule rejected this request. Check authentication, permissions, WAF events and the request ID.'
+            : '';
       const details = [
         'HTTP ' + response.status + ' ' + (response.statusText || ''),
         'while downloading from ' + current.hostname,
         server ? 'Server: ' + server : '',
         requestId ? 'Request ID: ' + requestId : '',
         retryAfter ? 'Retry-After: ' + retryAfter : '',
+        blockType,
         errorBody ? 'Response: ' + errorBody : '',
-        response.status === 403
-          ? 'The host denied this request. Check that the URL is public and does not require login, cookies, an API key, or browser verification. The downloader cannot override the host access rules.'
-          : '',
       ].filter(Boolean);
       throw new Error(details.join('. '));
     }

@@ -3191,14 +3191,28 @@ async function processVantarmorFetcher(message, prompt, input) {
 
 async function resolveDeobfTargetSource(input) {
   const rootSource = String(input && input.source || '');
-  if (!rootSource.trim() || /^https?:\/\/\S+$/i.test(rootSource.trim())) return null;
+  if (!rootSource.trim() && !input.url) return null;
+  if (/^https?:\/\/\S+$/i.test(rootSource.trim())) return null;
 
+  // Mirror .get: seed the scan with the original URL as well as URLs found
+  // inside the downloaded bootstrap. This catches URL chains whose first
+  // reference is only represented by the input URL.
+  const initialUrls = input.url ? [input.url] : [];
   const resolution = await resolveStaticSources(rootSource, {
+    initialUrls,
     maxFiles: MAX_GET_FILES,
     maxUrls: MAX_GET_URLS,
     maxAttempts: MAX_GET_ATTEMPTS,
     maxDepth: 8,
     fetchText: async (rawUrl) => {
+      if (input.url && rawUrl === input.url && rootSource.trim()) {
+        return {
+          source: rootSource,
+          finalUrl: input.finalUrl || input.url,
+          contentType: input.responseContentType || 'input source',
+          status: input.responseStatus || 200,
+        };
+      }
       const credentialText = String(input.originalText || '') + '\n' + rootSource;
       const vantarmorSource = await fetchVantarmorLoaderSource(rawUrl, credentialText);
       if (vantarmorSource !== null) {
@@ -3228,8 +3242,6 @@ async function resolveDeobfTargetSource(input) {
       const hasProtectionMarkers = /Luraph|LPH_|IronBrew|MoonSec|Centurion|Prometheus|bit32\.(?:bxor|band|bor)|loadstring\s*\(/i.test(capture.source);
       return { ...capture, bytes, protectedSource, hasProtectionMarkers };
     })
-    // Match .get: keep readable captures even when the obfuscator has no
-    // recognizable marker. The largest downloaded payload is the target.
     .sort((left, right) =>
       right.bytes - left.bytes ||
       Number(right.hasProtectionMarkers) - Number(left.hasProtectionMarkers) ||
@@ -3243,10 +3255,34 @@ async function resolveDeobfTargetSource(input) {
       discovered: resolution.discovered || 0,
       fetched: (resolution.captures || []).length,
       failures: (resolution.failures || []).length,
+      truncated: Boolean(resolution.truncated),
+      failureDetails: (resolution.failures || []).slice(0, 5).map((item) => ({
+        url: item.url,
+        message: item.message,
+      })),
     };
   }
 
-  const selected = candidates[0];
+  // Prefer a downloaded child over the original root bootstrap. If there are
+  // no child captures, keep the root as the fallback and report that fact.
+  const childCandidates = candidates.filter((capture) =>
+    capture.url && (!input.url || capture.url !== input.url)
+  );
+  const selected = childCandidates[0] || null;
+  if (!selected) {
+    return {
+      selected: null,
+      discovered: resolution.discovered || 0,
+      fetched: (resolution.captures || []).length,
+      failures: (resolution.failures || []).length,
+      truncated: Boolean(resolution.truncated),
+      failureDetails: (resolution.failures || []).slice(0, 5).map((item) => ({
+        url: item.url,
+        message: item.message,
+      })),
+    };
+  }
+
   let filename = selected.name || 'deobf-target.lua';
   try {
     const url = selected.finalUrl || selected.url;
@@ -3265,6 +3301,7 @@ async function resolveDeobfTargetSource(input) {
     discovered: resolution.discovered || 0,
     fetched: (resolution.captures || []).length,
     failures: (resolution.failures || []).length,
+    truncated: Boolean(resolution.truncated),
   };
 }
 
@@ -3388,8 +3425,14 @@ async function startWorkflow(message, inlineText = null) {
         : (input.selectedTarget
           ? 'The larger protected payload was selected automatically. Choose an engine for that payload.'
           : 'Select the analysis engine for this file.' +
-            (targetResolution && targetResolution.discovered
-              ? '\\n\\nNo larger protected payload was identified; keeping the original input.'
+            (targetResolution
+              ? '\\n\\nPayload scan: ' + targetResolution.discovered + ' URL(s) found, ' +
+                targetResolution.fetched + ' source file(s) fetched, ' +
+                targetResolution.failures + ' fetch failure(s).' +
+                (targetResolution.truncated ? ' Scan reached a configured limit.' : '') +
+                (targetResolution.failureDetails && targetResolution.failureDetails.length
+                  ? '\\nFirst fetch error: ' + String(targetResolution.failureDetails[0].message || '').slice(0, 220)
+                  : '\\nNo downloadable child payload was found; keeping the original input.')
               : ''))),
       input.downloadError ? DAILY_COLORS.warning : DAILY_COLORS.primary
     )],

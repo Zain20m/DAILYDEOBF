@@ -828,6 +828,10 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
   let completed = false;
   let failed = false;
   let lastEngineOutputAt = Date.now();
+  let phaseStartedAt = Date.now();
+  let lastDiagnosticLine = '';
+  let lastErrorLine = '';
+  let statusEditError = '';
 
   function stageFor(value) {
     const text = String(value || '').toLowerCase();
@@ -839,7 +843,9 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
 
   function advance(nextPhase, nextDetail) {
     if (nextPhase) {
-      phase = String(nextPhase);
+      const next = String(nextPhase);
+      if (next !== phase) phaseStartedAt = Date.now();
+      phase = next;
       const nextStage = stageFor(phase);
       if (nextStage !== null) stageIndex = Math.max(stageIndex, nextStage);
     }
@@ -877,16 +883,21 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
     lines.push('-# ' + (workCount === null
       ? elapsedText
       : workCount.toLocaleString('en-US') + ' ' + workLabel + ' • ' + elapsedText));
-    if (failed && detail) lines.push('', '-# ' + detail.slice(0, 240));
+    if (failed && detail) lines.push('', '-# Error: ' + detail.slice(0, 240));
     if (!failed && !completed) {
+      const now = Date.now();
+      const silentForMs = now - lastEngineOutputAt;
+      const phaseForMs = now - phaseStartedAt;
       lines.push('', '-# Stage: ' + phase.slice(0, 140));
-      const silentForMs = Date.now() - lastEngineOutputAt;
+      lines.push('-# Time in this stage: ' + formatDuration(phaseForMs));
+      if (detail) lines.push('-# ' + detail.slice(0, 220));
+      if (lastDiagnosticLine) lines.push('-# Last diagnostic: ' + lastDiagnosticLine.slice(0, 180));
+      if (lastErrorLine) lines.push('-# Engine warning/error: ' + lastErrorLine.slice(0, 180));
       if (silentForMs >= 20_000) {
-        lines.push('-# ⏳ No new engine diagnostics for ' + formatDuration(silentForMs) + '. The process is still running; the 25-minute engine limit remains active.');
-      } else if (detail) {
-        lines.push('-# ' + detail.slice(0, 220));
+        lines.push('-# ⏳ No new engine output for ' + formatDuration(silentForMs) + '. The subprocess has not reported completion; its configured timeout is still active.');
       }
     }
+    if (statusEditError) lines.push('-# Status update warning: ' + statusEditError.slice(0, 140));
     return lines.join('\n');
   }
 
@@ -899,7 +910,10 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
     lastEdit = now;
     try {
       await prompt.edit({ content: render(), embeds: [], components: [] });
-    } catch {}
+      statusEditError = '';
+    } catch (error) {
+      statusEditError = String(error && (error.message || error) || 'Discord message edit failed');
+    }
     editing = false;
   }
 
@@ -907,6 +921,10 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
     const line = String(rawLine || '').replace(/\x1b\[[0-9;]*m/g, '').trim();
     if (!line) return;
     lastEngineOutputAt = Date.now();
+    lastDiagnosticLine = line.slice(0, 220);
+    if (/\b(error|exception|traceback|failed|fatal)\b/i.test(line)) {
+      lastErrorLine = line.slice(0, 220);
+    }
     let match;
 
     if ((match = line.match(/obfuscator:\s*(.+)/i))) {

@@ -3233,6 +3233,24 @@ async function resolveDeobfTargetSource(input) {
     },
   });
 
+  const captureDetails = (resolution.captures || []).map((capture) => {
+    const source = String(capture && capture.source || '');
+    const bytes = Buffer.byteLength(source, 'utf8');
+    const empty = !source.trim();
+    const viewerLike = !empty && looksLikeViewerPageOrJavaScript(source);
+    const rootUrl = Boolean(capture && capture.url && input.url && capture.url === input.url && !capture.inline);
+    return {
+      name: capture && capture.name || 'unnamed',
+      bytes,
+      depth: Number(capture && capture.depth || 0),
+      inline: Boolean(capture && capture.inline),
+      url: capture && capture.url || null,
+      finalUrl: capture && capture.finalUrl || null,
+      contentType: capture && capture.contentType || 'unknown',
+      excluded: empty ? 'empty response' : viewerLike ? 'classified as webpage/JavaScript' : rootUrl ? 'original input URL' : null,
+    };
+  });
+
   const candidates = (resolution.captures || [])
     .filter((capture) => capture && typeof capture.source === 'string' && capture.source.trim())
     .filter((capture) => !looksLikeViewerPageOrJavaScript(capture.source))
@@ -3260,6 +3278,7 @@ async function resolveDeobfTargetSource(input) {
         url: item.url,
         message: item.message,
       })),
+      captureDetails,
     };
   }
 
@@ -3283,6 +3302,7 @@ async function resolveDeobfTargetSource(input) {
         url: item.url,
         message: item.message,
       })),
+      captureDetails,
     };
   }
 
@@ -3435,7 +3455,15 @@ async function startWorkflow(message, inlineText = null) {
                 (targetResolution.truncated ? ' Scan reached a configured limit.' : '') +
                 (targetResolution.failureDetails && targetResolution.failureDetails.length
                   ? '\\nFirst fetch error: ' + String(targetResolution.failureDetails[0].message || '').slice(0, 220)
-                  : '\\nNo downloadable child payload was found; keeping the original input.')
+                  : '\\nNo eligible child payload was selected; keeping the original input.') +
+                (targetResolution.captureDetails && targetResolution.captureDetails.length
+                  ? '\\nFiles: ' + targetResolution.captureDetails.slice(0, 6).map((item) =>
+                      item.name + ' ' + formatBytes(item.bytes) + ' d' + item.depth +
+                      (item.inline ? ' inline' : '') +
+                      (item.excluded ? ' [' + item.excluded + ']' : ' [eligible]') +
+                      (item.contentType ? ' (' + item.contentType + ')' : '')
+                    ).join('; ')
+                  : '')
               : ''))),
       input.downloadError ? DAILY_COLORS.warning : DAILY_COLORS.primary
     )],

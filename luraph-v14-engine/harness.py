@@ -197,14 +197,12 @@ LAST_RAW = [""]     # complete runtime output of the last run (--raw)
 
 
 HEARTBEAT = 2       # seconds between the runtime's heartbeats (envlog checkBudget)
-STALL = 20          # no output for this long: stuck in pure script code (an endless loop)
+STALL = 90           # allow quiet but expensive VM/native operations before treating heartbeat as stalled
 
 
 def _communicate(cmd, timeout, stall):
-    """subprocess.run(capture_output=True) that also gives up when the process
-    prints nothing for `stall` seconds (the runtime's heartbeat stopped: the
-    script spins without touching the environment). (stdout, stderr) bytes,
-    or a TimeoutExpired."""
+    """Capture process output, enforcing total and heartbeat timeouts.
+    TimeoutExpired carries partial stdout/stderr and a reason."""
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     parts = {1: [], 2: []}
     last = [time.time()]
@@ -224,10 +222,21 @@ def _communicate(cmd, timeout, stall):
     try:
         while proc.poll() is None:
             now = time.time()
-            if now - t0 > timeout or (stall and now - last[0] > stall):
+            reason = None
+            if now - t0 > timeout:
+                reason = "overall"
+            elif stall and now - last[0] > stall:
+                reason = "heartbeat"
+            if reason:
                 proc.kill()
                 proc.wait()
-                raise subprocess.TimeoutExpired(cmd, now - t0)
+                for t in threads:
+                    t.join(5)
+                exc = subprocess.TimeoutExpired(cmd, now - t0)
+                exc.reason = reason
+                exc.output = b"".join(parts[1])
+                exc.stderr = b"".join(parts[2])
+                raise exc
             time.sleep(0.1)
     finally:
         for t in threads:
@@ -237,28 +246,25 @@ def _communicate(cmd, timeout, stall):
 
 def run_once(luau, source, cfg, hpath, timeout, keep, chunks=None):
     cfg = dict(cfg, heartbeat=HEARTBEAT) if "heartbeat" not in cfg else cfg
-    with open(hpath, "w", encoding="latin-1", newline="\n") as f:
+    with open(hpath, "w", encoding="latin-1", newline="\\n") as f:
         f.write(build_harness(source, cfg, chunks))
     try:
         out, errb = _communicate([luau, hpath], timeout, STALL if cfg.get("heartbeat") else None)
     except subprocess.TimeoutExpired as e:
-        return None, "timed out after %ds (script is stuck in a loop the tracer cannot see)" % e.timeout
+        partial_out = getattr(e, "output", None) or b""
+        partial_err = getattr(e, "stderr", None) or b""
+        stdout = re.sub(r"\\x00HB\\r?\\n {16384}\\r?\\n", "", partial_out.decode("utf-8", "replace")).replace("\\r\\n", "\\n")
+        LAST_RAW[0] = stdout + partial_err.decode("utf-8", "replace")
+        elapsed = int(round(e.timeout or 0))
+        if getattr(e, "reason", None) == "heartbeat":
+            return None, ("no runtime heartbeat for %ds (possible uninstrumented VM loop or long-running operation; "
+                          "partial output preserved)" % STALL)
+        return None, ("engine exceeded its total %ds execution timeout (partial output preserved)" % elapsed)
     finally:
         if not keep and os.path.exists(hpath):
             os.remove(hpath)
-    stdout = re.sub(r"\x00HB\r?\n {16384}\r?\n", "", out.decode("utf-8", "replace")).replace("\r\n", "\n")
+    stdout = re.sub(r"\\x00HB\\r?\\n {16384}\\r?\\n", "", out.decode("utf-8", "replace")).replace("\\r\\n", "\\n")
     LAST_RAW[0] = stdout + errb.decode("utf-8", "replace")
-    m = re.search(r"\x00ENVLOG-BEGIN\n(.*?)\x00ENVLOG-END", stdout, re.S)
-    if not m:
-        return None, stdout[-3000:] + "\n" + errb.decode("utf-8", "replace")[-3000:]
-    # errors raised inside the runtime name the (temporary) harness file: drop
-    # "<harness path>:<line>: " (literal: a regex would crawl the PROTOS line)
-    body = m.group(1)
-    for hp in {hpath, hpath.replace("\\", "/")}:
-        if hp + ":" in body:
-            body = re.sub(re.escape(hp) + r":\d+: ", "", body)
-    return body, None
-
 
 def save_raw(path):
     if path:

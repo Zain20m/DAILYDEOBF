@@ -3194,9 +3194,9 @@ async function resolveDeobfTargetSource(input) {
   if (!rootSource.trim() || /^https?:\/\/\S+$/i.test(rootSource.trim())) return null;
 
   const resolution = await resolveStaticSources(rootSource, {
-    maxFiles: 30,
-    maxUrls: 100,
-    maxAttempts: 100,
+    maxFiles: MAX_GET_FILES,
+    maxUrls: MAX_GET_URLS,
+    maxAttempts: MAX_GET_ATTEMPTS,
     maxDepth: 8,
     fetchText: async (rawUrl) => {
       const credentialText = String(input.originalText || '') + '\n' + rootSource;
@@ -3228,10 +3228,12 @@ async function resolveDeobfTargetSource(input) {
       const hasProtectionMarkers = /Luraph|LPH_|IronBrew|MoonSec|Centurion|Prometheus|bit32\.(?:bxor|band|bor)|loadstring\s*\(/i.test(capture.source);
       return { ...capture, bytes, protectedSource, hasProtectionMarkers };
     })
-    .filter((capture) => capture.protectedSource || capture.hasProtectionMarkers)
+    // Match .get: keep readable captures even when the obfuscator has no
+    // recognizable marker. The largest downloaded payload is the target.
     .sort((left, right) =>
       right.bytes - left.bytes ||
       Number(right.hasProtectionMarkers) - Number(left.hasProtectionMarkers) ||
+      Number(right.protectedSource) - Number(left.protectedSource) ||
       right.depth - left.depth
     );
 

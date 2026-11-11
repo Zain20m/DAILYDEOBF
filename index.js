@@ -1158,63 +1158,8 @@ async function sendAnalysisOutput(message, input, config) {
 
 
 async function processLuraphV15(message, prompt, input, displayLabel = 'Luraph v15', gameId = null) {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-v15-'));
-  const inputPath = path.join(tempRoot, 'input.lua');
-  const outputDir = path.join(tempRoot, 'output');
-  const outputPath = path.join(outputDir, 'deobfuscated.luau');
-  const base = path.join(outputDir, 'deobfuscated');
-  await fs.mkdir(outputDir, { recursive: true });
-  await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
-  const progress = createAnalysisProgress(prompt, input.filename, Buffer.byteLength(input.source, 'utf8'), 'Luraph v15');
-  const startedAt = Date.now();
-
-  try {
-    await progress.start();
-    const result = await runPythonEngine(
-      ENGINE_V15_DIR, ENGINE_V15_CLI, inputPath, outputPath, ENGINE_TIMEOUT_MS,
-      [
-        '--obfuscator', 'luraph_v15', '--debug', '--strings',
-        '--max-runs', '16', '--devirt-rounds', '200',
-        '--budget', '60', '--timeout', '180', '--no-pypy',
-        ...(gameId ? ['--cfg', '__superz_game_id=' + gameId] : []),
-      ],
-      {
-        env: {
-          DEVIRT_LOADERS: '1',
-          DEVIRT_TIMING: '1', DEVIRT_ERRS: '1', DEVIRT_TB: '1',
-          DEVIRT_WALK_LIMIT: '750000',
-        },
-        onProgress: progress.onLine,
-      },
-    );
-
-    await progress.setPhase('Packaging v15 analysis artifacts', 'Collecting reconstructed Luau, the trace, strings and VM metadata.');
-    const summary = await sendAnalysisOutput(message, input, {
-      label: 'Luraph v15', engineName: 'Luraph v15 Python engine', engineDir: ENGINE_V15_DIR, base, outputDir,
-      elapsedMs: Date.now() - startedAt, stderr: result.stderr,
-      maxRuns: 16, devirtRounds: 200, loaderAnalysis: true,
-    });
-    await progress.complete(summary.hasLiftedSource
-      ? 'A reconstructed Luau file and supporting analysis artifacts were attached.'
-      : 'The trace and diagnostic artifacts were attached; the engine did not finish a full lift.');
-    await prompt.edit({
-      content: summary.hasLiftedSource
-        ? '✅ Luraph v15 analysis finished. The Luau candidate passed validation.'
-        : (summary.hasLiftCandidate
-          ? '⚠️ Luraph v15 analysis finished with a partial VM lift. It is not marked as recovered source.'
-          : '⚠️ Luraph v15 analysis finished without a full VM lift. Check the trace and analysis report.'),
-      components: [],
-    });
-  } catch (error) {
-    await capturePartialArtifact(error, [base + '.devirt.luau', base + '.trace.luau', base + '.luau', outputPath]);
-    await progress.fail(error);
-    throw error;
-  } finally {
-    progress.stop();
-    await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
-  }
+  return processLuraph151(message, prompt, input, gameId, '15');
 }
-
 
 async function processIronbrew1(message, prompt, input) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-ironbrew1-'));
@@ -1488,7 +1433,7 @@ function normalizeLuraph151Source(source) {
   };
 }
 
-async function processLuraph151(message, prompt, input, gameId = null) {
+async function processLuraph151(message, prompt, input, gameId = null, version = '15.1') {
   const normalized = normalizeLuraph151Source(input.source);
   const source = normalized.source;
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-151-'));
@@ -1512,10 +1457,10 @@ async function processLuraph151(message, prompt, input, gameId = null) {
     return false;
   }
 
-  const dedicated = await prepare('dedicated-15.1');
+  const dedicated = await prepare('dedicated-v' + version);
   const compatible = await prepare('v15-compatibility');
   const inputBytes = Buffer.byteLength(input.source, 'utf8');
-  const progress = createAnalysisProgress(prompt, input.filename, inputBytes, 'Luraph 15.1');
+  const progress = createAnalysisProgress(prompt, input.filename, inputBytes, 'Luraph v' + version);
   const startedAt = Date.now();
   let dedicatedLogs = '';
   let compatibilityLogs = '';
@@ -1535,8 +1480,8 @@ async function processLuraph151(message, prompt, input, gameId = null) {
     }
 
     await progress.setPhase(
-      'Running the dedicated 15.1 engine',
-      'The 15.1 engine gets the first full reconstruction pass. Its output is checked for unresolved VM values and Luau syntax.'
+      'Running the dedicated Luraph v' + version + ' engine',
+      'The Luraph v' + version + ' engine gets the first full reconstruction pass. Its output is checked for unresolved VM values and Luau syntax.'
     );
 
     try {
@@ -1559,6 +1504,7 @@ async function processLuraph151(message, prompt, input, gameId = null) {
         ],
         {
           env: {
+            DEOB_FAST: '1',
             DEVIRT_LOADERS: '1',
             DEVIRT_FULL_ROUNDS: '1',
             DEVIRT_TIMING: '1',
@@ -1576,7 +1522,7 @@ async function processLuraph151(message, prompt, input, gameId = null) {
     }
 
     await progress.setPhase(
-      'Checking the dedicated 15.1 candidate',
+      'Checking the dedicated Luraph v' + version + ' candidate',
       'The dedicated pass returned. Inspecting its actual output for unresolved VM values, placeholder functions and Luau syntax before deciding whether to run the compatibility engine.'
     );
 
@@ -1665,7 +1611,7 @@ async function processLuraph151(message, prompt, input, gameId = null) {
 
     if (!(await hasArtifacts(chosen.base))) {
       const errors = [
-        dedicatedError && ('Dedicated 15.1: ' + String(dedicatedError.message || dedicatedError)),
+        dedicatedError && ('Dedicated Luraph v' + version + ': ' + String(dedicatedError.message || dedicatedError)),
         compatibilityError && ('v15 compatibility: ' + String(compatibilityError.message || compatibilityError)),
       ].filter(Boolean);
       throw new Error(errors.join('\n') || 'Neither 15.1 analysis engine produced any diagnostic artifacts.');
@@ -1711,9 +1657,9 @@ async function processLuraph151(message, prompt, input, gameId = null) {
 
     const summary = await sendAnalysisOutput(message, input, {
       label: chosen === dedicated
-        ? 'Luraph 15.1 · dedicated engine'
-        : 'Luraph 15.1 · v15 compatibility engine',
-      engineName: chosen === dedicated ? 'Dedicated 15.1 engine' : 'v15 compatibility engine',
+        ? 'Luraph v' + version + ' · dedicated engine'
+        : 'Luraph v' + version + ' · v15 compatibility engine',
+      engineName: chosen === dedicated ? 'Dedicated Luraph v' + version + ' engine' : 'v15 compatibility engine',
       engineDir: chosenEngineDir,
       base: chosen.base,
       outputDir: chosen.outputDir,
@@ -1748,12 +1694,12 @@ async function processLuraph151(message, prompt, input, gameId = null) {
     const bootstrapBoundsError = /buffer access out of bounds|size out of range/i.test(dedicatedLogs + '\n' + compatibilityLogs);
     await prompt.edit({
       content: summary.hasLiftedSource
-        ? '✅ Luraph 15.1 finished. The best Luau candidate passed validation.'
+        ? '✅ Luraph v' + version + ' finished. The best Luau candidate passed validation.'
         : (summary.hasLiftCandidate
-          ? '⚠️ Luraph 15.1 finished with a partial VM lift. It is not marked as recovered source.'
+          ? '⚠️ Luraph v' + version + ' finished with a partial VM lift. It is not marked as recovered source.'
           : (bootstrapBoundsError
             ? '⚠️ The sandbox stopped before VM capture (buffer bounds/size error). This is not deobfuscated source. For game-locked scripts, retry with the correct Universe/GameId; a live FlowAuth auth handshake cannot be reconstructed offline.'
-            : '⚠️ Luraph 15.1 finished without a full VM lift. Check the trace and analysis report.')),
+            : '⚠️ Luraph v' + version + ' finished without a full VM lift. Check the trace and analysis report.')),
       components: [],
     });
   } catch (error) {

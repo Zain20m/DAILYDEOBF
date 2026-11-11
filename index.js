@@ -31,6 +31,8 @@ const MAX_PURELUA_CHARS = 4_000_000;
 const MAX_PURELUA_BYTES = 8 * 1024 * 1024;
 const MAX_GET_FILES = 50;
 const MAX_GET_URLS = 250;
+const MAX_GET_OUTPUT_BYTES = 64 * 1024 * 1024;
+const MAX_ATTACHMENT_PART_BYTES = 16 * 1024 * 1024;
 const MAX_GET_ATTEMPTS = 250;
 const INPUT_WAIT_MS = 180_000;
 const PICKER_WAIT_MS = 120_000;
@@ -361,6 +363,33 @@ function isClearlyPlainLuau(source) {
   const giantString = /(["'])[^\\\r\n]{5000,}\1/.test(text);
 
   return signalCount < 2 && !mostlyShortNames && !heavilyMinified && !giantString;
+}
+
+function splitUtf8Buffer(buffer, maxBytes = MAX_ATTACHMENT_PART_BYTES) {
+  const data = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+  const parts = [];
+  let offset = 0;
+  while (offset < data.length) {
+    let end = Math.min(data.length, offset + maxBytes);
+    if (end < data.length) {
+      while (end > offset && (data[end] & 0xc0) === 0x80) end--;
+      if (end === offset) throw new Error('Could not find a UTF-8 boundary while splitting the output.');
+    }
+    parts.push(data.subarray(offset, end));
+    offset = end;
+  }
+  return parts;
+}
+
+function makeSourceParts(buffer, filename) {
+  const data = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+  if (data.length <= MAX_OUTPUT_BYTES) return [{ name: filename, data }];
+  const extension = path.extname(filename) || '.lua';
+  const base = path.basename(filename, extension);
+  return splitUtf8Buffer(data).map((part, index) => ({
+    name: base + '.part' + String(index + 1).padStart(3, '0') + extension,
+    data: part,
+  }));
 }
 
 async function sendOriginalLua(message, prompt, input, reason) {
@@ -2123,7 +2152,7 @@ async function startGetWorkflow(message, inlineSource = null) {
   const omittedNames = [];
   for (const capture of resolution.captures) {
     const data = Buffer.from(capture.source, 'utf8');
-    if (totalBytes + data.length > MAX_OUTPUT_BYTES - 128 * 1024) {
+    if (totalBytes + data.length > MAX_GET_OUTPUT_BYTES) {
       omittedNames.push(capture.name);
       continue;
     }
@@ -2259,9 +2288,19 @@ async function startGetWorkflow(message, inlineSource = null) {
   }
 
   const batches = [];
-  for (let i = 0; i < attachments.length; i += 10) {
-    batches.push(attachments.slice(i, i + 10));
+  let currentBatch = [];
+  let currentBatchBytes = 0;
+  for (const attachment of attachments) {
+    if (currentBatch.length >= 10 ||
+        currentBatchBytes + attachment.data.length > MAX_OUTPUT_BYTES) {
+      if (currentBatch.length) batches.push(currentBatch);
+      currentBatch = [];
+      currentBatchBytes = 0;
+    }
+    currentBatch.push(attachment);
+    currentBatchBytes += attachment.data.length;
   }
+  if (currentBatch.length) batches.push(currentBatch);
 
   if (!batches.length) {
     const reason = resolution.failures.length

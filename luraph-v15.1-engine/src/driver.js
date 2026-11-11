@@ -11,8 +11,24 @@ const { inspectLiftText } = require('../../scripts/lift-validation');
 const SPIN_CHECKS = 24;
 
 function isBootstrapFailureBeforePayload(body) {
-  return /Environment compatibility check failed\s*\(PC-R01\)/i.test(body)
-    && /attempt to get length of a number value/i.test(body);
+  // A final JNKIE warn("...PC-R01") is sample output, not proof that the
+  // bootstrap aborted. Only classify it as a pre-payload failure when PC-R01
+  // is present in the runtime's own error/status block.
+  const lines = String(body || '').split(/\r?\n/);
+  const start = lines.findIndex((line) => /^\s*--\s*run status:/i.test(line));
+  if (start < 0) return false;
+
+  const statusLines = [lines[start]];
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*--\s*\d+\s+statements recorded\b/i.test(line)) break;
+    if (!/^\s*--/.test(line)) break;
+    statusLines.push(line);
+  }
+
+  const status = statusLines.join('\n');
+  return /\bscript error\b/i.test(status)
+    && /Environment compatibility check failed\s*\(PC-R01\)/i.test(status);
 }
 
 function patchChunk(src, tmpdir, chunkTag) {

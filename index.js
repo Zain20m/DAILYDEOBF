@@ -184,6 +184,17 @@ async function requestPinnedAddress(url, address, options = {}) {
     });
 
     request.once('error', reject);
+    if (options.connectTimeout) {
+      request.once('socket', (socket) => {
+        if (!socket.connecting) return;
+        const timer = setTimeout(() => request.destroy(new Error('Connection timed out after ' + options.connectTimeout + ' seconds.')), options.connectTimeout * 1000);
+        const clear = () => clearTimeout(timer);
+        socket.once('connect', clear);
+        socket.once('secureConnect', clear);
+        socket.once('error', clear);
+        request.once('close', clear);
+      });
+    }
     if (options.body !== undefined && options.body !== null) request.write(options.body);
     request.end();
   });
@@ -231,9 +242,18 @@ function parseCurlStyleOptions(rawText) {
     else if (arg === '-L' || arg === '--location') options.followRedirects = true;
     else if (arg === '--max-time') options.maxTime = Math.min(30, Math.max(1, Number(next()) || 15));
     else if (arg === '--connect-timeout') options.connectTimeout = Math.min(15, Math.max(1, Number(next()) || 10));
-    else if (['-i','--include','-I','--head','-v','--verbose','-w','--write-out','-D','--dump-header','-o','--output','-O','--remote-name','-C','--continue-at'].includes(arg)) {
+    else if (arg === '-o' || arg === '--output') {
+      options.outputName = path.basename(next()).replace(/[^A-Za-z0-9._-]/g, '_');
       options.flags.push(arg);
-      if (['-w','--write-out','-D','--dump-header','-o','--output','-C','--continue-at'].includes(arg)) next();
+    } else if (arg === '-O' || arg === '--remote-name') {
+      options.remoteName = true; options.flags.push(arg);
+    } else if (arg === '-C' || arg === '--continue-at') {
+      const offset = next();
+      if (/^\d+$/.test(offset)) options.headers.range = 'bytes=' + offset + '-';
+      options.flags.push(arg);
+    } else if (['-i','--include','-I','--head','-v','--verbose','-w','--write-out','-D','--dump-header'].includes(arg)) {
+      options.flags.push(arg);
+      if (['-w','--write-out','-D','--dump-header'].includes(arg)) next();
     }
   }
   if (options.getMode && options.body) {
@@ -272,7 +292,7 @@ async function fetchPublicText(rawUrl, curlOptions = {}) {
     const connectionErrors = [];
     for (const address of addresses) {
       try {
-        response = await requestPinnedAddress(current, address, { method: curlOptions.method || 'GET', headers: curlOptions.headers || {}, body: curlOptions.body, compressed: curlOptions.compressed, maxTime: curlOptions.maxTime });
+        response = await requestPinnedAddress(current, address, { method: curlOptions.method || 'GET', headers: curlOptions.headers || {}, body: curlOptions.body, compressed: curlOptions.compressed, maxTime: curlOptions.maxTime, connectTimeout: curlOptions.connectTimeout });
         break;
       } catch (error) {
         const reason = error && (
@@ -354,7 +374,7 @@ async function probePublicHttpMethods(rawUrl, curlOptions = {}) {
     let lastError = null;
     for (const address of addresses) {
       try {
-        response = await requestPinnedAddress(url, address, { method, headers: { ...(curlOptions.headers || {}), ...headers }, body, compressed: curlOptions.compressed, maxTime: curlOptions.maxTime });
+        response = await requestPinnedAddress(url, address, { method, headers: { ...(curlOptions.headers || {}), ...headers }, body, compressed: curlOptions.compressed, maxTime: curlOptions.maxTime, connectTimeout: curlOptions.connectTimeout });
         break;
       } catch (error) {
         lastError = error;
@@ -2802,13 +2822,15 @@ async function processVantarmorFetcher(message, prompt, input) {
         return lines.join('\n');
       }),
       '',
-      'Curl-style support: -I/--head, -i/--include, -L/--location, -v/--verbose, -X/--request, -H/--header, -d/--data (explicit POST body), -G/--get, -r/--range, -A/--user-agent, -e/--referer, -w/--write-out, -D/--dump-header, -o/--output, -O/--remote-name, --compressed, --max-time and --connect-timeout. -C/--continue-at is listed but requires a prior partial file to resume.
+      'Curl-style support: -I/--head, -i/--include, -L/--location, -v/--verbose, -X/--request, -H/--header, -d/--data (explicit POST body), -G/--get, -r/--range, -A/--user-agent, -e/--referer, -w/--write-out, -D/--dump-header, -o/--output, -O/--remote-name, --compressed, --max-time and --connect-timeout. -C/--continue-at applies a numeric byte-range offset when supplied.
       'IANA HTTP method registry inventory (not all are sent): ACL, BASELINE-CONTROL, BIND, CHECKIN, CHECKOUT, CONNECT, COPY, DELETE, GET, HEAD, LABEL, LINK, LOCK, MERGE, MKACTIVITY, MKCALENDAR, MKCOL, MKREDIRECTREF, MKWORKSPACE, MOVE, OPTIONS, ORDERPATCH, PATCH, POST, PRI, PROPFIND, PROPPATCH, PUT, QUERY, REBIND, REPORT, SEARCH, TRACE, UNBIND, UNCHECKOUT, UNLINK, UNLOCK, UPDATE, UPDATEREDIRECTREF, VERSION-CONTROL.',
       'State-changing methods and tunnel/connection methods are listed for reference but not automatically sent.',
       'GraphQL is an API format usually carried over HTTP, not a method; it needs a specific query and endpoint. FTP, SFTP, SMTP, WebSocket and MQTT are separate protocols and are not HTTP methods.',
     ].join('\n');
 
-    const files = [new AttachmentBuilder(data, { name: 'fetched_loader.lua' })];
+    const requestedOutputName = curlOptions.outputName || (curlOptions.remoteName ? path.basename(loaderUrl.pathname) : 'fetched_loader.lua');
+    const safeOutputName = /^[A-Za-z0-9._-]+$/.test(requestedOutputName) ? requestedOutputName : 'fetched_loader.lua';
+    const files = [new AttachmentBuilder(data, { name: safeOutputName })];
     const reportBuffer = Buffer.from(report + '\n', 'utf8');
     files.push(new AttachmentBuilder(reportBuffer, { name: 'http_method_report.txt' }));
 

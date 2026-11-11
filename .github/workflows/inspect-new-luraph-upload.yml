@@ -134,6 +134,7 @@ jobs:
           node --check luraph-v15.1-engine/src/driver.js
           node --check luraph-v15.1-engine/src/harness.js
           node --check luraph-v15.1-engine/src/parallel.js
+          node --check luraph-v15.1-engine/src/vmmap.js
           node --test scripts/test-flowauth-version.js
           node luraph-v15.1-engine/test/run.js
           node scripts/test-lift-validation.js

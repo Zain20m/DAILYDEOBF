@@ -2822,7 +2822,7 @@ async function processVantarmorFetcher(message, prompt, input) {
         return lines.join('\n');
       }),
       '',
-      'Curl-style support: -I/--head, -i/--include, -L/--location, -v/--verbose, -X/--request, -H/--header, -d/--data (explicit POST body), -G/--get, -r/--range, -A/--user-agent, -e/--referer, -w/--write-out, -D/--dump-header, -o/--output, -O/--remote-name, --compressed, --max-time and --connect-timeout. -C/--continue-at applies a numeric byte-range offset when supplied.
+      'Curl-style support: -I/--head, -i/--include, -L/--location, -v/--verbose, -X/--request, -H/--header, -d/--data (explicit POST body), -G/--get, -r/--range, -A/--user-agent, -e/--referer, -w/--write-out, -D/--dump-header, -o/--output, -O/--remote-name, --compressed, --max-time and --connect-timeout. -C/--continue-at applies a numeric byte-range offset when supplied.',
       'IANA HTTP method registry inventory (not all are sent): ACL, BASELINE-CONTROL, BIND, CHECKIN, CHECKOUT, CONNECT, COPY, DELETE, GET, HEAD, LABEL, LINK, LOCK, MERGE, MKACTIVITY, MKCALENDAR, MKCOL, MKREDIRECTREF, MKWORKSPACE, MOVE, OPTIONS, ORDERPATCH, PATCH, POST, PRI, PROPFIND, PROPPATCH, PUT, QUERY, REBIND, REPORT, SEARCH, TRACE, UNBIND, UNCHECKOUT, UNLINK, UNLOCK, UPDATE, UPDATEREDIRECTREF, VERSION-CONTROL.',
       'State-changing methods and tunnel/connection methods are listed for reference but not automatically sent.',
       'GraphQL is an API format usually carried over HTTP, not a method; it needs a specific query and endpoint. FTP, SFTP, SMTP, WebSocket and MQTT are separate protocols and are not HTTP methods.',

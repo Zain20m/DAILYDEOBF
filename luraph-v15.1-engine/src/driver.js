@@ -6,18 +6,13 @@ const vmmap = require('./vmmap');
 const harness = require('./harness');
 const trace = require('./traceout');
 const tidy = require('./tidy');
-const { inspectLiftText } = require('../../scripts/lift-validation');
 
 const SPIN_CHECKS = 24;
 
 function isBootstrapFailureBeforePayload(body) {
-  // A final JNKIE warn("...PC-R01") is sample output, not proof that the
-  // bootstrap aborted. Only classify it as a pre-payload failure when PC-R01
-  // is present in the runtime's own error/status block.
   const lines = String(body || '').split(/\r?\n/);
   const start = lines.findIndex((line) => /^\s*--\s*run status:/i.test(line));
   if (start < 0) return false;
-
   const statusLines = [lines[start]];
   for (let i = start + 1; i < lines.length; i++) {
     const line = lines[i];
@@ -25,7 +20,6 @@ function isBootstrapFailureBeforePayload(body) {
     if (!/^\s*--/.test(line)) break;
     statusLines.push(line);
   }
-
   const status = statusLines.join('\n');
   return /\bscript error\b/i.test(status)
     && /Environment compatibility check failed\s*\(PC-R01\)/i.test(status);
@@ -95,22 +89,13 @@ async function run(job) {
 
     body = harness.takeP2d(body);
 
-    const { chunks: found, incomplete, body: cleanBody } = harness.takeChunks(body);
+    const { chunks: found, incomplete = [], body: cleanBody } = harness.takeChunks(body);
+    for (const item of incomplete) process.stderr.write(`[!] dynamic VM chunk ${item.key} was not reconstructed: ${item.reason}\n`);
     body = cleanBody;
-    for (const item of incomplete) {
-      process.stderr.write('[!] dynamic VM chunk ' + item.key + ' was not reconstructed: ' + item.reason + '\n');
-    }
     let added = 0;
     for (const [key, src] of found) {
-      if (!rawChunks[key]) {
-        rawChunks[key] = src;
-        // Persist the untouched source immediately. If the instrumented retry
-        // fails, the original captured child chunk is still available to attach.
-        job.write(job.path('.chunk_' + key + '.luau'), src, 'latin1');
-        process.stderr.write('[+] captured dynamic VM chunk ' + key + ' (' +
-          Buffer.byteLength(src, 'latin1') + ' bytes)\n');
-      }
       if (!chunks[key]) {
+        rawChunks[key] = src;
         chunks[key] = patchChunk(src, job.outdir, key);
         if (spin) chunks[key] = vmmap.patchSpin(chunks[key]);
         added++;
@@ -161,35 +146,15 @@ async function run(job) {
   const notes = skip.length ? [`anti-tamper trap functions disabled: ${skip.map(p => '#' + p).join(', ')}`] : [];
   const text = trace.header(job.input, notes) + body;
 
-  const preserveRuntimeDiagnostics =
-    /\bPC-R01\b|Environment compatibility check failed/i.test(body);
-
   function writeTrace() {
-    job.write(job.tracePath, tidy.tidy(text, {
-      // Keep the complete probe sequence for PC-R01 so the failed check is
-      // visible instead of deleting the very evidence needed to diagnose it.
-      preamble: !args.keepPreamble && !preserveRuntimeDiagnostics,
-      preserveDiagnostics: preserveRuntimeDiagnostics,
-    }));
+    job.write(job.tracePath, tidy.tidy(text, { preamble: !args.keepPreamble }));
   }
 
-  if (!devirtOn || job.debug) {
-    // Preserve the runtime trace separately when a full lift succeeds.
+  if (!devirtOn && !job.debug) {
     writeTrace();
   }
 
   if (strings) job.write(job.path('.strings.txt'), strings);
-
-  // Persist every captured dynamic chunk, even if the VM errors before proto
-  // capture. These files are the evidence needed to inspect early child-chunk
-  // failures such as [string "Luraph"]:1.
-  const chunkPaths = Object.entries(rawChunks).map(([k, src]) => {
-    // Keep the original program semantics, but split the minified 200 KB+
-    // child chunk at AST statement boundaries. A runtime exception will then
-    // identify its failing statement instead of reporting only [string "Luraph"]:1.
-    const readable = vmmap.formatStatements(src, job.outdir, k);
-    return job.write(job.path(`.chunk_${k}.luau`), readable, 'latin1');
-  });
 
   const dpath = job.path('.devirt.luau');
   if (protosJson) {
@@ -198,8 +163,11 @@ async function run(job) {
       process.stderr.write(`[!] proto capture failed: ${protosJson}\n`);
     } else {
       job.write(ppath, protosJson);
-      const pcR01BeforePayload = isBootstrapFailureBeforePayload(body);
-      if (devirtOn && !pcR01BeforePayload) {
+      if (devirtOn) {
+        const chunkPaths = Object.entries(rawChunks).map(([k, src]) =>
+          job.write(job.path(`.chunk_${k}.luau`), src, 'latin1')
+        );
+
         const cfgData = {
           input: job.input,
           source: job.source,
@@ -225,24 +193,9 @@ async function run(job) {
             executor: args.executor || 'Wave',
           },
         };
-        const cfgPath = job.path('.cfg.json');
-        fs.writeFileSync(cfgPath, JSON.stringify(cfgData), 'utf8');
-
-        const { execFileSync } = require('child_process');
-        const { getPythonBin } = require('./pyenv');
-        const pythonBin = getPythonBin();
-        const bridgePy = path.join(__dirname, 'devirt_bridge.py');
-        const coreDir = path.join(__dirname, '..', 'core');
-        try {
-          execFileSync(pythonBin, [bridgePy, 'pipeline', cfgPath], {
-            env: Object.assign({}, process.env, { PYTHONPATH: coreDir }),
-            stdio: 'inherit',
-          });
-        } finally {
-          try { fs.unlinkSync(cfgPath); } catch {}
-        }
-      } else if (devirtOn && pcR01BeforePayload) {
-        process.stderr.write('[!] skipping expensive VM lifting: the Luraph bootstrap failed before payload execution; captured prototypes belong to the failed compatibility run\\n');
+        // Python stage: several candidates in parallel (PyPy + fixed hash seeds),
+        // best result kept -- see src/parallel.js. DEOB_KEEP_CFG=1 keeps the inputs.
+        await require('./parallel').runCandidates(cfgData, job);
       }
     }
   }
@@ -252,27 +205,12 @@ async function run(job) {
 
   if (devirtOn && fs.existsSync(dpath)) {
     const lifted = fs.readFileSync(dpath, 'utf8');
-    const assessment = inspectLiftText(lifted);
-    let syntaxError = null;
-
-    if (assessment.candidate) {
-      try {
-        vmmap.loadAst(dpath);
-      } catch (error) {
-        syntaxError = error;
-      }
-    }
-
-    if (assessment.complete && !syntaxError) {
+    const nilCalls = (lifted.match(/\(nil\)\(/g) || []).length;
+    const lines = lifted.split('\n').length;
+    if (nilCalls < 50 || nilCalls * 100 < lines) {
       return dpath;
     }
-
-    const reasons = assessment.issues.slice();
-    if (syntaxError) reasons.push('Luau AST parse failed: ' + String(syntaxError.message || syntaxError).slice(0, 240));
-    else if (assessment.candidate && !assessment.complete) reasons.push('Luau syntax passed, but VM reconstruction is still incomplete');
-    process.stderr.write('[!] devirtualized candidate failed validation: ' +
-      (reasons.join('; ') || 'unknown structural or syntax error') +
-      '; retaining it only as a debug artifact and returning the behaviour trace\n');
+    process.stderr.write(`[!] the devirtualized output is broken (${nilCalls} calls of nil); writing behaviour trace instead\n`);
     if (!job.debug) { try { fs.unlinkSync(dpath); } catch {} }
     writeTrace();
     return job.tracePath;

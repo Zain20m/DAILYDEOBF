@@ -999,8 +999,6 @@ class Interp:
         elif t == "AstStatForIn":
             vals = self.eval_list(st["values"], scope, 3)
             f, s, ctl = vals
-            if type(f).__name__ == "OpenUps":
-                f = None
             n = 0
             while f is not None:
                 n += 1
@@ -1152,10 +1150,7 @@ class Interp:
         obj = self.eval(node["expr"], scope)
         if obj is None:
             raise Unsupported("index nil @%s" % node["location"])
-        key = self.eval(node["index"], scope)
-        if hasattr(self.L, "current_ast"):
-            self.L.current_ast = node
-        return self.index(obj, key)
+        return self.index(obj, self.eval(node["index"], scope))
 
     def _ev_indexname(self, node, scope):
         obj = self.eval(node["expr"], scope)
@@ -1165,13 +1160,9 @@ class Interp:
         if idx is None:
             idx = node["index"].encode("latin-1")
             node["_idx"] = idx
-        if hasattr(self.L, "current_ast"):
-            self.L.current_ast = node
         return self.index(obj, idx)
 
     def _ev_call(self, node, scope):
-        if hasattr(self.L, "current_ast"):
-            self.L.current_ast = node
         r = self.eval_call(node, scope)
         return r.first() if isinstance(r, Multi) else r
 
@@ -1186,17 +1177,10 @@ class Interp:
         if op == "Or":
             a = self.eval(node["left"], scope)
             return a if self.cond_true(a) else self.eval(node["right"], scope)
-        left = self.eval(node["left"], scope)
-        right = self.eval(node["right"], scope)
-        if hasattr(self.L, "current_ast"):
-            self.L.current_ast = node
-        return self.binop(op, left, right)
+        return self.binop(op, self.eval(node["left"], scope), self.eval(node["right"], scope))
 
     def _ev_unary(self, node, scope):
-        value = self.eval(node["expr"], scope)
-        if hasattr(self.L, "current_ast"):
-            self.L.current_ast = node
-        return self.unop(node["op"], value)
+        return self.unop(node["op"], self.eval(node["expr"], scope))
 
     def _ev_ifelse(self, node, scope):
         c = self.eval(node["condition"], scope)

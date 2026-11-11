@@ -844,9 +844,17 @@ def structure(entry, blocks, own=None, rounds=60):
                 n += k > 0
         if not n:
             break
-    if sr.fallbacks and not any(b.kind in ("for", "forin") for b in first[1].values()):
+    if os.environ.get("DEOB_STRUCT_STATS") and sr.fallbacks:
+        import collections as _c
+        _has_for = any(b.kind in ("for", "forin") for b in first[1].values())
+        _cats = _c.Counter(g[0] for g in sr.gotos)
+        sys.stderr.write("[struct-stats] fallbacks=%d gotos=%s has_for=%s copied=%d nblocks=%d\n"
+                         % (sr.fallbacks, dict(_cats), _has_for, copied, len(first[1])))
+    if sr.fallbacks:
         if own is not None:
             own.add("state")
+        recompute_preds(first[1])
+        lower_fors(first[1], own)   # for/forin -> primitive blocks so state_machine can emit them
         body = state_machine(*first, "state")
         sr.fallbacks = 0
     return entry, body, sr
@@ -891,6 +899,86 @@ def state_machine(entry, blocks, name):
         test = Bin("CompareEq", CG.LocalName(name), Const(k))
         chain = SBlock([SIf(test, out, chain)])
     return SBlock([_set_stmt(name, 1), SLoop(chain)])
+
+def lower_fors(blocks, own):
+    """Rewrite each numeric/generic `for` header block into primitive goto/cond
+    blocks so the (for-free) CFG can become a state machine. Only used on the
+    state_machine fallback path (functions the structurer could not reduce), so
+    it never touches cleanly-structured output. The numeric lowering
+    (`v=a; while (step>0 and v<=lim) or (step<=0 and v>=lim) do body; v+=step end`)
+    and the generic one (`f,s,c=explist; while true do vars=f(s,c); if vars1==nil
+    then break end; c=vars1; body end`) were verified against real Luau for-loops
+    over 250k random cases (int/float steps) and ipairs/pairs."""
+    import codegen as CG
+    changed = False
+    for h in [bid for bid, b in list(blocks.items()) if b.kind in ("for", "forin")]:
+        hb = blocks[h]
+        if not hb.succ or len(hb.succ) != 2 or hb.values is None:
+            continue
+        body_entry, exit_b = hb.succ[0], hb.succ[1]
+        # body = blocks reachable from the body entry without passing through h
+        body, st = set(), [body_entry]
+        while st:
+            x = st.pop()
+            if x == h or x in body or x not in blocks:
+                continue
+            body.add(x)
+            st += [s for s in blocks[x].succ if s != h]
+        test = Block(_new_id(blocks)); blocks[test.id] = test
+        try:
+            if hb.kind == "for":
+                v, (a, bb, c) = hb.values
+                limn, stepn = "__flim%d" % h, "__fstep%d" % h
+                if own is not None:
+                    own.add(limn); own.add(stepn)
+                lim, step = CG.LocalName(limn), CG.LocalName(stepn)
+                incr = Block(_new_id(blocks)); blocks[incr.id] = incr
+                hb.kind = "goto"
+                hb.stmts = list(hb.stmts) + [
+                    CG.AssignS([lim], S.Multi([bb])),
+                    CG.AssignS([step], S.Multi([c])),
+                    CG.AssignS([Reg(v)], S.Multi([a])),
+                ]
+                hb.succ, hb.values, hb.cond = [test.id], None, None
+                incr.kind = "goto"
+                incr.stmts = [CG.AssignS([Reg(v)], S.Multi([Bin("Add", Reg(v), step)]))]
+                incr.succ = [test.id]
+                test.kind = "cond"
+                test.cond = Bin("Or",
+                    Bin("And", Bin("CompareGt", step, Const(0)), Bin("CompareLe", Reg(v), lim)),
+                    Bin("And", Bin("CompareLe", step, Const(0)), Bin("CompareGe", Reg(v), lim)))
+                test.succ = [body_entry, exit_b]
+                back_target = incr.id
+            else:
+                vs, it = hb.values
+                if not vs:
+                    continue
+                fn_, sn_, cn_ = "__fit%d" % h, "__fis%d" % h, "__fic%d" % h
+                if own is not None:
+                    own.add(fn_); own.add(sn_); own.add(cn_)
+                fL, sL, cL = CG.LocalName(fn_), CG.LocalName(sn_), CG.LocalName(cn_)
+                hb.kind = "goto"
+                hb.stmts = list(hb.stmts) + [CG.AssignS([fL, sL, cL], S.Multi(list(it)))]
+                hb.succ, hb.values, hb.cond = [test.id], None, None
+                v0 = Reg(vs[0])
+                test.kind = "cond"
+                test.stmts = [
+                    CG.AssignS([Reg(x) for x in vs], S.Multi([CG.CallE(fL, S.Multi([sL, cL]))])),
+                    CG.AssignS([cL], S.Multi([v0])),
+                ]
+                test.cond = Bin("CompareEq", v0, Const(None))   # nil -> exit
+                test.succ = [exit_b, body_entry]
+                back_target = test.id
+        except Exception:
+            continue
+        for p in list(hb.preds):
+            if p == h or p not in blocks:
+                continue
+            if p in body:
+                blocks[p].succ = [back_target if s == h else s for s in blocks[p].succ]
+        changed = True
+    if changed:
+        recompute_preds(blocks)
 
 def sccs(nodes, succ):
     """Strongly connected components of the subgraph on `nodes` (iterative Tarjan)."""

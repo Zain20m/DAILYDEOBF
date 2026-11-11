@@ -383,30 +383,31 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
         req_list = sorted(requested)
         t1 = time.time()
         line, err = _force_run(rerun, c, req_list, bufs)
-        if line is None and "block too big" in (err or "") and os.environ.get("DEVIRT_MERGE"):
-            # the whole set does not fit one luau allocation: force fitting
-            # subsets and union every decoded override into the current dump,
-            # recovering constants the single big force cannot (opt-in: slow).
-            print("[!] constant decode hit 'block too big'; forcing subsets and merging decoded constants",
-                  file=sys.stderr)
-            budget = [int(os.environ.get("DEVIRT_MERGE_BUDGET", "64"))]
-            try:
-                with open(ppath, encoding="utf-8") as f:
-                    base = json.load(f)
-                line = _force_merge(rerun, c, req_list, bufs, base, budget)
-            except Exception as e:
-                print("[!]   merge failed to start (%s); keeping the current dump" % str(e)[:200],
+        if line is None and "block too big" in (err or ""):
+            if os.environ.get("DEVIRT_MERGE"):
+                # The whole set does not fit one Luau allocation: force fitting
+                # subsets and merge decoded overrides into the current dump.
+                print("[!] constant decode hit 'block too big'; forcing subsets and merging decoded constants",
                       file=sys.stderr)
-        elif line is None and "block too big" in (err or "") and os.environ.get("DEVIRT_BISECT"):
-            # a constant decodes to a value too large for luau to allocate; skip
-            # the oversized one(s) and keep the rest (opt-in: bisection is slow).
-            print("[!] constant decode hit 'block too big'; bisecting to skip the oversized constant(s)",
-                  file=sys.stderr)
-            budget = [int(os.environ.get("DEVIRT_BISECT_BUDGET", "24"))]
-            kept, line = _force_bisect(rerun, c, req_list, bufs, budget)
-            if line is not None:
-                print("[*]   bisect kept %d/%d constants (dropped %d oversized)"
-                      % (len(kept), len(req_list), len(req_list) - len(kept)), file=sys.stderr)
+                budget = [int(os.environ.get("DEVIRT_MERGE_BUDGET", "64"))]
+                try:
+                    with open(ppath, encoding="utf-8") as f:
+                        base = json.load(f)
+                    line = _force_merge(rerun, c, req_list, bufs, base, budget)
+                except Exception as e:
+                    print("[!]   merge failed (%s); trying bounded constant bisection"
+                          % str(e)[:200], file=sys.stderr)
+            # Merging can fail when a decoded value contains an oversized or
+            # inconsistent table closure. Bisection is a second, bounded fallback;
+            # it keeps fitting constants and leaves only poison constants unresolved.
+            if line is None and os.environ.get("DEVIRT_BISECT"):
+                print("[!] constant merge did not produce a dump; bisecting oversized constants",
+                      file=sys.stderr)
+                budget = [int(os.environ.get("DEVIRT_BISECT_BUDGET", "24"))]
+                kept, line = _force_bisect(rerun, c, req_list, bufs, budget)
+                if line is not None:
+                    print("[*]   bisect kept %d/%d constants (dropped %d oversized)"
+                          % (len(kept), len(req_list), len(req_list) - len(kept)), file=sys.stderr)
         if os.environ.get("DEVIRT_TIMING"):
             print("[*]   constant run %.1fs (total %.0fs)" % (time.time() - t1, time.time() - t0), file=sys.stderr)
         if line is None:

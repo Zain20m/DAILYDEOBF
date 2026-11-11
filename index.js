@@ -2499,7 +2499,7 @@ function buildScriptFetchedEmbed(attachment, batchIndex, batchCount, totalFiles,
     '',
     '━━━━━━━━━━━━━━━━━━━━',
     '',
-    '**Detection complete**',
+    '**Fetch complete**',
     'The source was fetched successfully. Use .deobf to choose an analysis engine for this file.',
   ].join('\n');
 
@@ -3538,7 +3538,7 @@ async function startWorkflow(message, inlineText = null) {
       ? 'The original URL could not be downloaded automatically. Choose an engine, then attach the Lua/Luau file or paste its source.'
       : 'Select a deobfuscator below to analyze the supplied Lua/Luau source.',
     '',
-    '**Detection complete**',
+    input.pendingUrlFailure ? '**Input ready**' : '**Payload scan complete**',
     input.selectedTarget
       ? 'A larger child payload was selected from the static loader chain.'
       : (targetResolution

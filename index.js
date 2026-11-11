@@ -3259,7 +3259,7 @@ async function resolveDeobfTargetSource(input) {
     const source = String(capture && capture.source || '');
     const bytes = Buffer.byteLength(source, 'utf8');
     const empty = !source.trim();
-    const viewerLike = !empty && looksLikeViewerPageOrJavaScript(source);
+    const viewerLike = !empty && looksLikeViewerPageOrJavaScript(source, capture && capture.contentType);
     const rootUrl = Boolean(capture && capture.url && input.url && capture.url === input.url && !capture.inline);
     return {
       name: capture && capture.name || 'unnamed',
@@ -3471,15 +3471,15 @@ async function startWorkflow(message, inlineText = null) {
           ? 'The larger protected payload was selected automatically. Choose an engine for that payload.'
           : 'Select the analysis engine for this file.' +
             (targetResolution
-              ? '\\n\\nPayload scan: ' + targetResolution.discovered + ' URL(s) found, ' +
+              ? '\n\nPayload scan: ' + targetResolution.discovered + ' URL(s) found, ' +
                 targetResolution.fetched + ' source file(s) fetched, ' +
                 targetResolution.failures + ' fetch failure(s).' +
                 (targetResolution.truncated ? ' Scan reached a configured limit.' : '') +
                 (targetResolution.failureDetails && targetResolution.failureDetails.length
-                  ? '\\nFirst fetch error: ' + String(targetResolution.failureDetails[0].message || '').slice(0, 220)
-                  : '\\nNo eligible child payload was selected; keeping the original input.') +
+                  ? '\nFirst fetch error: ' + String(targetResolution.failureDetails[0].message || '').slice(0, 220)
+                  : '\nNo eligible child payload was selected; keeping the original input.') +
                 (targetResolution.captureDetails && targetResolution.captureDetails.length
-                  ? '\\nFiles: ' + targetResolution.captureDetails.slice(0, 6).map((item) =>
+                  ? '\nFiles: ' + targetResolution.captureDetails.slice(0, 6).map((item) =>
                       item.name + ' ' + formatBytes(item.bytes) + ' d' + item.depth +
                       (item.inline ? ' inline' : '') +
                       (item.excluded ? ' [' + item.excluded + ']' : ' [eligible]') +

@@ -650,6 +650,70 @@ async function sendOriginalLua(message, prompt, input, reason) {
   }).catch(() => {});
 }
 
+async function collectInputAfterUrlFailure(message, prompt, originalError) {
+  const collector = message.channel.createMessageCollector({
+    filter: (msg) => msg.author.id === message.author.id && msg.channelId === message.channelId,
+    time: INPUT_WAIT_MS,
+    max: 1,
+  });
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error('Input timed out. Attach the downloaded .lua/.luau file or paste its source, then run .deobf again.')),
+      INPUT_WAIT_MS + 1000,
+    );
+
+    collector.on('collect', async (reply) => {
+      clearTimeout(timeout);
+      collector.stop('received');
+      try {
+        if (reply.content.trim().toLowerCase() === '.cancel') {
+          throw new Error('Cancelled.');
+        }
+
+        const attachment = reply.attachments.first();
+        if (attachment) {
+          resolve(await inputFromAttachment(attachment));
+          return;
+        }
+
+        const content = reply.content.trim();
+        if (!content) throw new Error('Attach a Lua file or paste its source.');
+
+        if (/https?:\/\//i.test(content)) {
+          resolve(await inputFromUrlText(content));
+          return;
+        }
+
+        resolve({
+          source: content,
+          filename: 'pasted-script.lua',
+          originalText: content,
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+
+    collector.on('end', (_collected, reason) => {
+      clearTimeout(timeout);
+      if (reason === 'time' && collector.collected.size === 0) {
+        reject(new Error('Input timed out. Type .deobf to start again.'));
+      }
+    });
+
+    prompt.edit({
+      content: null,
+      embeds: [dailyEmbed(
+        'URL download blocked',
+        'Cloudflare rejected the direct HTTP download. The deobfuscator picker is still available: attach the Lua/Luau file you downloaded in your browser, or paste its source here. The picker will appear immediately after the source is received.\n\nOriginal error: ' + String(originalError && originalError.message || originalError).slice(0, 900),
+        DAILY_COLORS.warning
+      )],
+      components: [],
+    }).catch(() => {});
+  });
+}
+
 async function collectInput(message, prompt) {
   const collector = message.channel.createMessageCollector({
     filter: (msg) => msg.author.id === message.author.id && msg.channelId === message.channelId,
@@ -2997,9 +3061,19 @@ async function startWorkflow(message, inlineText = null) {
   // Accept an attachment, a URL / HttpGet expression on the command,
   // or a URL / HttpGet expression in the follow-up message.
   const firstAttachment = message.attachments.first();
-  const input = firstAttachment
-    ? await inputFromAttachment(firstAttachment)
-    : (inlineText ? await inputFromUrlText(inlineText) : await collectInput(message, prompt));
+  let input;
+  try {
+    input = firstAttachment
+      ? await inputFromAttachment(firstAttachment)
+      : (inlineText ? await inputFromUrlText(inlineText) : await collectInput(message, prompt));
+  } catch (error) {
+    const errorText = String(error && error.message || error);
+    if (/HTTP 403|Cloudflare browser challenge|Cloudflare Access denied/i.test(errorText)) {
+      input = await collectInputAfterUrlFailure(message, prompt, error);
+    } else {
+      throw error;
+    }
+  }
 
   if (isClearlyPlainLuau(input.source) && !/\/files\/v1\/loaders\//i.test(input.source)) {
     await sendOriginalLua(

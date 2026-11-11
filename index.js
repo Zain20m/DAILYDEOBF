@@ -2788,7 +2788,7 @@ async function processVantarmorFetcher(message, prompt, input) {
       'Custom method: ' + String(curlOptions.method || 'GET'),
       'Custom headers: ' + Object.keys(curlOptions.headers || {}).join(', '),
       'Compressed responses: ' + (curlOptions.compressed ? 'enabled (gzip/deflate/br)' : 'disabled'),
-      'Timeout: ' + String(curlOptions.maxTime || 15) + ' seconds (connect timeout option: ' + String(curlOptions.connectTimeout || 'default') + '),
+      'Timeout: ' + String(curlOptions.maxTime || 15) + ' seconds (connect timeout option: ' + String(curlOptions.connectTimeout || 'default') + ')',
       'Verbose/header/write-out details: included in http_method_report.txt and response attachments.',
       'Redirect following: ' + (curlOptions.followRedirects ? 'enabled' : 'disabled'),
       'HTTP method results:',

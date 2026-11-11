@@ -2279,14 +2279,22 @@ async function collectGetInput(message, prompt) {
         }
 
         const value = reply.content.trim();
-        const direct = value.match(/^https?:\/\/\S+$/i);
+        const direct = value.match(/https?:\/\/[^\s"'<>]+/i);
         if (direct) {
           const rawUrl = direct[0].replace(/[)\]},.;]+$/g, '');
           const parsed = new URL(rawUrl);
+          const curlOptions = parseCurlStyleOptions(value);
+          if ((curlOptions.method && curlOptions.method !== 'GET') || curlOptions.body) {
+            throw new Error('.get downloads source files with GET only. Use -G with -d/--data to add query parameters; it will not replay POST or other state-changing requests from a script.');
+          }
+          if (curlOptions.queryData) {
+            for (const [key, item] of new URLSearchParams(curlOptions.queryData)) parsed.searchParams.append(key, item);
+          }
           resolve({
             source: '',
             filename: path.basename(parsed.pathname) || 'remote-url.lua',
             url: parsed.toString(),
+            curlOptions,
           });
           return;
         }
@@ -2365,7 +2373,26 @@ async function startGetWorkflow(message, inlineSource = null) {
 
   let input;
   if (inlineSource) {
-    input = { source: inlineSource, filename: 'get-input.lua' };
+    const direct = inlineSource.match(/https?:\/\/[^\s"'<>]+/i);
+    if (direct) {
+      const rawUrl = direct[0].replace(/[)\]},.;]+$/g, '');
+      const parsed = new URL(rawUrl);
+      const curlOptions = parseCurlStyleOptions(inlineSource);
+      if ((curlOptions.method && curlOptions.method !== 'GET') || curlOptions.body) {
+        throw new Error('.get downloads source files with GET only. Use -G with -d/--data to add query parameters; it will not replay POST or other state-changing requests from a script.');
+      }
+      if (curlOptions.queryData) {
+        for (const [key, item] of new URLSearchParams(curlOptions.queryData)) parsed.searchParams.append(key, item);
+      }
+      input = {
+        source: '',
+        filename: path.basename(parsed.pathname) || 'remote-url.lua',
+        url: parsed.toString(),
+        curlOptions,
+      };
+    } else {
+      input = { source: inlineSource, filename: 'get-input.lua' };
+    }
   } else if (firstAttachment) {
     input = await inputFromAttachment(firstAttachment);
   } else {
@@ -2445,7 +2472,13 @@ async function startGetWorkflow(message, inlineSource = null) {
           status: 200,
         };
       }
-      const fetched = await fetchPublicText(rawUrl);
+      const rootOptions = input.url && rawUrl === input.url ? (input.curlOptions || {}) : {};
+      const fetched = await fetchPublicText(rawUrl, {
+        headers: rootOptions.headers,
+        compressed: rootOptions.compressed,
+        maxTime: rootOptions.maxTime,
+        connectTimeout: rootOptions.connectTimeout,
+      });
       return {
         source: decodeSource(fetched.bytes),
         finalUrl: fetched.finalUrl || rawUrl,
@@ -2598,7 +2631,8 @@ async function startGetWorkflow(message, inlineSource = null) {
     'Embedded code: recursively scans literal source passed to loadstring, including long-bracket strings.',
     '',
     'DOWNLOAD BEHAVIOUR',
-    'Only public HTTP/HTTPS GET downloads are attempted. The script is never executed.',
+    'The universal fetcher is used for public HTTP/HTTPS GET downloads. .get accepts curl-style -H/--header, -A/--user-agent, -e/--referer, -r/--range, --compressed, -L/--location, --max-time and --connect-timeout options for the root URL.',
+    'Use -G with -d/--data to append query parameters. .get does not replay POST, PUT, DELETE, TRACE or other request methods found in source; it only retrieves source with GET. The script is never executed.',
     'Unmatched source-call punctuation such as ))(), ))(, or dangling brackets is removed from URL candidates before validation and fetching; the cleaned URL is the one actually requested.',
     'POST/PUT/DELETE request bodies are not replayed. A URL found inside such request configuration is treated as a URL candidate and GET is attempted only.',
     'Redirect destinations are rechecked for public-address safety. Common GitHub blob links are converted to raw file links.',

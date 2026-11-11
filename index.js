@@ -3070,6 +3070,7 @@ async function startWorkflow(message, inlineText = null) {
     const errorText = String(error && error.message || error);
     if (/HTTP 403|Cloudflare browser challenge|Cloudflare Access denied/i.test(errorText)) {
       input = await collectInputAfterUrlFailure(message, prompt, error);
+      input.downloadError = errorText;
     } else {
       throw error;
     }
@@ -3121,7 +3122,14 @@ async function startWorkflow(message, inlineText = null) {
   ];
   await prompt.edit({
     content: null,
-    embeds: [dailyEmbed('Choose an engine', 'Select the analysis engine for this file.', DAILY_COLORS.primary)],
+    embeds: [dailyEmbed(
+      'Choose an engine',
+      (input.downloadError
+        ? '⚠️ **Original URL download error**\n' + input.downloadError.slice(0, 1200) + '\n\n'
+        : '') +
+      'Select the analysis engine for this file.',
+      input.downloadError ? DAILY_COLORS.warning : DAILY_COLORS.primary
+    )],
     components: chooseRows,
   });
 

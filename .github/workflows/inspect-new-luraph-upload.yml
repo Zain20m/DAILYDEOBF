@@ -1,191 +1,57 @@
-name: Integrate uploaded Luraph v15/v15.1 engine
+name: Restore complete Luraph 15.1 package modules
+
 on:
   push:
     paths:
       - '.github/workflows/inspect-new-luraph-upload.yml'
+
 permissions:
   contents: write
+
 jobs:
-  replace-engine:
+  restore-package-module:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Extract and integrate uploaded engine
+
+      - name: Restore the archive's bundled v14 compatibility module
         shell: bash
         run: |
           set -euo pipefail
-          git show HEAD:luraph-v15.1-engine/src/harness.js > /tmp/current-harness.js
-          git show HEAD:luraph-v15.1-engine/src/tidy.js > /tmp/current-tidy.js
-          git show HEAD:luraph-v15.1-engine/src/detect.js > /tmp/current-detect.js
-          mkdir -p /tmp/new-luraph
-          unzip -q 'upload/Luraph-v15.1-Deobfuscator-main.zip' -d /tmp/new-luraph
-          SRC=/tmp/new-luraph/Luraph-v15.1-Deobfuscator-main
-          DST=luraph-v15.1-engine
-          test -f "$SRC/core/obfuscators/luraph_v15/driver.py"
-          test -f "$SRC/src/parallel.js"
-          rsync -a --delete --exclude='__pycache__/' "$SRC/core/" "$DST/core/"
-          rsync -a --delete "$SRC/src/" "$DST/src/"
-          cp /tmp/current-tidy.js "$DST/src/tidy.js"
-          cp /tmp/current-detect.js "$DST/src/detect.js"
-          rsync -a --delete "$SRC/runtime/" "$DST/runtime/"
-          rsync -a --delete "$SRC/bin/" "$DST/bin/"
-          cp "$SRC/deob.js" "$DST/deob.js"
-          cp "$SRC/protocol.json" "$DST/protocol.json"
-          cp "$SRC/build_luau.py" "$DST/build_luau.py"
-          cp "$SRC/README.md" "$DST/README.md"
-          cp "$SRC/TECHNICAL.md" "$DST/TECHNICAL.md"
-          cp "$SRC/LICENSE" "$DST/LICENSE"
-          cp "$SRC/package.json" "$DST/package.json"
-          rsync -a --delete "$SRC/test/" "$DST/test/"
+          mkdir -p /tmp/luraph-archive
+          unzip -q 'upload/Luraph-v15.1-Deobfuscator-main.zip' -d /tmp/luraph-archive
+          SRC=/tmp/luraph-archive/Luraph-v15.1-Deobfuscator-main
+          test -f "$SRC/core/obfuscators/luraph_v14/__init__.py"
+          test -f "$SRC/core/obfuscators/luraph_v14/driver.py"
+          test -f "$SRC/core/obfuscators/luraph_v14/vmmap.py"
+          test -f "$SRC/core/obfuscators/luraph_v14/devirt.py"
+          mkdir -p luraph-v15.1-engine/core/obfuscators
+          rm -rf luraph-v15.1-engine/core/obfuscators/luraph_v14
+          cp -a "$SRC/core/obfuscators/luraph_v14" luraph-v15.1-engine/core/obfuscators/
           python3 - <<'PY'
           from pathlib import Path
-          # Keep the known-good DailyDeobf segmented-chunk parser with the new harness.
-          current = Path('/tmp/current-harness.js').read_text()
-          cs = current.index('function takeChunks(body) {')
-          ce = current.index('\n\nclass HarnessServer', cs)
-          parser = current[cs:ce]
-          hp = Path('luraph-v15.1-engine/src/harness.js')
-          hs = hp.read_text()
-          hs0 = hs.index('function takeChunks(body) {')
-          he0 = hs.index('\n\nclass HarnessServer', hs0)
-          hp.write_text(hs[:hs0] + parser + hs[he0:])
-          # Emit large dynamic chunks as bounded records rather than one huge hex line.
-          ep = Path('luraph-v15.1-engine/runtime/envlog.luau')
-          es = ep.read_text()
-          old = '''for _, key in R.ipairs(NEWCHUNKS) do
-                  R.print(MARK .. "CHUNK " .. key)
-                  R.print((R.gsub(NEWCHUNKS[key], ".", function(c) return R.fmt("%02x", R.byte(c)) end)))
-          end'''
-          new = '''-- Keep protocol output lines small; large single-line hex chunks can be truncated.
-          local CHUNK_BYTES_PER_RECORD = 2048
-          for _, key in R.ipairs(NEWCHUNKS) do
-                  local src = NEWCHUNKS[key]
-                  local sourceBytes = #src
-                  local partCount = (sourceBytes + CHUNK_BYTES_PER_RECORD - 1) // CHUNK_BYTES_PER_RECORD
-                  R.print(MARK .. "CHUNK " .. key .. " " .. sourceBytes .. " " .. partCount)
-                  for part = 1, partCount do
-                          local first = (part - 1) * CHUNK_BYTES_PER_RECORD + 1
-                          local last = first + CHUNK_BYTES_PER_RECORD - 1
-                          if last > sourceBytes then last = sourceBytes end
-                          local piece = R.sub(src, first, last)
-                          local hex = R.gsub(piece, ".", function(c) return R.fmt("%02x", R.byte(c)) end)
-                          R.print(MARK .. "CHUNKDATA " .. key .. " " .. part .. " " .. hex)
-                  end
-          end'''
-          if old in es:
-              es = es.replace(old, new, 1)
-          elif new not in es:
-              raise SystemExit('new runtime chunk emitter did not match expected source')
-          ep.write_text(es)
-          # Add the terminal PC-R01 classifier and preserve chunks before later failures.
-          dp = Path('luraph-v15.1-engine/src/driver.js')
-          ds = dp.read_text()
-          marker = 'const SPIN_CHECKS = 24;\n'
-          helper = '''const SPIN_CHECKS = 24;
-
-          function isBootstrapFailureBeforePayload(body) {
-            const lines = String(body || '').split(/\\r?\\n/);
-            const start = lines.findIndex((line) => /^\\s*--\\s*run status:/i.test(line));
-            if (start < 0) return false;
-            const statusLines = [lines[start]];
-            for (let i = start + 1; i < lines.length; i++) {
-              const line = lines[i];
-              if (/^\\s*--\\s*\\d+\\s+statements recorded\\b/i.test(line)) break;
-              if (!/^\\s*--/.test(line)) break;
-              statusLines.push(line);
-            }
-            const status = statusLines.join('\\n');
-            return /\\bscript error\\b/i.test(status)
-              && /Environment compatibility check failed\\s*\\(PC-R01\\)/i.test(status);
-          }
-          '''
-          if marker in ds:
-              ds = ds.replace(marker, helper, 1)
-          elif 'function isBootstrapFailureBeforePayload' not in ds:
-              raise SystemExit('new driver SPIN marker missing')
-          old_take = 'const { chunks: found, body: cleanBody } = harness.takeChunks(body);'
-          new_take = old_take + "\n    for (const item of incomplete) process.stderr.write(`[!] dynamic VM chunk ${item.key} was not reconstructed: ${item.reason}\\n`);"
-          new_take_full = 'const { chunks: found, incomplete = [], body: cleanBody } = harness.takeChunks(body);' + new_take[len(old_take):]
-          if old_take in ds:
-              ds = ds.replace(old_take, new_take_full, 1)
-          elif new_take_full not in ds:
-              raise SystemExit('new driver chunk parser hook did not match expected source')
-          old_chunk = '''      if (!chunks[key]) {
-        rawChunks[key] = src;
-        chunks[key] = patchChunk(src, job.outdir, key);'''
-          new_chunk = '''      if (!chunks[key]) {
-        rawChunks[key] = src;
-        // Persist the raw child before later prototype/lift failures.
-        job.write(job.path(`.chunk_${key}.luau`), src, 'latin1');
-        chunks[key] = patchChunk(src, job.outdir, key);'''
-          if old_chunk in ds:
-              ds = ds.replace(old_chunk, new_chunk, 1)
-          elif new_chunk not in ds:
-              raise SystemExit('raw child chunk persistence patch did not match')
-          old_devirt = '''      if (devirtOn) {
-        const chunkPaths = Object.entries(rawChunks).map(([k, src]) =>
-          job.write(job.path(`.chunk_${k}.luau`), src, 'latin1')
-        );'''
-          new_devirt = '''      const pcR01BeforePayload = isBootstrapFailureBeforePayload(body);
-      if (devirtOn && !pcR01BeforePayload) {
-        const chunkPaths = Object.keys(rawChunks).map((k) =>
-          job.path(`.chunk_${k}.luau`)
-        );'''
-          if old_devirt in ds:
-              ds = ds.replace(old_devirt, new_devirt, 1)
-          elif new_devirt not in ds:
-              raise SystemExit('PC-R01 / raw chunk path patch did not match')
-          old_close = "        await require('./parallel').runCandidates(cfgData, job);\n      }"
-          new_close = "        await require('./parallel').runCandidates(cfgData, job);\n      } else if (devirtOn && pcR01BeforePayload) {\n        process.stderr.write('[!] skipping VM lifting: PC-R01 is present in the runtime error block before payload execution\\n');\n      }"
-          if old_close in ds:
-              ds = ds.replace(old_close, new_close, 1)
-          elif new_close not in ds:
-              raise SystemExit('PC-R01 devirtualization guard close did not match')
-          old_export = 'module.exports = { run, runGeneric };'
-          new_export = 'module.exports = { run, runGeneric, isBootstrapFailureBeforePayload };'
-          if old_export in ds:
-              ds = ds.replace(old_export, new_export, 1)
-          elif new_export not in ds:
-              raise SystemExit('driver export patch did not match expected source')
-          dp.write_text(ds)
+          module = Path("luraph-v15.1-engine/core/obfuscators/luraph_v14")
+          required = ("__init__.py", "driver.py", "vmmap.py", "devirt.py")
+          missing = [name for name in required if not (module / name).is_file()]
+          if missing:
+              raise SystemExit("Restored compatibility module is incomplete: " + ", ".join(missing))
+          for path in module.glob("*.py"):
+              compile(path.read_text(encoding="utf-8"), str(path), "exec")
+          print("RESTORED_V15_ARCHIVE_COMPATIBILITY_MODULE_OK")
           PY
-          rm -rf luraph-v14-engine
-          find luraph-v15.1-engine -type d -name __pycache__ -prune -exec rm -rf {} +
-          find luraph-v15.1-engine -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
-      - name: Validate engine and Discord CLI path
+
+      - name: Commit restored package files
         shell: bash
-        run: |
-          set -euo pipefail
-          node --check index.js
-          node --check luraph-v15.1-engine/deob.js
-          node --check luraph-v15.1-engine/src/driver.js
-          node --check luraph-v15.1-engine/src/harness.js
-          node --check luraph-v15.1-engine/src/parallel.js
-          node --check luraph-v15.1-engine/src/vmmap.js
-          node --test scripts/test-flowauth-version.js
-          node luraph-v15.1-engine/test/run.js
-          node scripts/test-lift-validation.js
-          python3 luraph-v15.1-engine/build_luau.py --portable --jobs 2
-          node scripts/setup-engines.js
-          TMP=$(mktemp -d)
-          SRC=/tmp/new-luraph/Luraph-v15.1-Deobfuscator-main
-          ls -l luraph-v15.1-engine/bin/luau luraph-v15.1-engine/bin/luau-ast
-          file luraph-v15.1-engine/bin/luau
-          set +e
-          DEOB_FAST=1 DEOB_RAW="$TMP/raw.log" node luraph-v15.1-engine/deob.js "$SRC/samples_v15.1_deobfuscated/2153b779fa7a87f2_obfuscated.lua" --plugin luraph_v15 --debug --timeout 90 --budget 30 --max-runs 4 --devirt-rounds 20 -o "$TMP/result.lua"
-          rc=$?
-          set -e
-          if [ "$rc" -ne 0 ]; then echo '--- raw Luau output ---'; cat "$TMP/raw.log" 2>/dev/null || true; exit "$rc"; fi
-          cmp "$TMP/result.lua" "$SRC/samples_v15.1_deobfuscated/2153b779fa7a87f2_Deobfuscated.lua"
-      - name: Commit validated engine replacement
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A luraph-v15.1-engine luraph-v14-engine
-          if git diff --cached --quiet; then echo 'No engine changes to commit'; exit 0; fi
-          git commit -m 'Replace v15 and v15.1 engine with uploaded build'
+          git add luraph-v15.1-engine/core/obfuscators/luraph_v14
+          if git diff --cached --quiet; then
+            echo 'Compatibility module is already present'
+            exit 0
+          fi
+          git commit -m 'Restore complete v15.1 archive compatibility module'
           git push

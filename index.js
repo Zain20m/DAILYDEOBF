@@ -338,10 +338,10 @@ function isClearlyPlainLuau(source) {
 
   // A URL may return a webpage or JavaScript bundle instead of Lua source.
   // Never classify those as plain Luau, because that would skip the engine picker.
-  if (/<\\/?(?:!doctype|html|head|body|script)\\b/i.test(text) ||
-      /\\b(?:document\\.(?:getElementById|querySelector|querySelectorAll|createElement)|window\\.(?:location|document)|navigator\\.clipboard)\\b/i.test(text) ||
-      /\\b(?:const|let|var)\\s+[A-Za-z_$][\\w$]*\\s*=|=>|\\.addEventListener\\s*\\(/.test(text) ||
-      /\\b(?:innerHTML|textContent|createElement|querySelector)\\b/.test(text)) {
+  if (/<\/?(?:!doctype|html|head|body|script)\b/i.test(text) ||
+      /\b(?:document\.(?:getElementById|querySelector|querySelectorAll|createElement)|window\.(?:location|document)|navigator\.clipboard)\b/i.test(text) ||
+      /\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=|=>|\.addEventListener\s*\(/.test(text) ||
+      /\b(?:innerHTML|textContent|createElement|querySelector)\b/.test(text)) {
     return false;
   }
 

@@ -40,7 +40,6 @@ jobs:
           cp "$SRC/LICENSE" "$DST/LICENSE"
           cp "$SRC/package.json" "$DST/package.json"
           rsync -a --delete "$SRC/test/" "$DST/test/"
-          rm -rf "$DST/core/obfuscators/luraph_v14"
           python3 - <<'PY'
           from pathlib import Path
           # Keep the known-good DailyDeobf segmented-chunk parser with the new harness.
@@ -76,8 +75,11 @@ jobs:
                           R.print(MARK .. "CHUNKDATA " .. key .. " " .. part .. " " .. hex)
                   end
           end'''
-          if old not in es: raise SystemExit('new runtime chunk emitter did not match expected source')
-          ep.write_text(es.replace(old, new, 1))
+          if old in es:
+              es = es.replace(old, new, 1)
+          elif new not in es:
+              raise SystemExit('new runtime chunk emitter did not match expected source')
+          ep.write_text(es)
           # Add the terminal PC-R01 classifier and preserve chunks before later failures.
           dp = Path('luraph-v15.1-engine/src/driver.js')
           ds = dp.read_text()
@@ -100,11 +102,17 @@ jobs:
               && /Environment compatibility check failed\\s*\\(PC-R01\\)/i.test(status);
           }
           '''
-          if marker not in ds: raise SystemExit('new driver SPIN marker missing')
-          ds = ds.replace(marker, helper, 1)
+          if marker in ds:
+              ds = ds.replace(marker, helper, 1)
+          elif 'function isBootstrapFailureBeforePayload' not in ds:
+              raise SystemExit('new driver SPIN marker missing')
           old_take = 'const { chunks: found, body: cleanBody } = harness.takeChunks(body);'
           new_take = old_take + "\n    for (const item of incomplete) process.stderr.write(`[!] dynamic VM chunk ${item.key} was not reconstructed: ${item.reason}\\n`);"
-          ds = ds.replace(old_take, 'const { chunks: found, incomplete = [], body: cleanBody } = harness.takeChunks(body);' + new_take[len(old_take):], 1)
+          new_take_full = 'const { chunks: found, incomplete = [], body: cleanBody } = harness.takeChunks(body);' + new_take[len(old_take):]
+          if old_take in ds:
+              ds = ds.replace(old_take, new_take_full, 1)
+          elif new_take_full not in ds:
+              raise SystemExit('new driver chunk parser hook did not match expected source')
           old_chunk = '''      if (!chunks[key]) {
         rawChunks[key] = src;
         chunks[key] = patchChunk(src, job.outdir, key);'''
@@ -113,8 +121,10 @@ jobs:
         // Persist the raw child before later prototype/lift failures.
         job.write(job.path(`.chunk_${key}.luau`), src, 'latin1');
         chunks[key] = patchChunk(src, job.outdir, key);'''
-          if old_chunk not in ds: raise SystemExit('raw child chunk persistence patch did not match')
-          ds = ds.replace(old_chunk, new_chunk, 1)
+          if old_chunk in ds:
+              ds = ds.replace(old_chunk, new_chunk, 1)
+          elif new_chunk not in ds:
+              raise SystemExit('raw child chunk persistence patch did not match')
           old_devirt = '''      if (devirtOn) {
         const chunkPaths = Object.entries(rawChunks).map(([k, src]) =>
           job.write(job.path(`.chunk_${k}.luau`), src, 'latin1')
@@ -124,13 +134,22 @@ jobs:
         const chunkPaths = Object.keys(rawChunks).map((k) =>
           job.path(`.chunk_${k}.luau`)
         );'''
-          if old_devirt not in ds: raise SystemExit('PC-R01 / raw chunk path patch did not match')
-          ds = ds.replace(old_devirt, new_devirt, 1)
+          if old_devirt in ds:
+              ds = ds.replace(old_devirt, new_devirt, 1)
+          elif new_devirt not in ds:
+              raise SystemExit('PC-R01 / raw chunk path patch did not match')
           old_close = "        await require('./parallel').runCandidates(cfgData, job);\n      }"
           new_close = "        await require('./parallel').runCandidates(cfgData, job);\n      } else if (devirtOn && pcR01BeforePayload) {\n        process.stderr.write('[!] skipping VM lifting: PC-R01 is present in the runtime error block before payload execution\\n');\n      }"
-          if old_close not in ds: raise SystemExit('PC-R01 devirtualization guard close did not match')
-          ds = ds.replace(old_close, new_close, 1)
-          ds = ds.replace('module.exports = { run, runGeneric };', 'module.exports = { run, runGeneric, isBootstrapFailureBeforePayload };')
+          if old_close in ds:
+              ds = ds.replace(old_close, new_close, 1)
+          elif new_close not in ds:
+              raise SystemExit('PC-R01 devirtualization guard close did not match')
+          old_export = 'module.exports = { run, runGeneric };'
+          new_export = 'module.exports = { run, runGeneric, isBootstrapFailureBeforePayload };'
+          if old_export in ds:
+              ds = ds.replace(old_export, new_export, 1)
+          elif new_export not in ds:
+              raise SystemExit('driver export patch did not match expected source')
           dp.write_text(ds)
           PY
           rm -rf luraph-v14-engine

@@ -205,7 +205,7 @@ async function readResponse(response, maxBytes = Infinity) {
 }
 
 function parseCurlStyleOptions(rawText) {
-  const tokens = String(rawText || '').match(/"[^"]*"|'[^']*'|\\S+/g) || [];
+  const tokens = String(rawText || '').match(/"[^"]*"|'[^']*'|\S+/g) || [];
   const args = tokens.map((token) => token.replace(/^["']|["']$/g, ''));
   const options = { headers: {}, flags: [], followRedirects: true, compressed: false };
   for (let i = 0; i < args.length; i++) {
@@ -272,7 +272,7 @@ async function fetchPublicText(rawUrl, curlOptions = {}) {
     const connectionErrors = [];
     for (const address of addresses) {
       try {
-        response = await requestPinnedAddress(current, address, { method: curlOptions.method || 'GET', headers: curlOptions.headers || {}, body: curlOptions.body, compressed: curlOptions.compressed });
+        response = await requestPinnedAddress(current, address, { method: curlOptions.method || 'GET', headers: curlOptions.headers || {}, body: curlOptions.body, compressed: curlOptions.compressed, maxTime: curlOptions.maxTime });
         break;
       } catch (error) {
         const reason = error && (

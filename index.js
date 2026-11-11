@@ -1188,19 +1188,28 @@ async function sendAnalysisOutput(message, input, config) {
     : (traceBytes ? preferredTracePath : defaultTracePath);
   if (await fileSize(candidatePath) > 0) await prependDailyDeobfHeader(candidatePath);
   const candidateBytes = await fileSize(candidatePath);
+  const candidateOutputName = hasLiftedSource
+    ? 'deobfuscated.luau'
+    : (environmentProbeOnly
+      ? 'environment_probe_partial.txt'
+      : (hasLiftCandidate ? 'partial_result.luau' : 'runtime_trace.luau'));
   let attachedCandidateName = null;
-  if (candidateBytes > 0 && candidateBytes <= MAX_OUTPUT_BYTES) {
-    attachedCandidateName = hasLiftedSource
-      ? 'deobfuscated.luau'
-      : (environmentProbeOnly
-        ? 'environment_probe_partial.txt'
-        : (hasLiftCandidate ? 'partial_result.luau' : 'runtime_trace.luau'));
-    attachments.push(new AttachmentBuilder(await fs.readFile(candidatePath), { name: attachedCandidateName }));
+  let candidateParts = [];
+  if (candidateBytes > 0) {
+    if (candidateBytes <= MAX_OUTPUT_BYTES) {
+      attachedCandidateName = candidateOutputName;
+      attachments.push(new AttachmentBuilder(await fs.readFile(candidatePath), { name: attachedCandidateName }));
+    } else {
+      const candidateBuffer = await fs.readFile(candidatePath);
+      candidateParts = makeSourceParts(candidateBuffer, candidateOutputName);
+      attachedCandidateName = candidateParts.length + ' output parts';
+    }
   }
 
   // The report is part of the result, not merely a file written and left behind.
-  // Keep a total attachment budget so diagnostic chunks cannot crowd out the trace.
-  let attachmentBytes = candidateBytes > 0 ? candidateBytes : 0;
+  // Keep the diagnostic bundle within one Discord upload; oversized source is
+  // sent separately as ordered parts so it is never silently dropped.
+  let attachmentBytes = candidateBytes > 0 && candidateBytes <= MAX_OUTPUT_BYTES ? candidateBytes : 0;
   const reportBytes = await fileSize(reportPath);
   if (reportBytes > 0 && attachmentBytes + reportBytes <= MAX_OUTPUT_BYTES) {
     attachments.push(new AttachmentBuilder(reportPath, { name: 'analysis-report.txt' }));
@@ -1247,11 +1256,26 @@ async function sendAnalysisOutput(message, input, config) {
       attachedChunkCount + ' dynamic VM chunk(s).';
   }
 
+  if (candidateParts.length) {
+    summary += '\\nThe source exceeded one attachment. It is split into ' + candidateParts.length +
+      ' ordered parts; join the files in numeric order to rebuild the complete output.';
+  }
+
   await message.reply({
     embeds: [dailyEmbed(config.label + ' · Analysis result', summary.replace(/\*\*/g, ''), hasLiftedSource ? DAILY_COLORS.success : DAILY_COLORS.warning)],
     files: attachments,
     allowedMentions: { repliedUser: false },
   });
+
+  for (let index = 0; index < candidateParts.length; index++) {
+    const part = candidateParts[index];
+    await message.reply({
+      content: '📄 Output part ' + (index + 1) + '/' + candidateParts.length +
+        ' · ' + part.name + '\\nJoin these files in numeric order. No source bytes were discarded.',
+      files: [new AttachmentBuilder(part.data, { name: part.name })],
+      allowedMentions: { repliedUser: false },
+    });
+  }
 
   // Keep the original large protected input downloadable beside the recovered
   // result. These are sent separately so the input cannot consume the output

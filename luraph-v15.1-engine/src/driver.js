@@ -10,6 +10,11 @@ const { inspectLiftText } = require('../../scripts/lift-validation');
 
 const SPIN_CHECKS = 24;
 
+function isBootstrapFailureBeforePayload(body) {
+  return /Environment compatibility check failed\s*\(PC-R01\)/i.test(body)
+    && /attempt to get length of a number value/i.test(body);
+}
+
 function patchChunk(src, tmpdir, chunkTag) {
   const p = path.join(tmpdir, `_chunk_${harness.chunkKey(src)}.luau`);
   fs.writeFileSync(p, src, 'latin1');
@@ -167,8 +172,7 @@ async function run(job) {
       process.stderr.write(`[!] proto capture failed: ${protosJson}\n`);
     } else {
       job.write(ppath, protosJson);
-      const pcR01BeforePayload = /Environment compatibility check failed\\s*\\(PC-R01\\)/i.test(body)
-        && /attempt to get length of a number value/i.test(body);
+      const pcR01BeforePayload = isBootstrapFailureBeforePayload(body);
       if (devirtOn && !pcR01BeforePayload) {
         const cfgData = {
           input: job.input,
@@ -289,4 +293,4 @@ async function runGeneric(job) {
   return job.tracePath;
 }
 
-module.exports = { run, runGeneric };
+module.exports = { run, runGeneric, isBootstrapFailureBeforePayload };

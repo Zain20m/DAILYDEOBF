@@ -301,52 +301,67 @@ async function fetchPublicText(rawUrl) {
 }
 
 async function probePublicHttpMethods(rawUrl) {
-  const methods = ['HEAD', 'OPTIONS', 'POST', 'PROPFIND', 'SEARCH', 'REPORT', 'QUERY', 'TRACE'];
   const url = new URL(rawUrl);
   url.hash = '';
   const addresses = await assertPublicUrl(url);
   const results = [];
 
-  for (const method of methods) {
+  async function runProbe(label, method, headers = {}) {
     let response = null;
     let lastError = null;
     for (const address of addresses) {
       try {
-        response = await requestPinnedAddress(url, address, { method });
+        response = await requestPinnedAddress(url, address, { method, headers });
         break;
       } catch (error) {
         lastError = error;
       }
     }
-
     if (!response) {
-      results.push({ method, error: String(lastError && (lastError.message || lastError) || 'Request failed') });
-      continue;
+      results.push({ method: label, error: String(lastError && (lastError.message || lastError) || 'Request failed') });
+      return null;
     }
-
-    const headers = response.headers.entries()
-      .filter(([name]) => /^(allow|accept|accept-patch|accept-post|content-type|content-length|content-disposition|dav|location|server|www-authenticate)$/i.test(name));
+    const responseHeaders = response.headers.entries()
+      .filter(([name]) => /^(allow|accept|accept-patch|accept-post|content-type|content-length|content-disposition|content-range|etag|last-modified|dav|location|server|www-authenticate|vary)$/i.test(name));
     let body = Buffer.alloc(0);
     let bodyError = null;
     try {
       body = await readResponse(response, 512 * 1024);
     } catch (error) {
       bodyError = String(error && (error.message || error) || 'Response body could not be read');
-      if (response.body && typeof response.body.cancel === 'function') {
-        await response.body.cancel().catch(() => {});
-      }
+      if (response.body && typeof response.body.cancel === 'function') await response.body.cancel().catch(() => {});
     }
-
-    results.push({
-      method,
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-      body,
-      bodyError,
-    });
+    const result = { method: label, status: response.status, statusText: response.statusText, headers: responseHeaders, body, bodyError };
+    results.push(result);
+    return result;
   }
 
+  await runProbe('HEAD', 'HEAD');
+  await runProbe('OPTIONS', 'OPTIONS');
+  await runProbe('POST (empty body)', 'POST');
+  await runProbe('PROPFIND', 'PROPFIND');
+  await runProbe('SEARCH', 'SEARCH');
+  await runProbe('REPORT', 'REPORT');
+  await runProbe('QUERY', 'QUERY');
+  await runProbe('TRACE', 'TRACE');
+
+  const headResult = results.find((item) => item.method === 'HEAD');
+  const headerValue = (result, name) => {
+    const item = (result && result.headers || []).find(([key]) => key.toLowerCase() === name);
+    return item ? item[1] : null;
+  };
+  await runProbe('GET Range bytes=0-262143', 'GET', { range: 'bytes=0-262143' });
+  const etag = headerValue(headResult, 'etag');
+  const lastModified = headerValue(headResult, 'last-modified');
+  if (etag) {
+    await runProbe('GET If-None-Match', 'GET', { 'if-none-match': etag });
+  } else if (lastModified) {
+    await runProbe('GET If-Modified-Since', 'GET', { 'if-modified-since': lastModified });
+  } else {
+    results.push({ method: 'Conditional GET', skipped: 'HEAD did not provide ETag or Last-Modified.' });
+  }
+  await runProbe('GET Accept: application/json', 'GET', { accept: 'application/json, */*;q=0.5' });
+  await runProbe('GET Accept: text/plain', 'GET', { accept: 'text/plain, */*;q=0.5' });
   return results;
 }
 
@@ -2722,6 +2737,7 @@ async function processVantarmorFetcher(message, prompt, input) {
       'HTTP method results:',
       ...results.map((result) => {
         if (result.error) return result.method + ': ERROR - ' + result.error;
+        if (result.skipped) return result.method + ': SKIPPED - ' + result.skipped;
         const lines = [result.method + ': HTTP ' + result.status + ' ' + result.statusText];
         for (const [name, value] of result.headers || []) lines.push('  ' + name + ': ' + value);
         if (result.bodyError) lines.push('  Body: ' + result.bodyError);
@@ -2729,7 +2745,7 @@ async function processVantarmorFetcher(message, prompt, input) {
         return lines.join('\n');
       }),
       '',
-      'Automatically tested: GET (initial download), HEAD, OPTIONS, bodyless POST, PROPFIND, SEARCH, REPORT, QUERY and TRACE.',
+      'Automatically tested: GET (initial download), HEAD, OPTIONS, bodyless POST, PROPFIND, SEARCH, REPORT, QUERY, TRACE, byte-range GET, conditional GET (when validators exist), and Accept-header content negotiation.',
       'IANA HTTP method registry inventory (not all are sent): ACL, BASELINE-CONTROL, BIND, CHECKIN, CHECKOUT, CONNECT, COPY, DELETE, GET, HEAD, LABEL, LINK, LOCK, MERGE, MKACTIVITY, MKCALENDAR, MKCOL, MKREDIRECTREF, MKWORKSPACE, MOVE, OPTIONS, ORDERPATCH, PATCH, POST, PRI, PROPFIND, PROPPATCH, PUT, QUERY, REBIND, REPORT, SEARCH, TRACE, UNBIND, UNCHECKOUT, UNLINK, UNLOCK, UPDATE, UPDATEREDIRECTREF, VERSION-CONTROL.',
       'State-changing methods and tunnel/connection methods are listed for reference but not automatically sent.',
       'GraphQL is an API format usually carried over HTTP, not a method; it needs a specific query and endpoint. FTP, SFTP, SMTP, WebSocket and MQTT are separate protocols and are not HTTP methods.',

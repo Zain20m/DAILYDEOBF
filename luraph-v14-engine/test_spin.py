@@ -58,6 +58,16 @@ end
             "ordinary application loops must not be mistaken for VM dispatchers",
         )
 
+    def test_repository_v14_9_sample_has_a_patched_vm_dispatcher(self):
+        sample_path = ENGINE_ROOT / "samples" / "v14.9.txt"
+        source = sample_path.read_text(encoding="latin-1")
+        patched = patch_spin(source)
+        self.assertGreater(
+            patched.count(SPIN_SNIPPET),
+            0,
+            "the bundled v14.9 sample must have at least one recognized VM dispatcher",
+        )
+
     def test_repeat_dispatcher_keeps_its_loop_form_and_body(self):
         source = """\
 local function vm(ops, pc)

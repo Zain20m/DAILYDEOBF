@@ -3068,19 +3068,21 @@ async function startWorkflow(message, inlineText = null) {
       : (inlineText ? await inputFromUrlText(inlineText) : await collectInput(message, prompt));
   } catch (error) {
     const errorText = String(error && error.message || error);
-    // A URL may be supplied in the follow-up message collected by collectInput(),
-    // not only inline with .deobf. Route Cloudflare failures from either path
-    // through the same file/paste fallback and retain the original error for
-    // the engine picker.
+    // Keep the engine picker visible even when URL download fails. The selected
+    // engine will request an upload/pasted source only after the user chooses it.
     if (/HTTP 403|Cloudflare browser challenge|Cloudflare Access denied/i.test(errorText)) {
-      input = await collectInputAfterUrlFailure(message, prompt, error);
-      input.downloadError = errorText;
+      input = {
+        source: '',
+        filename: 'pending-script.lua',
+        downloadError: errorText,
+        pendingUrlFailure: true,
+      };
     } else {
       throw error;
     }
   }
 
-  if (isClearlyPlainLuau(input.source) && !/\/files\/v1\/loaders\//i.test(input.source)) {
+  if (input.source && isClearlyPlainLuau(input.source) && !/\/files\/v1\/loaders\//i.test(input.source)) {
     await sendOriginalLua(
       message,
       prompt,
@@ -3131,11 +3133,22 @@ async function startWorkflow(message, inlineText = null) {
       (input.downloadError
         ? '⚠️ **Original URL download error**\n' + input.downloadError.slice(0, 1200) + '\n\n'
         : '') +
-      'Select the analysis engine for this file.',
+      (input.pendingUrlFailure
+        ? 'Choose an engine now. After selecting one, attach the Lua/Luau file or paste its source.'
+        : 'Select the analysis engine for this file.'),
       input.downloadError ? DAILY_COLORS.warning : DAILY_COLORS.primary
     )],
     components: chooseRows,
   });
+
+  const getWorkflowInput = async () => {
+    if (input.pendingUrlFailure) {
+      const originalError = input.downloadError;
+      const supplied = await collectInputAfterUrlFailure(message, prompt, new Error(originalError));
+      input = { ...supplied, downloadError: originalError };
+    }
+    return input;
+  };
 
   const componentCollector = prompt.createMessageComponentCollector({
     time: PICKER_WAIT_MS,
@@ -3146,7 +3159,7 @@ async function startWorkflow(message, inlineText = null) {
       await interaction.deferUpdate();
       componentCollector.stop('selected');
       try {
-        await processVantarmorFetcher(message, prompt, input);
+        await processVantarmorFetcher(message, prompt, await getWorkflowInput());
       } catch (error) {
         await showDeobfFailure(message, prompt, 'Universal Loader Fetcher failed', error);
       }
@@ -3161,7 +3174,7 @@ async function startWorkflow(message, inlineText = null) {
       await interaction.deferUpdate();
       componentCollector.stop('selected');
       try {
-        await processFlowAuth(message, prompt, input);
+        await processFlowAuth(message, prompt, await getWorkflowInput());
       } catch (error) {
         await showDeobfFailure(message, prompt, 'FlowAuth analysis failed', error);
       }
@@ -3171,7 +3184,7 @@ async function startWorkflow(message, inlineText = null) {
       await interaction.deferUpdate();
       componentCollector.stop('selected');
       try {
-        await processIronbrew1(message, prompt, input);
+        await processIronbrew1(message, prompt, await getWorkflowInput());
       } catch (error) {
         await showDeobfFailure(message, prompt, 'IronBrew 1 failed', error);
       }
@@ -3181,7 +3194,7 @@ async function startWorkflow(message, inlineText = null) {
       await interaction.deferUpdate();
       componentCollector.stop('selected');
       try {
-        await processCenturion(message, prompt, input);
+        await processCenturion(message, prompt, await getWorkflowInput());
       } catch (error) {
         await showDeobfFailure(message, prompt, 'Centurion failed', error);
       }
@@ -3191,7 +3204,7 @@ async function startWorkflow(message, inlineText = null) {
       await interaction.deferUpdate();
       componentCollector.stop('selected');
       try {
-        await processLuraph151(message, prompt, input);
+        await processLuraph151(message, prompt, await getWorkflowInput());
       } catch (error) {
         await showDeobfFailure(message, prompt, 'Luraph 15.1 failed', error);
       }
@@ -3201,7 +3214,7 @@ async function startWorkflow(message, inlineText = null) {
       await interaction.deferUpdate();
       componentCollector.stop('selected');
       try {
-        await processLuraphV15(message, prompt, input);
+        await processLuraphV15(message, prompt, await getWorkflowInput());
       } catch (error) {
         await showDeobfFailure(message, prompt, 'Luraph v15 failed', error);
       }

@@ -161,7 +161,7 @@ jobs:
               # Use the archive's complete public sample suite against the
               # integrated engine tree, not just one hand-picked fixture.
               for entry in names:
-                  if entry == runner_entry or entry.startswith(sample_prefix):
+                  if (entry == runner_entry or entry.startswith(sample_prefix)) and not entry.endswith("/"):
                       relative = entry[len(root):]
                       target = engine_root / relative
                       target.parent.mkdir(parents=True, exist_ok=True)

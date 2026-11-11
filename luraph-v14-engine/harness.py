@@ -246,14 +246,14 @@ def _communicate(cmd, timeout, stall):
 
 def run_once(luau, source, cfg, hpath, timeout, keep, chunks=None):
     cfg = dict(cfg, heartbeat=HEARTBEAT) if "heartbeat" not in cfg else cfg
-    with open(hpath, "w", encoding="latin-1", newline="\\n") as f:
+    with open(hpath, "w", encoding="latin-1", newline="\n") as f:
         f.write(build_harness(source, cfg, chunks))
     try:
         out, errb = _communicate([luau, hpath], timeout, STALL if cfg.get("heartbeat") else None)
     except subprocess.TimeoutExpired as e:
         partial_out = getattr(e, "output", None) or b""
         partial_err = getattr(e, "stderr", None) or b""
-        stdout = re.sub(r"\\x00HB\\r?\\n {16384}\\r?\\n", "", partial_out.decode("utf-8", "replace")).replace("\\r\\n", "\\n")
+        stdout = re.sub(r"\x00HB\r?\n {16384}\r?\n", "", partial_out.decode("utf-8", "replace")).replace("\r\n", "\n")
         LAST_RAW[0] = stdout + partial_err.decode("utf-8", "replace")
         elapsed = int(round(e.timeout or 0))
         if getattr(e, "reason", None) == "heartbeat":
@@ -263,7 +263,7 @@ def run_once(luau, source, cfg, hpath, timeout, keep, chunks=None):
     finally:
         if not keep and os.path.exists(hpath):
             os.remove(hpath)
-    stdout = re.sub(r"\\x00HB\\r?\\n {16384}\\r?\\n", "", out.decode("utf-8", "replace")).replace("\\r\\n", "\\n")
+    stdout = re.sub(r"\x00HB\r?\n {16384}\r?\n", "", out.decode("utf-8", "replace")).replace("\r\n", "\n")
     LAST_RAW[0] = stdout + errb.decode("utf-8", "replace")
 
 def save_raw(path):

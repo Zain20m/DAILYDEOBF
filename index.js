@@ -332,6 +332,16 @@ async function inputFromUrlText(text) {
   return { source: decodeSource(result.bytes), filename, url: parsed.toString(), originalText: String(text || '') };
 }
 
+function looksLikeViewerPageOrJavaScript(source) {
+  const text = String(source || '').replace(/^\uFEFF/, '').trim();
+  if (!text) return false;
+  return /\bfunction\s+(?:escapeHTML|highlightLua)\s*\(/i.test(text) ||
+    /\b(?:document\.(?:getElementById|querySelector|querySelectorAll|createElement)|window\.document|navigator\.clipboard)\b/i.test(text) ||
+    /\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=/.test(text) ||
+    /=>|\.addEventListener\s*\(|\binnerHTML\b|\btextContent\b/.test(text) ||
+    /<\/?(?:!doctype|html|head|body|script)\b/i.test(text);
+}
+
 function isClearlyPlainLuau(source) {
   const text = String(source || '').replace(/^\uFEFF/, '').trim();
   if (!text) return false;
@@ -2607,6 +2617,11 @@ async function processVantarmorFetcher(message, prompt, input) {
     if (!recovered.trim()) {
       throw new Error('The loader URL returned an empty response.');
     }
+    if (looksLikeViewerPageOrJavaScript(recovered)) {
+      throw new Error(
+        'That URL returned a website page or its JavaScript viewer (for example, escapeHTML/highlightLua), not the Lua script. Use the raw/direct download URL for the script instead of the webpage URL.'
+      );
+    }
     const data = Buffer.from(recovered.endsWith('\n') ? recovered : recovered + '\n', 'utf8');
     if (data.length > MAX_OUTPUT_BYTES) {
       throw new Error('Fetched source exceeds the 18 MB Discord output limit.');
@@ -2651,7 +2666,7 @@ async function processVantarmorFetcher(message, prompt, input) {
 
   try {
     await prompt.edit({
-      content: '🔄 **Vantarmor Fetcher**\nRequesting the server-delivered Lua source using the supplied loader URL and script key.',
+      content: '🔄 **Universal Loader Fetcher**\nRetrieving the source returned by the supplied loader URL.',
       embeds: [],
       components: [],
     });

@@ -420,6 +420,7 @@ async function prependDailyDeobfHeader(filePath) {
 
 function createAnalysisProgress(prompt, filename, inputBytes, label, options = {}) {
   const startedAt = Date.now();
+  const displayLabel = /^Luraph\b/i.test(label) ? 'Luraph' : label;
   const payloadLabel = /^Luraph\b/i.test(label)
     ? 'Decrypting the Luraph payload'
     : 'Decrypting the protected payload';
@@ -471,10 +472,10 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
     const elapsed = Date.now() - startedAt;
     const frame = spinnerFrames[Math.floor(Date.now() / 180) % spinnerFrames.length];
     const heading = failed
-      ? '## ❌ ' + label + ' Deobfuscator stopped'
+      ? '## ❌ ' + displayLabel + ' Deobfuscator stopped'
       : (completed
-        ? '## ✅ ' + label + ' Deobfuscator finished'
-        : '## ' + frame + ' Running ' + label + ' Deobfuscator');
+        ? '## ✅ ' + displayLabel + ' Deobfuscator finished'
+        : '## ' + frame + ' Running ' + displayLabel + ' Deobfuscator');
     const lines = [heading, 'Working on your sample.', ''];
 
     for (let i = 0; i < stages.length; i++) {
@@ -488,9 +489,10 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
     }
 
     lines.push('');
+    const elapsedText = (elapsed / 1000).toFixed(1) + 's elapsed';
     lines.push('-# ' + (workCount === null
-      ? formatDuration(elapsed) + ' elapsed'
-      : workCount.toLocaleString('en-US') + ' ' + workLabel + ' • ' + formatDuration(elapsed) + ' elapsed'));
+      ? elapsedText
+      : workCount.toLocaleString('en-US') + ' ' + workLabel + ' • ' + elapsedText));
     if (failed && detail) lines.push('', '-# ' + detail.slice(0, 240));
     return lines.join('\n');
   }

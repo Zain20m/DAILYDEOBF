@@ -73,7 +73,16 @@ async function runCandidates(cfgData, job) {
     const proc = spawn(c.exe, [bridgePy, 'pipeline', cfgPath], {
       env,
       stdio: ['ignore', 'ignore', 'pipe'],
+      detached: process.platform !== 'win32',
     });
+    function killCandidateProcess(signal) {
+      try {
+        if (process.platform !== 'win32' && proc.pid) process.kill(-proc.pid, signal);
+        else proc.kill(signal);
+      } catch {
+        try { proc.kill(signal); } catch {}
+      }
+    }
     const decoder = new StringDecoder('utf8');
     const run = {
       c, own, cfgPath, proc,
@@ -95,10 +104,10 @@ async function runCandidates(cfgData, job) {
       if (run.done || run.timedOutReason || run.cancelReason) return;
       run.timedOutReason = reason;
       emit('TIME LIMIT: ' + reason + '; terminating this candidate.');
-      try { proc.kill('SIGTERM'); } catch {}
+      killCandidateProcess('SIGTERM');
       run.forceKillTimer = setTimeout(() => {
         if (!run.done) {
-          try { proc.kill('SIGKILL'); } catch {}
+          killCandidateProcess('SIGKILL');
         }
       }, 2500);
       if (run.forceKillTimer.unref) run.forceKillTimer.unref();

@@ -2593,9 +2593,46 @@ async function processVantarmorFetcher(message, prompt, input) {
   } catch {
     throw new Error('The Vantarmor loader URL is invalid.');
   }
-  if (loaderUrl.protocol !== 'https:' || loaderUrl.hostname !== 'vantarmor.up.railway.app' ||
-      loaderUrl.username || loaderUrl.password || !/^\/files\/v1\/loaders\/[^/]+\.lua$/i.test(loaderUrl.pathname)) {
-    throw new Error('Expected an official Vantarmor HTTPS loader URL under /files/v1/loaders/.');
+  if (loaderUrl.username || loaderUrl.password || !['https:', 'http:'].includes(loaderUrl.protocol)) {
+    throw new Error('The loader URL must be a valid HTTP or HTTPS URL.');
+  }
+
+  const isVantarmor = loaderUrl.protocol === 'https:' &&
+    loaderUrl.hostname.toLowerCase() === 'vantarmor.up.railway.app' &&
+    /^\/files\/v1\/loaders\/[^/]+\.lua$/i.test(loaderUrl.pathname);
+
+  // For other hosts, return exactly what the public loader URL served.
+  // Generic loaders do not share a standard API, so never guess vendor endpoints
+  // or execute the downloaded script to try to resolve it.
+  if (!isVantarmor) {
+    const recovered = source.replace(/\r\n/g, '\n');
+    if (!recovered.trim()) {
+      throw new Error('The loader URL returned an empty response.');
+    }
+    const data = Buffer.from(recovered.endsWith('\n') ? recovered : recovered + '\n', 'utf8');
+    if (data.length > MAX_OUTPUT_BYTES) {
+      throw new Error('Fetched source exceeds the 18 MB Discord output limit.');
+    }
+    const outputPath = path.join(os.tmpdir(), 'daily-loader-' + message.id + '.lua');
+    try {
+      await fs.writeFile(outputPath, data, { mode: 0o600 });
+      await message.reply({
+        embeds: [dailyEmbed(
+          'Loader source fetched',
+          'Retrieved ' + formatBytes(data.length) + ' directly from the supplied URL. This is the server response as delivered; vendor-specific protected payloads may require that vendor’s own protocol.',
+          DAILY_COLORS.success
+        )],
+        files: [new AttachmentBuilder(outputPath, { name: 'fetched_loader.lua' })],
+        allowedMentions: { repliedUser: false },
+      });
+      await prompt.edit({
+        content: '✅ Direct loader source fetched. Attached as **fetched_loader.lua**.',
+        components: [],
+      }).catch(() => {});
+    } finally {
+      await fs.rm(outputPath, { force: true }).catch(() => {});
+    }
+    return;
   }
 
   const hash = loaderUrl.pathname.match(/^\/files\/v1\/loaders\/(.+)\.lua$/i)[1];
@@ -2724,7 +2761,7 @@ async function startWorkflow(message, inlineText = null) {
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`deobf-vantarmor:${message.author.id}`)
-        .setLabel('Vantarmor Fetcher')
+        .setLabel('Universal Loader Fetcher')
         .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
         .setCustomId(`deobf-cancel:${message.author.id}`)
@@ -2749,7 +2786,7 @@ async function startWorkflow(message, inlineText = null) {
       try {
         await processVantarmorFetcher(message, prompt, input);
       } catch (error) {
-        await showDeobfFailure(message, prompt, 'Vantarmor Fetcher failed', error);
+        await showDeobfFailure(message, prompt, 'Universal Loader Fetcher failed', error);
       }
       return;
     }

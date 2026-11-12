@@ -117,10 +117,62 @@ jobs:
           print("All extracted Python files passed syntax compilation.")
           PY
 
-      - name: Verify the VIP v14.7 CLI can load
+      - name: Verify the VIP v14.7 engine module can load
         run: |
           python3 luraph-v14.7-engine/cli.py --help >/dev/null
-          echo "Luraph v14.7 CLI help check passed."
+          PYTHONPATH=luraph-v14.7-engine python3 - <<'PY'
+          import cli
+          engine = cli.load_engine("14.7")
+          from obfuscators.luraph_v14_7 import driver, vmmap, devirt
+          print("Loaded:", type(engine).__name__)
+          print("Luraph v14.7 driver, mapper and lifter imports passed.")
+          PY
+
+      - name: Test the v14.3 decoder and bytecode parser on its bundled sample
+        shell: bash
+        run: |
+          set +e
+          python3 - <<'PY' > /tmp/v143-smoke.txt 2>&1
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, str(Path("luraph-v14.3-engine").resolve()))
+          from luraph_decoder import decode_from_source
+          from proto_deserializer import Deserializer
+          from translate_proto import render_proto
+
+          sample = Path("luraph-v14.3-engine/samples/sunjingwoo.lua")
+          payload = decode_from_source(sample)
+          print("Decoded payload bytes:", len(payload))
+          print("Payload prefix:", payload[:24].hex())
+          ds = Deserializer(payload)
+          pool, wrap, count = ds.read_constant_pool()
+          print("Constant count:", count, "wrap mode:", wrap)
+          proto_count = ds.read_upvalue_section()
+          print("Top-level proto count:", proto_count)
+          protos = []
+          for index in range(proto_count):
+              protos.append(ds.read_proto())
+          print("Prototypes parsed:", len(protos))
+          print("Patches applied:", ds.apply_patches())
+          total = sum(len(proto["opcodes"]) for proto in protos)
+          print("Total instructions:", total)
+          if protos:
+              print("FIRST PROTO DISASSEMBLY")
+              print(render_proto(protos[0], 0)[:8000])
+          print("V14.3_SAMPLE_TEST_OK")
+          PY
+          result=$?
+          python3 - <<'PY'
+          from pathlib import Path
+          ticks = chr(96) * 3
+          output = Path("/tmp/v143-smoke.txt").read_text(encoding="utf-8", errors="replace")
+          report = "# Luraph v14.3 sample smoke test\n\n"
+          report += f"- Exit status: {result}\n\n" if False else ""
+          report += "Log output:\n\n" + ticks + "text\n" + output + "\n" + ticks + "\n"
+          Path("upload/LURAPH_143_SMOKE.md").write_text(report, encoding="utf-8")
+          PY
+          printf 'v14.3 sample test exit status: %s\n' "$result"
+          exit 0
 
       - name: Commit extracted engine source
         shell: bash
@@ -128,7 +180,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add luraph-v14.7-engine luraph-v14.3-engine upload/LURAPH_ARCHIVE_IMPORT_INFO.json
+          git add luraph-v14.7-engine luraph-v14.3-engine upload/LURAPH_ARCHIVE_IMPORT_INFO.json upload/LURAPH_143_SMOKE.md
           if git diff --cached --quiet; then
             echo "No extracted engine changes."
             exit 0

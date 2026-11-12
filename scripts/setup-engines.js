@@ -52,7 +52,57 @@ if (ironveilBuild.error || ironveilBuild.status !== 0) {
 }
 
 
+// The imported Luraph v14.7 package shares the patched Luau runtime build.
+// Copy the already provisioned binaries instead of compiling another Luau VM.
+const v147Bin = path.join(root, 'luraph-v14.7-engine', 'bin');
+const sharedLuauBin = path.join(root, 'luraph-v15-engine', 'bin');
+fs.mkdirSync(v147Bin, { recursive: true });
+for (const binary of ['luau', 'luau-ast']) {
+  const source = path.join(sharedLuauBin, binary);
+  const destination = path.join(v147Bin, binary);
+  if (!fs.existsSync(destination) && fs.existsSync(source)) {
+    fs.copyFileSync(source, destination);
+  }
+  if (process.platform !== 'win32' && fs.existsSync(destination)) {
+    fs.chmodSync(destination, 0o755);
+  }
+}
+
+
 const engines = [
+  {
+    label: 'Luraph v14.7',
+    directory: 'luraph-v14.7-engine',
+    required: [
+      'cli.py',
+      'harness.py',
+      'traceout.py',
+      'backend.py',
+      'envlog.luau',
+      'roblox_api.luau',
+      'unicode_data.luau',
+      'datatypes.luau',
+      'obfuscators/base.py',
+      'obfuscators/luraph_v14_7/__init__.py',
+      'obfuscators/luraph_v14_7/driver.py',
+      'obfuscators/luraph_v14_7/devirt.py',
+      'obfuscators/luraph_v14_7/vmmap.py',
+      'obfuscators/luraph_v14_7/optrace.py',
+      'bin/luau',
+      'bin/luau-ast',
+    ],
+  },
+  {
+    label: 'Luraph v14.3 static analyzer',
+    directory: 'luraph-v14.3-engine',
+    required: [
+      'daily_cli.py',
+      'luraph_decoder.py',
+      'proto_deserializer.py',
+      'translate_proto.py',
+      'vm_opcode_table.py',
+    ],
+  },
   {
     label: 'Luraph v15',
     directory: 'luraph-v15-engine',
@@ -173,4 +223,4 @@ if (!fs.existsSync(path.join(root, 'ib2deobf', ib2Runtime))) {
   throw new Error('IronBrew 2 is missing its platform runtime: ' + ib2Runtime);
 }
 
-console.log('Validated Luraph v15, 15.1, IronBrew 1, IronBrew 2 and Centurion engines.');
+console.log('Validated Luraph v14.7, Luraph v14.3 static analyzer, v15, 15.1, IronBrew 1, IronBrew 2 and Centurion engines.');

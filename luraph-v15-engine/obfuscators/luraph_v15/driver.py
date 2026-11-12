@@ -96,6 +96,9 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
     last_bufs = ""
     text = None
     rounds = args.devirt_rounds
+    print("[*] lift limits: %d CFG states/function, %d walk restarts, %d stack depths/PC, %d stack states/function"
+          % (devirt.WALK_LIMIT, devirt.WALK_RESTARTS, devirt.MAX_STACK_DEPTHS, devirt.STACK_WALK_MAX),
+          file=sys.stderr)
     # Intermediate rounds only need the constant requests and decrypted
     # strings, which come from walking each function: they skip the
     # structuring/codegen/naming and reuse the walks of functions that asked

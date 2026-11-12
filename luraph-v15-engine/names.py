@@ -195,7 +195,6 @@ class Namer:
                 scope_cache[scope] = self.scope_source(info)
             scopes[id(info)] = scope_cache[scope]
         permutation_ids = set()
-        permutation_names = set()
 
         # RC4-style permutation table: save T[i], assign T[i] = T[j],
         # then restore T[j] = saved. Require the byte-masking context too.
@@ -213,7 +212,6 @@ class Namer:
             )
             if swap and "bit32.band" in source and "255" in source:
                 permutation_ids.add(id(info))
-                permutation_names.add(info["name"])
 
         roles = {}
         for info in generated:

@@ -1643,6 +1643,8 @@ function inferFallbackSemanticNames(source, tokens, declarations) {
       else if (new RegExp('\\b[A-Za-z_]\\w*\\s*\\[\\s*' + name + '\\s*\\]').test(body)) inferred = 'key';
       else if (new RegExp('\\b' + name + '\\s*==\\s*localPlayer|\\blocalPlayer\\s*==\\s*' + name).test(body)) inferred = 'player';
       else if (new RegExp('\\b' + name + '\\s*:\\s*Connect\\s*\\(').test(body)) inferred = 'event';
+      else if (new RegExp('\\b[A-Za-z_]\\w*\\s*\\(\\s*' + name + '\\s*\\)').test(body) &&
+               /\\bif\\b[\\s\\S]*?\\bthen\\b[\\s\\S]*?\\belse\\b/.test(body)) inferred = 'target';
       else if (new RegExp('\\b' + name + '\\s*\\[', 'g').test(body)) inferred = 'index';
       else inferred = 'argument';
     }

@@ -174,7 +174,7 @@ class Namer:
         lines = self.text.splitlines()
         first = max(0, start[0])
         last = min(len(lines), end[0] + 1)
-        return "\\n".join(lines[first:last])
+        return "\n".join(lines[first:last])
 
     def infer_generated_roles(self):
         """Name common Luraph VM artifacts by their actual data-flow patterns.
@@ -195,11 +195,11 @@ class Namer:
         for info in generated:
             name = re.escape(info["name"])
             swap = re.search(
-                r"\\blocal\\s+([A-Za-z_]\\w*)\\s*=\\s*" + name +
-                r"\\s*\\[\\s*([A-Za-z_]\\w*)\\s*\\]\\s*" +
-                name + r"\\s*\\[\\s*\\2\\s*\\]\\s*=\\s*" +
-                name + r"\\s*\\[\\s*([A-Za-z_]\\w*)\\s*\\]\\s*" +
-                name + r"\\s*\\[\\s*\\3\\s*\\]\\s*=\\s*\\1\\b",
+                r"\blocal\s+([A-Za-z_]\w*)\s*=\s*" + name +
+                r"\s*\[\s*([A-Za-z_]\w*)\s*\]\s*" +
+                name + r"\s*\[\s*\2\s*\]\s*=\s*" +
+                name + r"\s*\[\s*([A-Za-z_]\w*)\s*\]\s*" +
+                name + r"\s*\[\s*\3\s*\]\s*=\s*\1\b",
                 scopes[id(info)],
                 re.S,
             )
@@ -215,13 +215,13 @@ class Namer:
 
             if name.startswith("__orphan_upvalue_"):
                 if re.search(
-                    rf"\\b{escaped}\\s*(?:\\+=\\s*1|=\\s*{escaped}\\s*\\+\\s*1)\\b",
+                    rf"\b{escaped}\s*(?:\+=\s*1|=\s*{escaped}\s*\+\s*1)\b",
                     source,
                 ):
                     role = "captureIndex"
-                elif re.search(rf"\\b{escaped}\\s*\\[[^\\]]+\\]\\s*=", source):
+                elif re.search(rf"\b{escaped}\s*\[[^\]]+\]\s*=", source):
                     role = "capturedTable"
-                elif re.search(rf"\\b{escaped}\\s*\\[[^\\]]+\\]", source):
+                elif re.search(rf"\b{escaped}\s*\[[^\]]+\]", source):
                     role = "lookupTable"
                 else:
                     role = "capturedValue"
@@ -230,17 +230,17 @@ class Namer:
                 role = "permutation"
 
             elif re.search(
-                rf"\\b{escaped}\\s*\\[\\s*\\d+\\s*\\]",
+                rf"\b{escaped}\s*\[\s*\d+\s*\]",
                 source,
-            ) and len(re.findall(rf"\\b{escaped}\\s*\\[", source)) >= 4 and re.search(
-                rf"\\blocal\\s+{escaped}\\s*=\\s*\\{{[^}}]*,[^}}]*,[^}}]*,[^}}]*\\}}",
+            ) and len(re.findall(rf"\b{escaped}\s*\[", source)) >= 4 and re.search(
+                rf"\blocal\s+{escaped}\s*=\s*\{{[^}}]*,[^}}]*,[^}}]*,[^}}]*\}}",
                 source,
             ):
                 role = "loopControl"
 
             else:
-                state_writes = len(re.findall(rf"\\b{escaped}\\s*=\\s*-?\\d+\\b", source))
-                state_tests = len(re.findall(rf"\\b{escaped}\\s*(?:<=|>=|==)\\s*-?\\d+\\b", source))
+                state_writes = len(re.findall(rf"\b{escaped}\s*=\s*-?\d+\b", source))
+                state_tests = len(re.findall(rf"\b{escaped}\s*(?:<=|>=|==)\s*-?\d+\b", source))
                 if state_writes >= 4 and state_tests >= 4:
                     role = "state"
 
@@ -257,7 +257,7 @@ class Namer:
                 continue
 
             if re.search(
-                rf"bit32\\.band\\(\\s*{escaped}\\s*\\+\\s*1\\s*,\\s*255\\s*\\)",
+                rf"bit32\.band\(\s*{escaped}\s*\+\s*1\s*,\s*255\s*\)",
                 source,
             ):
                 roles[name] = "permutationIndex"
@@ -267,14 +267,14 @@ class Namer:
             assigned = False
             for perm in perm_names:
                 if re.search(
-                    rf"bit32\\.band\\(\\s*{escaped}\\s*\\+\\s*{perm}\\s*\\[[^\\]]+\\]\\s*,\\s*255\\s*\\)",
+                    rf"bit32\.band\(\s*{escaped}\s*\+\s*{perm}\s*\[[^\]]+\]\s*,\s*255\s*\)",
                     source,
                 ):
                     roles[name] = "swapIndex"
                     assigned = True
                     break
                 output = re.search(
-                    rf"\\b([A-Za-z_]\\w*)\\s*\\[\\s*{escaped}\\s*\\]\\s*=\\s*{perm}\\s*\\[\\s*bit32\\.band\\(",
+                    rf"\b([A-Za-z_]\w*)\s*\[\s*{escaped}\s*\]\s*=\s*{perm}\s*\[\s*bit32\.band\(",
                     source,
                 )
                 if output:
@@ -289,7 +289,7 @@ class Namer:
             # j + S[i] + key[i % keyLength + 1], all masked to one byte.
             for perm in perm_names:
                 mixed = re.search(
-                    rf"bit32\\.band\\(\\s*[A-Za-z_]\\w*\\s*\\+\\s*{perm}\\s*\\[[^\\]]+\\]\\s*\\+\\s*{escaped}\\s*\\[[^\\]]*%\\s*([A-Za-z_]\\w*)\\s*\\+\\s*1\\]\\s*,\\s*255\\s*\\)",
+                    rf"bit32\.band\(\s*[A-Za-z_]\w*\s*\+\s*{perm}\s*\[[^\]]+\]\s*\+\s*{escaped}\s*\[[^\]]*%\s*([A-Za-z_]\w*)\s*\+\s*1\]\s*,\s*255\s*\)",
                     source,
                 )
                 if mixed:
@@ -302,7 +302,7 @@ class Namer:
 
             # Byte-masked counters used as permutation indices are often the
             # same i variable without the increment expression in this block.
-            if perm_names and re.search(rf"bit32\\.band\\(\\s*{escaped}\\s*,\\s*255\\s*\\)", source):
+            if perm_names and re.search(rf"bit32\.band\(\s*{escaped}\s*,\s*255\s*\)", source):
                 roles[name] = "permutationIndex"
 
         for info in generated:

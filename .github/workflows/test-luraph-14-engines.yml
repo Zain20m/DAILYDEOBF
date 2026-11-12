@@ -5,6 +5,8 @@ on:
     paths:
       - "luraph-v14.7-engine/**"
       - "luraph-v14.3-engine/**"
+      - "index.js"
+      - "scripts/setup-engines.js"
       - ".github/workflows/test-luraph-14-engines.yml"
 
 permissions:
@@ -16,6 +18,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check Discord bot JavaScript syntax
+        run: node --check index.js
 
       - name: Compile imported Python sources
         env:

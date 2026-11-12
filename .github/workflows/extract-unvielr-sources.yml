@@ -1,0 +1,49 @@
+name: Extract UnveilR text sources
+on:
+  push:
+    paths:
+      - '.github/workflows/extract-unvielr-sources.yml'
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract selected source files only
+        run: |
+          python - <<'PY'
+          import zipfile, io, os
+          root = zipfile.ZipFile("upload/UnvielR_v3.2.zip")
+          main_bytes = root.read("UnvielR v3.2/thee-bot-main.zip")
+          main = zipfile.ZipFile(io.BytesIO(main_bytes))
+          wanted = {
+              "25ms/bot.py",
+              "25ms/botai.py",
+              "25ms/exec_env.lua",
+              "25ms/httplog.lua",
+              "25ms/httplog2.lua",
+              "25ms/loadstringlog.lua",
+              "25ms/obf_detect.py",
+              "25ms/readme.md",
+              "modules/config.js",
+              "modules/embed_builder.js",
+              "unveilr/main.luau",
+              "unveilr/notes.md",
+              "unveilr/request.js",
+          }
+          out = "/tmp/unvielr-sources"
+          os.makedirs(out, exist_ok=True)
+          for info in main.infolist():
+              normalized = info.filename.replace("thee-bot-main/", "", 1)
+              if normalized not in wanted or info.file_size > 2_000_000:
+                  continue
+              data = main.read(info)
+              name = normalized.replace("/", "__")
+              with open(os.path.join(out, name), "wb") as f:
+                  f.write(data)
+              print("EXTRACTED", normalized, len(data))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unvielr-selected-source
+          path: /tmp/unvielr-sources/
+          if-no-files-found: error

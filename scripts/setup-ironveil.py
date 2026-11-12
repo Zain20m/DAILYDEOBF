@@ -71,7 +71,7 @@ if missing:
 tsconfig_path = DEST / "tsconfig.json"
 tsconfig = json.loads(tsconfig_path.read_text(encoding="utf-8"))
 tsconfig.setdefault("compilerOptions", {})["noImplicitAny"] = False
-tsconfig_path.write_text(json.dumps(tsconfig, indent=2) + "\\n", encoding="utf-8")
+tsconfig_path.write_text(json.dumps(tsconfig, indent=2) + "\n", encoding="utf-8")
 
 for name in PATCHED_SRC:
     source = SUPPORT / name

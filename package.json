@@ -6,8 +6,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node scripts/setup-engines.js && node index.js",
-    "check": "node --check index.js && node --check luraph-v15.1-engine/deob.js && node --check luraph-v15.1-engine/src/driver.js && node --check luraph-v15.1-engine/src/parallel.js && node --check scripts/luau-cleaner.js && node --check scripts/lift-validation.js && node --check scripts/test-lift-validation.js && node --check scripts/setup-engines.js && node scripts/test-lift-validation.js && node luraph-v15.1-engine/test/run.js && node --check scripts/flowauth-version.js && node --check scripts/test-flowauth-version.js && node --check scripts/idx-resolver.js && node --check pureluau.js && node --check scripts/test-pureluau.js && node --test scripts/test-pureluau.js scripts/test-idx-resolver.js scripts/test-flowauth-version.js",
-    "test": "node --test scripts/test-pureluau.js scripts/test-idx-resolver.js scripts/test-flowauth-version.js"
+    "check": "node --check index.js && node --check luraph-v15.1-engine/deob.js && node --check luraph-v15.1-engine/src/driver.js && node --check luraph-v15.1-engine/src/parallel.js && node --check scripts/luau-cleaner.js && node --check scripts/lift-validation.js && node --check scripts/test-lift-validation.js && node --check scripts/setup-engines.js && node scripts/test-lift-validation.js && node luraph-v15.1-engine/test/run.js && node --check scripts/flowauth-version.js && node --check scripts/test-flowauth-version.js && node --check scripts/idx-resolver.js && node --check pureluau.js && node --check scripts/test-pureluau.js && node --test scripts/test-pureluau.js scripts/test-idx-resolver.js scripts/test-flowauth-version.js && node --check scripts/ironbrew-detection.js && node --check scripts/test-ironbrew-detection.js && node --test scripts/test-ironbrew-detection.js",
+    "test": "node --test scripts/test-pureluau.js scripts/test-idx-resolver.js scripts/test-flowauth-version.js scripts/test-ironbrew-detection.js"
   },
   "engines": {
     "node": ">=20.11.0"

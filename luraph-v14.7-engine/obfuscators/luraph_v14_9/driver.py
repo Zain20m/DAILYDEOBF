@@ -23,17 +23,23 @@ SPIN_CHECKS = 24    # watchdog checks (2^20 VM steps each) without environment a
 
 
 def patch_spin(src):
-    """Count every unconditional while-true loop, regardless of its body shape.
+    """Instrument every loop head so pure-script loops cannot starve the tracer.
 
-    Dispatchers are not reliably recognizable by a single assignment pattern:
-    some start with a branch, helper call, or nested block. Inject immediately
-    after the loop's 'do' token so those variants cannot evade the watchdog.
+    Luraph builds use conditional while loops, repeat-until loops and numeric
+    or generic for loops in addition to the familiar while-true dispatcher.
     """
     marker = "__SPIN.n=__SPIN.n+1;"
-    pattern = r"\bwhile\s+true\s+do"
     def inject(match):
         return match.group(0) + "\n" + marker + "if __SPIN.n>=__SPIN.step then __SPIN.f()end;"
-    return re.sub(pattern, inject, src)
+    # Stop at the first loop delimiter, including when the condition spans lines.
+    patterns = (
+        r"\\bwhile\\b(?:(?!\\bdo\\b)[\\s\\S])*\\bdo\\b",
+        r"\\bfor\\b(?:(?!\\bdo\\b)[\\s\\S])*\\bdo\\b",
+        r"\\brepeat\\b",
+    )
+    for pattern in patterns:
+        src = re.sub(pattern, inject, src)
+    return src
 
 
 def patch_chunk(src, tmpdir):

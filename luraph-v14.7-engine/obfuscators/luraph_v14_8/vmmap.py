@@ -10,11 +10,38 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(os.path.dirname(HERE))     # deobf/ (bin/luau-ast)
+ROOT = os.path.dirname(os.path.dirname(HERE))     # luraph-v14.7-engine/
+
+
+def luau_ast_executable():
+    """Resolve the AST parser from this engine or the shared v15 runtime.
+
+    Some hosts start the bot with `node index.js` instead of `npm start`,
+    which skips scripts/setup-engines.js and leaves this engine's copied
+    binaries absent. Resolve the committed shared binary as a safe fallback.
+    """
+    name = "luau-ast.exe" if os.name == "nt" else "luau-ast"
+    candidates = [
+        os.path.join(ROOT, "bin", name),
+        os.path.join(os.path.dirname(ROOT), "luraph-v15-engine", "bin", name),
+    ]
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            if os.name != "nt" and not os.access(candidate, os.X_OK):
+                try:
+                    os.chmod(candidate, os.stat(candidate).st_mode | 0o111)
+                except OSError:
+                    continue
+            if os.name == "nt" or os.access(candidate, os.X_OK):
+                return candidate
+    raise FileNotFoundError(
+        "Luau AST executable not found. Checked: " + ", ".join(candidates) +
+        ". Run npm start to provision the shared Luau binaries."
+    )
 
 
 def load_ast(path):
-    exe = os.path.join(ROOT, "bin", "luau-ast.exe" if os.name == "nt" else "luau-ast")
+    exe = luau_ast_executable()
     r = subprocess.run([exe, path], capture_output=True)
     errs = r.stderr.decode("latin-1").strip().splitlines()
     if r.returncode != 0 or (errs and errs[0].startswith("Parse errors")):

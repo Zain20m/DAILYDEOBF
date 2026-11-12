@@ -1,2 +1,0 @@
-script_key = "cuAbgdqGBRyexlHCfHr3QldbandD597L"
-loadstring(game:HttpGet("https://vantarmor.up.railway.app/files/v1/loaders/154cc872b584832072d4bcc0c3f327071c93bacc.lua"))()

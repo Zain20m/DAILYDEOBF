@@ -1307,61 +1307,6 @@ function inferCommonSemanticNames(source, declarations) {
 
   return mappings;
 }
-function createLineNumberLookup(source) {');
-    const whole = new RegExp('\\\\b' + escaped + '\\\\b');
-    const declaration = entries[0].token;
-    const nearby = source.slice(Math.max(0, declaration.start - 500), Math.min(source.length, declaration.end + 5000));
-    const assigned = new RegExp('\\\\b' + escaped + '\\\\s*=\\\\s*([^\\\\n;]+)').exec(source);
-    const incremented = new RegExp('\\\\b' + escaped + '\\\\s*\\\\+=\\\\s*1\\\\b').test(nearby);
-
-    if (/\\binput\\.Position\\.X\\s*-\\s*/.test(nearby) &&
-        new RegExp('input\\\\.Position\\\\.X\\\\s*-\\\\s*' + escaped + '\\\\.X').test(nearby) &&
-        new RegExp('\\\\b' + escaped + '\\\\s*=\\\\s*input\\\\.Position').test(nearby)) {
-      add(name, 'dragStartInputPosition');
-    } else if (new RegExp('\\\\b' + escaped + '\\\\s*=\\\\s*frame\\\\.Position').test(nearby) &&
-        /frame\\.InputBegan|InputBegan/.test(nearby)) {
-      add(name, 'dragStartFramePosition');
-    } else if (incremented &&
-        new RegExp('math\\\\.floor\\\\s*\\\\(\\\\s*' + escaped + '\\\\s*\\\\/').test(nearby)) {
-      add(name, 'frameSampleCount');
-    } else if (new RegExp('\\\\b' + escaped + '\\\\s*=\\\\s*tick\\\\s*\\\\(').test(nearby) &&
-        new RegExp('now\\\\w*\\\\s*-\\\\s*' + escaped + '\\\\b').test(nearby)) {
-      add(name, 'lastFpsSampleTime');
-    } else if (new RegExp('\\\\b' + escaped + '\\\\s*=\\\\s*tick\\\\s*\\\\(').test(nearby) &&
-        new RegExp(escaped + '\\\\s*-\\\\s*now\\\\w+').test(nearby)) {
-      add(name, 'currentFpsSampleTime');
-    } else if (new RegExp('\\\\b' + escaped + '\\\\s*=\\\\s*math\\\\.floor\\\\s*\\\\(\\\\s*n\\\\w*\\\\s*\\\\/').test(nearby)) {
-      add(name, 'framesPerSecond');
-    } else if (/input\\.Position\\.X/.test(nearby) &&
-        new RegExp('input\\\\.Position\\\\.X\\\\s*-\\\\s*position\\\\.X').test(nearby) &&
-        new RegExp('\\\\b' + escaped + '\\\\s*=\\\\s*input\\\\.Position\\\\.X').test(nearby)) {
-      add(name, 'dragDeltaX');
-    } else if (/input\\.Position\\.Y/.test(nearby) &&
-        new RegExp('input\\\\.Position\\\\.Y\\\\s*-\\\\s*position\\\\.Y').test(nearby) &&
-        new RegExp('\\\\b' + escaped + '\\\\s*=\\\\s*input\\\\.Position\\\\.Y').test(nearby)) {
-      add(name, 'dragDeltaY');
-    } else if (/position2\\.X\\.Scale\\s*\\*\\s*CurrentCamera\\.X/.test(nearby) &&
-        new RegExp('\\\\b' + escaped + '\\\\s*=\\\\s*position2\\\\.X\\\\.Scale').test(nearby)) {
-      add(name, 'scaledXPosition');
-    } else if (/UserInputType\\.Touch|MouseButton1/.test(nearby) &&
-        /InputBegan/.test(nearby) && /UserInputState\\.End/.test(nearby) &&
-        new RegExp('\\\\b' + escaped + '\\\\s*=\\\\s*true').test(nearby)) {
-      add(name, 'isDragging');
-    } else if (new RegExp('\\\\b' + escaped + '\\\\s*=\\\\s*\\\\{\\\\s*\\\\}').test(nearby) &&
-        new RegExp('\\\\b' + escaped + '\\\\.toggleBtn').test(nearby)) {
-      add(name, 'uiElements');
-    } else if (new RegExp('\\\\b' + escaped + '\\\\s*=\\\\s*fn\\\\d+\\\\s*\\\\(').test(nearby) &&
-        /StealRadius\\s*=/.test(nearby)) {
-      add(name, 'stealRadius');
-    } else if (new RegExp('\\\\b' + escaped + '\\\\s*=\\\\s*fn\\\\d+\\\\s*\\\\(').test(nearby) &&
-        /flag\\w*\\s*=\\s*[^;\\n]+==\\s*nil/.test(nearby)) {
-      add(name, 'savedEnabledState');
-    }
-  }
-
-  return mappings;
-}
-
 function createLineNumberLookup(source) {
   const starts = [0];
   for (let index = 0; index < source.length; index++) {

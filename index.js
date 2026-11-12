@@ -3327,7 +3327,7 @@ async function handleObfuscatorCommand(interaction) {
   let workDir = null;
   try {
     const originalName = path.basename(String(attachment.name || 'script.lua').replace(/\\/g, '/'));
-    if (!/\\.(?:lua|luau|txt)$/i.test(originalName)) {
+    if (!/\.(?:lua|luau|txt)$/i.test(originalName)) {
       throw new Error('IronVeil accepts .lua, .luau or .txt source files.');
     }
     if (Number.isFinite(attachment.size) && attachment.size > MAX_INPUT_BYTES) {

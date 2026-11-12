@@ -19,6 +19,7 @@ const zlib = require('node:zlib');
 const { inspectLiftText } = require('./scripts/lift-validation');
 const { convertToPureLuau } = require('./pureluau');
 const { detectFlowAuthLuraphVersion } = require('./scripts/flowauth-version');
+const { detectIronBrewSuggestion } = require('./scripts/ironbrew-detection');
 const {
   resolveStaticSources,
   suggestLoadstringHttpGetCorrection,
@@ -44,6 +45,8 @@ const ENGINE_151_DIR = path.join(__dirname, 'luraph-v15.1-engine');
 const ENGINE_151_CLI = path.join(ENGINE_151_DIR, 'deob.js');
 const ENGINE_CENT_DIR = path.join(__dirname, 'centurion-engine');
 const ENGINE_CENT_CLI = path.join(ENGINE_CENT_DIR, 'centurion.py');
+const ENGINE_IB2_DIR = path.join(__dirname, 'ib2deobf');
+const ENGINE_IB2_DLL = path.join(ENGINE_IB2_DIR, 'LuaAnalysis.Ironbrew2.dll');
 const activeUsers = new Set();
 const commandGuildId = process.env.GUILD_ID || '';
 
@@ -603,8 +606,11 @@ function looksLikeViewerPageOrJavaScript(source, contentType = '') {
 
 function detectEngineSuggestion(source) {
   const text = String(source || '');
-  const banner = text.match(/(?:This file was protected using|Protected by|Luraph(?:\\s+Obfuscator)?)\\s*[:\\-]?\\s*Luraph?\\s*v?(\\d+(?:\\.\\d+)?)/i) ||
-    text.match(/Luraph(?:\\s+Obfuscator)?\\s+v?(\\d+(?:\\.\\d+)?)/i);
+  const ironbrewSuggestion = detectIronBrewSuggestion(text);
+  if (ironbrewSuggestion) return ironbrewSuggestion;
+
+  const banner = text.match(/(?:This file was protected using|Protected by)\s*[:\-]?\s*Luraph(?:\s+Obfuscator)?\s+v?(\d+(?:\.\d+)?)/i) ||
+    text.match(/\bLuraph(?:\s+Obfuscator)?\s+v?(\d+(?:\.\d+)?)/i);
 
   if (banner) {
     const version = banner[1];
@@ -616,17 +622,16 @@ function detectEngineSuggestion(source) {
     }
   }
 
-  if (/\\b(?:LPH_ATTRIBUTES|LPH_PRECHECK|LPH_ASSUME|LPH_ENCBUF)\\b/.test(text)) {
+  if (/\b(?:LPH_ATTRIBUTES|LPH_PRECHECK|LPH_ASSUME|LPH_ENCBUF)\b/.test(text)) {
     return { engine: 'luraph-151', label: 'Luraph 15.1', confidence: 'medium', reason: 'The source contains Luraph 15.1 macro markers.' };
   }
 
-  if (/\\bThis file was protected using Luraph\\b|\\bLuraph Obfuscator\\b/i.test(text)) {
+  if (/\bThis file was protected using Luraph\b|\bLuraph Obfuscator\b/i.test(text)) {
     return { engine: null, label: 'Luraph', confidence: 'medium', reason: 'A Luraph marker was found, but the exact version could not be identified.' };
   }
 
   return null;
 }
-
 function isClearlyPlainLuau(source) {
   const text = String(source || '').replace(/^\uFEFF/, '').trim();
   if (!text) return false;
@@ -1844,6 +1849,138 @@ async function processIronbrew1(message, prompt, input) {
     await prompt.edit({
       content: '✅ IronBrew 1 analysis finished. ' +
         (useLift ? 'The VM lift was attached.' : 'Only the behaviour trace was available.'),
+      components: [],
+    }).catch(() => {});
+  } catch (error) {
+    await progress.fail(error);
+    throw error;
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+
+async function processIronbrew2(message, prompt, input) {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-ironbrew2-'));
+  const inputPath = path.join(tempRoot, 'input.lua');
+  const bytecodePath = path.join(tempRoot, 'output.luac');
+  const dotnet = process.env.DOTNET_BIN || 'dotnet';
+  const oracleKey = String(process.env.IRONBREW2_ORACLE_KEY || '').trim();
+  const progress = createAnalysisProgress(
+    prompt, input.filename, Buffer.byteLength(input.source, 'utf8'), 'IronBrew 2'
+  );
+
+  try {
+    if (!await fs.stat(ENGINE_IB2_DLL).then(() => true).catch(() => false)) {
+      throw new Error('The IronBrew 2 runtime files are missing. Restart the bot so scripts/setup-engines.js can extract upload/ib2-deobf.zip.');
+    }
+
+    await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
+    await progress.start();
+    await progress.setPhase(
+      'Checking the .NET 9 runtime',
+      'The uploaded IronBrew 2 engine targets .NET 9.'
+    );
+
+    const runtimes = await runCommand(dotnet, ['--list-runtimes'], ENGINE_IB2_DIR, 30_000);
+    if (!/Microsoft\.NETCore\.App\s+9\./.test(runtimes.stdout || '')) {
+      throw new Error('IronBrew 2 requires the Microsoft .NET 9 runtime. Install .NET 9 on the bot host and restart it.');
+    }
+
+    await progress.setPhase(
+      'Running the IronBrew 2 bytecode decoder',
+      'Processing the source in a temporary directory with a fixed execution timeout.'
+    );
+    await runCommand(
+      dotnet,
+      [ENGINE_IB2_DLL, inputPath, bytecodePath],
+      ENGINE_IB2_DIR,
+      ENGINE_TIMEOUT_MS,
+      { onProgress: progress.onLine }
+    );
+
+    const bytecode = await fs.readFile(bytecodePath).catch(() => null);
+    if (!bytecode || !bytecode.length) {
+      throw new Error('IronBrew 2 exited without producing a bytecode file.');
+    }
+    if (bytecode.length > MAX_OUTPUT_BYTES) {
+      throw new Error('IronBrew 2 bytecode exceeds the 18 MB attachment limit.');
+    }
+
+    const files = [
+      new AttachmentBuilder(bytecode, { name: 'IronBrew2_bytecode.luac' }),
+    ];
+    let resultLabel = 'Bytecode recovered';
+    let oracleNote = 'No external service was contacted. Set IRONBREW2_ORACLE_KEY to opt in to the optional Oracle source-decompilation step.';
+
+    if (oracleKey) {
+      await progress.setPhase(
+        'Converting bytecode to readable Lua',
+        'Sending the generated bytecode to Oracle because IRONBREW2_ORACLE_KEY is configured.'
+      );
+      try {
+        const url = new URL('https://oracle.mshq.dev/decompile');
+        url.searchParams.set('key', oracleKey);
+        url.searchParams.set('version', '2');
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            script: bytecode.toString('base64'),
+            decompilerOptions: {},
+          }),
+          signal: AbortSignal.timeout(120_000),
+        });
+        const responseText = await response.text();
+        if (!response.ok) {
+          throw new Error('Oracle returned HTTP ' + response.status + ': ' + responseText.slice(0, 500));
+        }
+
+        let sourceText = responseText;
+        try {
+          const parsed = JSON.parse(responseText);
+          sourceText = parsed.source || parsed.code || parsed.output || responseText;
+        } catch {
+          // The uploaded bot's Oracle client expects a plain-text source response.
+        }
+        if (!String(sourceText || '').trim()) {
+          throw new Error('Oracle returned an empty decompilation.');
+        }
+        const sourceBuffer = Buffer.from(String(sourceText), 'utf8');
+        if (sourceBuffer.length > MAX_OUTPUT_BYTES) {
+          throw new Error('Oracle source output exceeds the 18 MB attachment limit.');
+        }
+        files.unshift(new AttachmentBuilder(sourceBuffer, { name: 'IronBrew2_deobfuscated.lua' }));
+        resultLabel = 'Readable Lua source recovered';
+        oracleNote = 'Oracle source conversion completed.';
+      } catch (error) {
+        const messageText = String(error && error.message || error).replaceAll(oracleKey, '[redacted]').slice(0, 700);
+        oracleNote = 'Oracle source conversion failed: ' + messageText + '. The recovered bytecode is attached.';
+      }
+    }
+
+    const report = [
+      'DAILY DEOBF · IronBrew 2',
+      'Input: ' + input.filename,
+      'Detection: IronBrew 2',
+      'Result: ' + resultLabel,
+      'Bytecode size: ' + formatBytes(bytecode.length),
+      oracleNote,
+      '',
+      'The recovered bytecode and any source conversion are best-effort outputs; verify behavior before relying on them.',
+    ].join('\n');
+
+    files.push(new AttachmentBuilder(Buffer.from(report, 'utf8'), { name: 'IronBrew2_report.txt' }));
+    await message.reply({
+      content: '✅ **DAILY DEOBF · IronBrew 2**\n' + resultLabel +
+        '\nBytecode size: ' + formatBytes(bytecode.length) +
+        '\n' + oracleNote,
+      files,
+      allowedMentions: { repliedUser: false },
+    });
+    await progress.complete('IronBrew 2 analysis finished and its result files were attached.');
+    await prompt.edit({
+      content: '✅ IronBrew 2 analysis finished. ' + resultLabel + '.',
       components: [],
     }).catch(() => {});
   } catch (error) {
@@ -3978,8 +4115,12 @@ async function startWorkflow(message, inlineText = null) {
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`deobf-ironbrew1:${message.author.id}`)
-        .setLabel('IronBrew 1')
-        .setStyle(ButtonStyle.Secondary),
+        .setLabel(engineSuggestion && engineSuggestion.engine === 'ironbrew1' ? 'Recommended: IronBrew 1' : 'IronBrew 1')
+        .setStyle(engineSuggestion && engineSuggestion.engine === 'ironbrew1' ? ButtonStyle.Success : ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`deobf-ironbrew2:${message.author.id}`)
+        .setLabel(engineSuggestion && engineSuggestion.engine === 'ironbrew2' ? 'Recommended: IronBrew 2' : 'IronBrew 2')
+        .setStyle(engineSuggestion && engineSuggestion.engine === 'ironbrew2' ? ButtonStyle.Success : ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(`deobf-vantarmor:${message.author.id}`)
         .setLabel('Vantarmor / Universal')
@@ -3992,6 +4133,8 @@ async function startWorkflow(message, inlineText = null) {
         .setCustomId(`deobf-jnkie:${message.author.id}`)
         .setLabel('JNKIE Fetcher')
         .setStyle(ButtonStyle.Secondary),
+    ),
+    new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`deobf-cancel:${message.author.id}`)
         .setLabel('Cancel')
@@ -4141,6 +4284,16 @@ async function startWorkflow(message, inlineText = null) {
         await processIronbrew1(message, prompt, await getWorkflowInput());
       } catch (error) {
         await showDeobfFailure(message, prompt, 'IronBrew 1 failed', error);
+      }
+      return;
+    }
+    if (interaction.customId === `deobf-ironbrew2:${message.author.id}`) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        await processIronbrew2(message, prompt, await getWorkflowInput());
+      } catch (error) {
+        await showDeobfFailure(message, prompt, 'IronBrew 2 failed', error);
       }
       return;
     }

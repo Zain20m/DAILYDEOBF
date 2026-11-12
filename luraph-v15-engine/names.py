@@ -236,7 +236,7 @@ class Namer:
                 rf"\b{escaped}\s*\[\s*\d+\s*\]",
                 source,
             ) and len(re.findall(rf"\b{escaped}\s*\[", source)) >= 4 and re.search(
-                rf"\blocal\s+{escaped}\s*=\s*\{{[^}}]*,[^}}]*,[^}}]*,[^}}]*\}}",
+                rf"\b{escaped}\s*=\s*\{{[^}}]*,[^}}]*,[^}}]*,[^}}]*\}}",
                 source,
             ):
                 role = "iteratorState"

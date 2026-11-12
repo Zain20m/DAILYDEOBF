@@ -50,6 +50,8 @@ const ENGINE_V147_CLI = path.join(ENGINE_V147_DIR, 'cli.py');
 const ENGINE_V143_DIR = path.join(__dirname, 'luraph-v14.3-engine');
 const ENGINE_V143_CLI = path.join(ENGINE_V143_DIR, 'daily_cli.py');
 const ENGINE_CENT_DIR = path.join(__dirname, 'centurion-engine');
+const ENGINE_FULCRUM_DIR = path.join(__dirname, 'fulcrum-engine');
+const ENGINE_FULCRUM_CLI = path.join(ENGINE_FULCRUM_DIR, 'fulcrum_deobf.py');
 const ENGINE_CENT_CLI = path.join(ENGINE_CENT_DIR, 'centurion.py');
 const ENGINE_IB2_DIR = path.join(__dirname, 'ib2deobf');
 const ENGINE_IB2_DLL = path.join(ENGINE_IB2_DIR, 'LuaAnalysis.Ironbrew2.dll');
@@ -1419,6 +1421,108 @@ function runEngine(engineDir, engineCli, inputPath, outputPath, timeoutMs, legac
 function runPythonEngine(engineDir, engineCli, inputPath, outputPath, timeoutMs, extraArgs = [], options = {}) {
   const python = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
   return runCommand(python, [engineCli, inputPath, '-o', outputPath, ...extraArgs], engineDir, timeoutMs, options);
+}
+
+async function startFulcrumWorkflow(message) {
+  const attachment = message.attachments.first() || null;
+  if (!attachment) {
+    await message.reply({
+      content: 'Usage: attach one Lua/Luau source file and send .fulcrum.',
+      allowedMentions: { repliedUser: false },
+    });
+    return;
+  }
+  if (!/\.(?:lua|luau|txt)$/i.test(String(attachment.name || ''))) {
+    await message.reply({
+      content: 'Fulcrum accepts .lua, .luau and .txt source files only.',
+      allowedMentions: { repliedUser: false },
+    });
+    return;
+  }
+
+  const prompt = await message.reply({
+    embeds: [dailyEmbed(
+      'Fulcrum · Processing',
+      'Running static Fulcrum analysis on the attached Luau source. The protected program is not executed.',
+      DAILY_COLORS.primary
+    )],
+    allowedMentions: { repliedUser: false },
+  });
+  let workDir = null;
+  try {
+    const input = await inputFromAttachment(attachment);
+    workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-fulcrum-'));
+    const inputPath = path.join(workDir, 'input.lua');
+    const outputDir = path.join(workDir, 'out');
+    await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
+
+    await runPythonEngine(
+      ENGINE_FULCRUM_DIR,
+      ENGINE_FULCRUM_CLI,
+      inputPath,
+      outputDir,
+      5 * 60_000
+    );
+
+    const recoveredPath = path.join(outputDir, 'recovered.lua');
+    const reportPath = path.join(outputDir, 'REPORT.md');
+    const stringsPath = path.join(outputDir, 'strings.txt');
+    const recovered = await fs.readFile(recoveredPath);
+    const report = await fs.readFile(reportPath);
+    const strings = await fs.readFile(stringsPath).catch(() => Buffer.alloc(0));
+    if (!recovered.length) throw new Error('Fulcrum produced an empty recovered source file.');
+    if (recovered.length > MAX_OUTPUT_BYTES || report.length > 2 * 1024 * 1024 ||
+        strings.length > MAX_OUTPUT_BYTES) {
+      throw new Error('Fulcrum output exceeded the configured attachment size limit.');
+    }
+
+    const originalName = input.filename || 'script.lua';
+    const originalBase = path.basename(originalName, path.extname(originalName));
+    const safeBase = originalBase.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 70) || 'script';
+    const recoveredName = safeBase + '.fulcrum-recovered.lua';
+    const reportName = safeBase + '.fulcrum-report.md';
+    const recoveredParts = makeSourceParts(recovered, recoveredName);
+    const files = recoveredParts.map((part) => new AttachmentBuilder(part.data, { name: part.name }));
+    files.push(new AttachmentBuilder(report, { name: reportName }));
+
+    await prompt.edit({
+      embeds: [dailyEmbed(
+        'Fulcrum · Recovery complete',
+        'Recovered source and analysis report are attached. This is a static reconstruction; original variable names and runtime-only values may not be recoverable.',
+        DAILY_COLORS.success
+      )],
+      files,
+      components: [],
+    });
+
+    if (strings.length) {
+      const stringParts = makeSourceParts(strings, safeBase + '.fulcrum-strings.txt');
+      await message.reply({
+        content: 'Decoded string table:',
+        files: stringParts.map((part) => new AttachmentBuilder(part.data, { name: part.name })),
+        allowedMentions: { repliedUser: false },
+      });
+    }
+  } catch (error) {
+    const details = String(error && error.message || error).slice(0, 1100);
+    await prompt.edit({
+      content: 'Fulcrum could not recover this file: ' + details,
+      embeds: [],
+      components: [],
+    }).catch(() => {});
+    if (error && error.stderr) {
+      await message.reply({
+        content: 'Fulcrum diagnostic output:',
+        files: [new AttachmentBuilder(Buffer.from(String(error.stderr).slice(0, 800_000), 'utf8'), {
+          name: 'fulcrum-error.log',
+        })],
+        allowedMentions: { repliedUser: false },
+      }).catch(() => {});
+    }
+    console.error('Fulcrum deobfuscation failed:', error);
+  } finally {
+    if (workDir) await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 
@@ -4924,6 +5028,42 @@ client.on(Events.MessageCreate, async (message) => {
   const parts = content.split(/\s+/);
   const command = parts[0].toLowerCase();
   const subcommand = (parts[1] || '').toLowerCase();
+
+
+  if (command === '.fulcrum') {
+    if (!message.guild || !message.guild.ownerId) {
+      await message.reply({
+        content: '.fulcrum is available only inside a Discord server.',
+        allowedMentions: { repliedUser: false },
+      });
+      return;
+    }
+    if (message.author.id !== message.guild.ownerId) {
+      await message.reply({
+        content: 'Only this Discord server owner can use .fulcrum.',
+        allowedMentions: { repliedUser: false },
+      });
+      return;
+    }
+    if (parts.length !== 1) {
+      await message.reply({
+        content: 'Usage: attach one Lua/Luau source file and send .fulcrum.',
+        allowedMentions: { repliedUser: false },
+      });
+      return;
+    }
+    if (activeUsers.has(message.author.id)) {
+      await message.reply('You already have an active job. Finish it or wait for it to expire.');
+      return;
+    }
+    activeUsers.add(message.author.id);
+    try {
+      await startFulcrumWorkflow(message);
+    } finally {
+      activeUsers.delete(message.author.id);
+    }
+    return;
+  }
 
   if (command === '.l') {
     if (parts.length > 1) {

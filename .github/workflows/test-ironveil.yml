@@ -1,0 +1,34 @@
+name: Test IronVeil integration
+on:
+  push:
+    paths:
+      - 'index.js'
+      - 'package.json'
+      - 'upload/ironveil-main 2.zip'
+      - 'scripts/setup-ironveil.py'
+      - 'scripts/setup-engines.js'
+      - '.github/workflows/test-ironveil.yml'
+  pull_request:
+    paths:
+      - 'index.js'
+      - 'package.json'
+      - 'upload/ironveil-main 2.zip'
+      - 'scripts/setup-ironveil.py'
+      - 'scripts/setup-engines.js'
+jobs:
+  ironveil:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - run: python3 scripts/setup-ironveil.py
+      - run: node node_modules/typescript/bin/tsc -p ironveil-engine/tsconfig.json
+      - name: Smoke test CLI
+        run: |
+          printf 'print("IronVeil smoke test")\n' > /tmp/ironveil-input.lua
+          node ironveil-engine/dist/cli.js /tmp/ironveil-input.lua /tmp/ironveil-output.lua
+          test -s /tmp/ironveil-output.lua
+          node --check index.js

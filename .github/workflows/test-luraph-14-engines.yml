@@ -5,6 +5,7 @@ on:
     paths:
       - "luraph-v14.7-engine/**"
       - "luraph-v14.3-engine/**"
+      - "luraph-v15-engine/bin/**"
       - "index.js"
       - "scripts/setup-engines.js"
       - ".github/workflows/test-luraph-14-engines.yml"
@@ -44,6 +45,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import cli
+          import harness
           from obfuscators.luraph_v14_7 import driver as driver147, vmmap as map147, devirt as devirt147
           from obfuscators.luraph_v14_8 import driver as driver148, vmmap as map148, devirt as devirt148
           from obfuscators.luraph_v14_9 import driver as driver149, vmmap as map149, devirt as devirt149
@@ -53,6 +55,11 @@ jobs:
           import tempfile
           import os
           parser = map149.luau_ast_executable()
+          runtime = harness.find_luau()
+          import subprocess
+          runtime_check = subprocess.run([runtime, "-e", "print('luau-runtime-ok')"], capture_output=True, text=True, timeout=15)
+          assert runtime_check.returncode == 0 and "luau-runtime-ok" in runtime_check.stdout, runtime_check.stderr
+          print(f"Luraph v14 runtime resolved and ran: {runtime}")
           with tempfile.NamedTemporaryFile("w", suffix=".luau", delete=False) as sample:
               sample.write("return 1\\n")
               sample_path = sample.name

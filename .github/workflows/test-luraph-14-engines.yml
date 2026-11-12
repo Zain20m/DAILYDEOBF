@@ -105,7 +105,7 @@ jobs:
           spin_result = subprocess.run([runtime, "-e", spin_test], capture_output=True, text=True, timeout=15)
           assert spin_result.returncode == 0 and "dynamic loadstring spin watchdog patterns passed" in spin_result.stdout, spin_result.stderr
           with tempfile.NamedTemporaryFile("w", suffix=".luau", delete=False) as sample:
-              sample.write("return 1\\n")
+              sample.write("return 1\n")
               sample_path = sample.name
           try:
               assert map149.load_ast(sample_path), "luau-ast returned an empty AST"

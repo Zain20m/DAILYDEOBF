@@ -218,21 +218,21 @@ function inferIdentifierName(source, token, isFunction, tokens, items, itemIndex
     : source.slice(token.end, lineEnd < 0 ? Math.min(source.length, token.end + 800) : lineEnd);
 
   if (isFunction) {
-    if (/\\btxt\\s*==\\s*["']1["']/.test(tail) &&
-        /\\btxt\\s*==\\s*["']0["']/.test(tail) &&
-        /\\breturn\\s+true/.test(tail) && /\\breturn\\s+false/.test(tail) &&
-        /\\breturn\\s+nil/.test(tail)) return 'parseBoolean';
-    if (/\\barg\\s*==\\s*1/.test(tail) && /\\barg\\s*==\\s*2/.test(tail) &&
-        /\\bv5\\s*=\\s*tbl2?\\b/.test(tail) && /\\bv5\\s*=\\s*tbl3\\b/.test(tail)) {
+    if (/\btxt\s*==\s*["']1["']/.test(tail) &&
+        /\btxt\s*==\s*["']0["']/.test(tail) &&
+        /\breturn\s+true/.test(tail) && /\breturn\s+false/.test(tail) &&
+        /\breturn\s+nil/.test(tail)) return 'parseBoolean';
+    if (/\barg\s*==\s*1/.test(tail) && /\barg\s*==\s*2/.test(tail) &&
+        /\bv5\s*=\s*tbl2?\b/.test(tail) && /\bv5\s*=\s*tbl3\b/.test(tail)) {
       return 'selectConfigTable';
     }
-    if (/\\bflag\\w*\\s*=\\s*arg\\s+and\\s+true\\s+or\\s+false/.test(tail) &&
-        /toggleBtn\\.Text/.test(tail) && /["']ON["']/.test(tail) && /["']OFF["']/.test(tail)) {
+    if (/\bflag\w*\s*=\s*arg\s+and\s+true\s+or\s+false/.test(tail) &&
+        /toggleBtn\.Text/.test(tail) && /["']ON["']/.test(tail) && /["']OFF["']/.test(tail)) {
       return 'setEnabled';
     }
     if (/InputBegan/.test(tail) && /MouseButton1/.test(tail) && /UserInputType.Touch/.test(tail) &&
-        /input\\.Position/.test(tail)) return 'handleDragStart';
-    if (/RenderStepped/.test(tail) && /math\\.floor/.test(tail) && /tick\\s*\\(/.test(tail)) {
+        /input\.Position/.test(tail)) return 'handleDragStart';
+    if (/RenderStepped/.test(tail) && /math\.floor/.test(tail) && /tick\s*\(/.test(tail)) {
       return 'updateFrameRate';
     }
     if (/UDim2\s*\.\s*new\s*\(/.test(tail) && /tonumber\s*\(/.test(tail) && /\.(?:sx|ox|sy|oy)\b/.test(tail)) return 'resolveUDim2';
@@ -1259,7 +1259,54 @@ function inferCommonSemanticNames(source, declarations) {
 
   for (const [name, entries] of declarations) {
     if (entries.length !== 1 || entries[0].kind !== 'local') continue;
-    const escaped = name.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\
+    const escaped = name;
+    const declaration = entries[0].token;
+    const nearby = source.slice(Math.max(0, declaration.start - 500), Math.min(source.length, declaration.end + 5000));
+
+    if (new RegExp('\\b' + escaped + '\\s*=\\s*input\\.Position').test(nearby) &&
+        new RegExp('input\\.Position\\.X\\s*-\\s*' + escaped + '\\.X').test(nearby)) {
+      add(name, 'dragStartInputPosition');
+    } else if (new RegExp('\\b' + escaped + '\\s*=\\s*frame\\.Position').test(nearby) &&
+        /frame\.InputBegan|InputBegan/.test(nearby)) {
+      add(name, 'dragStartFramePosition');
+    } else if (new RegExp('\\b' + escaped + '\\s*\\+=\\s*1\\b').test(nearby) &&
+        new RegExp('math\\.floor\\s*\\(\\s*' + escaped + '\\s*/').test(nearby)) {
+      add(name, 'frameSampleCount');
+    } else if (new RegExp('\\b' + escaped + '\\s*=\\s*tick\\s*\\(').test(nearby) &&
+        new RegExp('now\\w*\\s*-\\s*' + escaped + '\\b').test(nearby)) {
+      add(name, 'lastFpsSampleTime');
+    } else if (new RegExp('\\b' + escaped + '\\s*=\\s*tick\\s*\\(').test(nearby) &&
+        new RegExp(escaped + '\\s*-\\s*now\\w+').test(nearby)) {
+      add(name, 'currentFpsSampleTime');
+    } else if (new RegExp('\\b' + escaped + '\\s*=\\s*math\\.floor\\s*\\(\\s*n\\w*\\s*/').test(nearby)) {
+      add(name, 'framesPerSecond');
+    } else if (new RegExp('\\b' + escaped + '\\s*=\\s*input\\.Position\\.X').test(nearby) &&
+        /input\.Position\.X\s*-\s*position\.X/.test(nearby)) {
+      add(name, 'dragDeltaX');
+    } else if (new RegExp('\\b' + escaped + '\\s*=\\s*input\\.Position\\.Y').test(nearby) &&
+        /input\.Position\.Y\s*-\s*position\.Y/.test(nearby)) {
+      add(name, 'dragDeltaY');
+    } else if (/position2\.X\.Scale\s*\*\s*CurrentCamera\.X/.test(nearby) &&
+        new RegExp('\\b' + escaped + '\\s*=\\s*position2\\.X\\.Scale').test(nearby)) {
+      add(name, 'scaledXPosition');
+    } else if (/UserInputType\.Touch|MouseButton1/.test(nearby) &&
+        /InputBegan/.test(nearby) && /UserInputState\.End/.test(nearby) &&
+        new RegExp('\\b' + escaped + '\\s*=\\s*true').test(nearby)) {
+      add(name, 'isDragging');
+    } else if (new RegExp('\\b' + escaped + '\\s*=\\s*\\{\\s*\\}').test(nearby) &&
+        new RegExp('\\b' + escaped + '\\.toggleBtn').test(nearby)) {
+      add(name, 'uiElements');
+    } else if (new RegExp('\\b' + escaped + '\\s*=\\s*fn\\d+\\s*\\(').test(nearby) &&
+        /StealRadius\s*=/.test(nearby)) {
+      add(name, 'stealRadius');
+    } else if (new RegExp('\\b' + escaped + '\\s*=\\s*fn\\d+\\s*\\(').test(nearby) &&
+        /flag\w*\s*=\s*[^;\n]+==\s*nil/.test(nearby)) {
+      add(name, 'savedEnabledState');
+    }
+  }
+
+  return mappings;
+}
 function createLineNumberLookup(source) {');
     const whole = new RegExp('\\\\b' + escaped + '\\\\b');
     const declaration = entries[0].token;

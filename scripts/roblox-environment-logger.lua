@@ -29,6 +29,12 @@ local function vectorSummary(value)
     end)
 end
 
+local function vector2Summary(value)
+    return safeRead(function()
+        return string.format("%.2f, %.2f", value.X, value.Y)
+    end)
+end
+
 local function colorSummary(value)
     return safeRead(function()
         return string.format("%.3f, %.3f, %.3f", value.R, value.G, value.B)
@@ -95,7 +101,7 @@ local report = {
         currentCameraAvailable = camera ~= nil,
         cameraType = camera and safeRead(function() return enumName(camera.CameraType) end) or "Unavailable",
         cameraFieldOfView = camera and safeRead(function() return camera.FieldOfView end) or "Unavailable",
-        cameraViewportSize = camera and safeRead(function() return vectorSummary(camera.ViewportSize) end) or "Unavailable",
+        cameraViewportSize = camera and safeRead(function() return vector2Summary(camera.ViewportSize) end) or "Unavailable",
     },
 
     lighting = {

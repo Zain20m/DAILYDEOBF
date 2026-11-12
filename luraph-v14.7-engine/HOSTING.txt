@@ -1,0 +1,21 @@
+HOSTING SETUP
+
+1. Upload this ZIP to the host file manager and extract it in the server's main folder.
+2. In Startup settings, set the Python/app file to: host_start.py
+3. Set the requirements file to: requirements.txt
+4. Add DISCORD_TOKEN as an environment variable in the host panel.
+5. Enable Presence Intent and Server Members Intent in the Discord Developer Portal.
+6. Start the server and check its console.
+
+LURAPH SUPPORT
+The public /deob command includes v14.7, v14.8, v14.9, and v15. Luraph v15.1 is VIP-only through /vipdeob and requires role 1387797482607739010. On Linux, Luraph also needs executable files bin/luau and bin/luau-ast. host_start.py attempts to build them if absent; the host must have git, CMake, g++, Python, and GitHub network access. If those requirements are unavailable, ask the hosting provider to provide Linux Luau tools. Windows .exe files cannot run on a Linux host.
+
+The bot accepts files up to 25 MiB by default and gives each Luraph run up to 14 minutes. Set MAX_SOURCE_MB in the host environment (1–100) to change the bot's input cap; the hoster's own upload cap still applies. Large scripts still depend on the host's CPU/RAM allocation, and the host may impose a shorter runtime limit. The engine allows up to 48 trace runs and 2,000 devirtualization rounds, stopping early when no more work is needed.
+
+COMMAND ACCESS
+Commands are allowed in channels 1560018065112965150 and 1560787704537419776 and their threads. All replies are public. For commands other than /help, users must set the custom status phrase shown in .env.example or have the exempt role. User 1350114888940523635 and role 1387797482607739010 are exempt.
+
+Set this custom status exactly: Luraph v15.1 deobf https://discord.gg/w8ggDtsqe6
+
+Do not upload .env or share the bot token.
+

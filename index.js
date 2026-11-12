@@ -2452,7 +2452,7 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
           ENGINE_V15_CLI,
           dedicated.inputPath,
           dedicated.outputPath,
-          150_000,
+          420_000,
           [
             '--obfuscator', 'luraph_v15',
             '--debug',
@@ -2472,6 +2472,9 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
               DEVIRT_ERRS: '1',
               DEVIRT_TB: '1',
               DEVIRT_WALK_LIMIT: '750000',
+              DEVIRT_WALK_RESTARTS: '96',
+              DEVIRT_MAX_STACK_DEPTHS: '12',
+              DEVIRT_STACK_WALK_MAX: '60000',
             },
             onProgress: progress.onLine,
           },

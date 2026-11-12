@@ -30,7 +30,7 @@ def patch_spin(src):
     after the loop's 'do' token so those variants cannot evade the watchdog.
     """
     marker = "__SPIN.n=__SPIN.n+1;"
-    pattern = r"\\bwhile\\s+true\\s+do"
+    pattern = r"\bwhile\s+true\s+do"
     def inject(match):
         return match.group(0) + ";" + marker + "if __SPIN.n>=__SPIN.step then __SPIN.f()end;"
     return re.sub(pattern, inject, src)

@@ -3325,6 +3325,75 @@ async function handlePureLuauPrefixCommand(message, pastedSource = null) {
   await handlePureLuauCommand(adapter);
 }
 
+async function sendEnvironmentLog(message) {
+  const memory = process.memoryUsage();
+  const totalMemory = os.totalmem();
+  const freeMemory = os.freemem();
+  const uptimeSeconds = Math.floor(process.uptime());
+  const formatDuration = (seconds) => {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    return [days ? days + 'd' : '', hours ? hours + 'h' : '', minutes ? minutes + 'm' : '', secs + 's']
+      .filter(Boolean).join(' ');
+  };
+  const envStatus = [
+    ['DISCORD_TOKEN', Boolean(process.env.DISCORD_TOKEN)],
+    ['GUILD_ID', Boolean(process.env.GUILD_ID)],
+    ['JNKIE_FETCH_TOKEN', Boolean(process.env.JNKIE_FETCH_TOKEN)],
+    ['JNKIE_HWID', Boolean(process.env.JNKIE_HWID)],
+  ];
+  const embed = dailyEmbed(
+    'Runtime environment',
+    'Live, read-only diagnostics for this DAILYDEOBF process. Secret values are never displayed.',
+    DAILY_COLORS.primary
+  );
+  embed.addFields(
+    {
+      name: 'Runtime',
+      value: [
+        '**Node.js:** ' + process.version,
+        '**Discord.js:** ' + (() => { try { return require('discord.js/package.json').version; } catch { return 'unknown'; } })(),
+        '**Platform:** ' + process.platform + ' (' + process.arch + ')',
+        '**OS:** ' + os.type() + ' ' + os.release(),
+        '**CPU cores:** ' + os.cpus().length,
+        '**Process uptime:** ' + formatDuration(uptimeSeconds),
+      ].join('\n'),
+      inline: true,
+    },
+    {
+      name: 'Memory',
+      value: [
+        '**Process RSS:** ' + formatBytes(memory.rss),
+        '**Heap used:** ' + formatBytes(memory.heapUsed) + ' / ' + formatBytes(memory.heapTotal),
+        '**External:** ' + formatBytes(memory.external),
+        '**System RAM:** ' + formatBytes(totalMemory - freeMemory) + ' / ' + formatBytes(totalMemory),
+      ].join('\n'),
+      inline: true,
+    },
+    {
+      name: 'Discord connection',
+      value: [
+        '**Bot:** ' + (client.user ? client.user.tag : 'Not ready'),
+        '**Gateway ping:** ' + (Number.isFinite(client.ws.ping) && client.ws.ping >= 0 ? Math.round(client.ws.ping) + ' ms' : 'Unavailable'),
+        '**Guilds cached:** ' + client.guilds.cache.size,
+        '**Users cached:** ' + client.users.cache.size,
+      ].join('\n'),
+      inline: true,
+    },
+    {
+      name: 'Environment configuration',
+      value: envStatus.map(([name, configured]) =>
+        '`' + name + '`: ' + (configured ? 'Configured (value hidden)' : 'Not set')
+      ).join('\n'),
+      inline: false,
+    },
+  );
+  embed.setFooter({ text: 'Values are sampled when .l is run. No environment-variable contents are logged.' });
+  await message.reply({ embeds: [embed], allowedMentions: { repliedUser: false } });
+}
+
 function helpText() {
   return [
     'DAILY DEOBF',
@@ -4197,6 +4266,20 @@ client.on(Events.MessageCreate, async (message) => {
   const parts = content.split(/\s+/);
   const command = parts[0].toLowerCase();
   const subcommand = (parts[1] || '').toLowerCase();
+
+  if (command === '.l') {
+    if (parts.length > 1) {
+      await message.reply('Usage: .l');
+      return;
+    }
+    try {
+      await sendEnvironmentLog(message);
+    } catch (error) {
+      await message.reply('Environment logger failed: ' + String(error && error.message || error).slice(0, 500))
+        .catch(() => {});
+    }
+    return;
+  }
 
   if (command === '.help') {
     if (parts.length > 1) {

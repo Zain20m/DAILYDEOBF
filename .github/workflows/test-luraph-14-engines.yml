@@ -32,18 +32,23 @@ jobs:
           print(f"Compiled {count} Python source files.")
           PY
 
-      - name: Load the Luraph v14.7 engine
+      - name: Load the Luraph v14.7, v14.8 and v14.9 engines
         env:
           PYTHONPATH: luraph-v14.7-engine
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
           python3 - <<'PY'
           import cli
-          from obfuscators.luraph_v14_7 import driver, vmmap, devirt
-          engine = cli.load_engine("14.7")
-          print("Loaded engine:", type(engine).__name__)
-          print("Driver, VM mapper and devirtualizer imports passed.")
+          from obfuscators.luraph_v14_7 import driver as driver147, vmmap as map147, devirt as devirt147
+          from obfuscators.luraph_v14_8 import driver as driver148, vmmap as map148, devirt as devirt148
+          from obfuscators.luraph_v14_9 import driver as driver149, vmmap as map149, devirt as devirt149
+          for version in ("14.7", "14.8", "14.9"):
+              engine = cli.load_engine(version)
+              print(f"Loaded Luraph v{version}: {type(engine).__name__}")
+          print("All three VM drivers, mappers and devirtualizers imported.")
           PY
+          python3 luraph-v14.7-engine/cli.py --help >/dev/null
+          echo "Shared v14.7-v14.9 CLI help check passed."
 
       - name: Run the Luraph v14.3 bundled sample through the adapter
         env:

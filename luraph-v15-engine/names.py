@@ -177,34 +177,37 @@ class Namer:
         return "\n".join(lines[first:last])
 
     def infer_generated_roles(self):
-        """Name common Luraph VM artifacts by their actual data-flow patterns.
+        """Name common Luraph VM artifacts from local data-flow patterns.
 
-        This is deliberately limited to generated locals and the explicit
-        __orphan_upvalue_N placeholders. It never rewrites user-authored names.
+        Only generated locals and explicit orphan-upvalue placeholders are
+        considered. Roles are keyed by declaration identity, not spelling:
+        obfuscated functions commonly reuse r12/r17 in separate scopes.
         """
         generated = [
             info for info in self.locals.values()
             if GENERATED.match(info["name"])
         ]
         scopes = {id(info): self.scope_source(info) for info in generated}
-        permutation_tables = set()
+        permutation_ids = set()
+        permutation_names = set()
 
         # RC4-style permutation table: save T[i], assign T[i] = T[j],
-        # then restore T[j] = saved. This exact data-flow shape is stronger
-        # evidence than merely seeing a byte mask or a table write.
+        # then restore T[j] = saved. Require the byte-masking context too.
         for info in generated:
             name = re.escape(info["name"])
+            source = scopes[id(info)]
             swap = re.search(
                 r"\blocal\s+([A-Za-z_]\w*)\s*=\s*" + name +
                 r"\s*\[\s*([A-Za-z_]\w*)\s*\]\s*" +
                 name + r"\s*\[\s*\2\s*\]\s*=\s*" +
                 name + r"\s*\[\s*([A-Za-z_]\w*)\s*\]\s*" +
                 name + r"\s*\[\s*\3\s*\]\s*=\s*\1\b",
-                scopes[id(info)],
+                source,
                 re.S,
             )
-            if swap and "bit32.band" in scopes[id(info)] and "255" in scopes[id(info)]:
-                permutation_tables.add(info["name"])
+            if swap and "bit32.band" in source and "255" in source:
+                permutation_ids.add(id(info))
+                permutation_names.add(info["name"])
 
         roles = {}
         for info in generated:
@@ -226,7 +229,7 @@ class Namer:
                 else:
                     role = "capturedValue"
 
-            elif name in permutation_tables:
+            elif id(info) in permutation_ids:
                 role = "permutation"
 
             elif re.search(
@@ -236,41 +239,41 @@ class Namer:
                 rf"\blocal\s+{escaped}\s*=\s*\{{[^}}]*,[^}}]*,[^}}]*,[^}}]*\}}",
                 source,
             ):
-                role = "loopControl"
+                role = "iteratorState"
 
             else:
                 state_writes = len(re.findall(rf"\b{escaped}\s*=\s*-?\d+\b", source))
                 state_tests = len(re.findall(rf"\b{escaped}\s*(?:<=|>=|==)\s*-?\d+\b", source))
                 if state_writes >= 4 and state_tests >= 4:
-                    role = "state"
+                    role = "dispatchState"
 
-            roles[name] = role
+            roles[id(info)] = role
 
-        # Name the two RC4 indices and the output buffer from the recognized
-        # permutation table. Repeated matches in separate routines are safe:
-        # the normal scope-collision pass will suffix overlapping names.
+        # Recognize the byte-permutation indices and output buffer by how
+        # they interact with a table already proven to be a permutation.
         for info in generated:
+            ident = id(info)
+            if roles.get(ident) is not None:
+                continue
             name = info["name"]
             escaped = re.escape(name)
-            source = scopes[id(info)]
-            if roles.get(name) is not None:
-                continue
+            source = scopes[ident]
 
             if re.search(
                 rf"bit32\.band\(\s*{escaped}\s*\+\s*1\s*,\s*255\s*\)",
                 source,
             ):
-                roles[name] = "permutationIndex"
+                roles[ident] = "permutationIndex"
                 continue
 
-            perm_names = [re.escape(value) for value in permutation_tables]
+            perm_names = [re.escape(value) for value in permutation_names]
             assigned = False
             for perm in perm_names:
                 if re.search(
                     rf"bit32\.band\(\s*{escaped}\s*\+\s*{perm}\s*\[[^\]]+\]\s*,\s*255\s*\)",
                     source,
                 ):
-                    roles[name] = "swapIndex"
+                    roles[ident] = "swapIndex"
                     assigned = True
                     break
                 output = re.search(
@@ -278,35 +281,46 @@ class Namer:
                     source,
                 )
                 if output:
-                    roles[name] = "outputIndex"
-                    roles[output.group(1)] = "outputBuffer"
+                    roles[ident] = "outputIndex"
+                    # Resolve the output buffer declaration by its actual
+                    # local identity where possible, not by global spelling.
+                    buffer_name = output.group(1)
+                    for candidate in generated:
+                        if candidate["name"] == buffer_name and re.search(
+                            rf"\b{re.escape(buffer_name)}\s*\[\s*{escaped}\s*\]",
+                            scopes[id(candidate)],
+                        ):
+                            roles[id(candidate)] = "outputBuffer"
                     assigned = True
                     break
             if assigned:
                 continue
 
-            # A key-scheduling expression has the form
-            # j + S[i] + key[i % keyLength + 1], all masked to one byte.
+            # KSA-style key indexing: j + S[i] + key[i % keyLength + 1].
             for perm in perm_names:
                 mixed = re.search(
                     rf"bit32\.band\(\s*[A-Za-z_]\w*\s*\+\s*{perm}\s*\[[^\]]+\]\s*\+\s*{escaped}\s*\[[^\]]*%\s*([A-Za-z_]\w*)\s*\+\s*1\]\s*,\s*255\s*\)",
                     source,
                 )
                 if mixed:
-                    roles[name] = "keyBytes"
-                    roles[mixed.group(1)] = "keyLength"
+                    roles[ident] = "keyBytes"
+                    key_length = mixed.group(1)
+                    for candidate in generated:
+                        if candidate["name"] == key_length:
+                            roles[id(candidate)] = "keyLength"
                     assigned = True
                     break
             if assigned:
                 continue
 
-            # Byte-masked counters used as permutation indices are often the
-            # same i variable without the increment expression in this block.
-            if perm_names and re.search(rf"bit32\.band\(\s*{escaped}\s*,\s*255\s*\)", source):
-                roles[name] = "permutationIndex"
+            if perm_names and re.search(
+                rf"bit32\.band\(\s*{escaped}\s*,\s*255\s*\)",
+                source,
+            ):
+                roles[ident] = "permutationIndex"
 
         for info in generated:
-            role = roles.get(info["name"])
+            role = roles.get(id(info))
             if role:
                 info["hint"] = role
 

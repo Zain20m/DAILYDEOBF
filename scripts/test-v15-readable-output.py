@@ -6,6 +6,9 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "luraph-v15-engine"))
+from structure import SBlock, SIf, flatten_threshold_dispatch
+from luasym import Bin, Const, Reg
 NAMER = ROOT / "luraph-v15-engine" / "names.py"
 
 SAMPLE = r'''
@@ -76,7 +79,26 @@ def main():
     for old in ("r12", "r17", "r14", "r15", "r19", "r20", "__orphan_upvalue_1", "__orphan_upvalue_2", "__orphan_upvalue_5"):
         if old in result:
             raise SystemExit("Generated identifier survived readable pass: " + old)
-    print("V15 READABLE OUTPUT OK: dispatcher, byte permutation, output buffer and captured upvalues named")
+    # A nested binary-search dispatcher on the same numeric state register
+    # should become a flat, equivalent elseif chain.
+    nested = SIf(
+        Bin("CompareLe", Reg(12), Const(22)),
+        SBlock([
+            SIf(
+                Bin("CompareLe", Reg(12), Const(18)),
+                SBlock(["case18"]),
+                SBlock(["case22"]),
+            )
+        ]),
+        SBlock(["caseAbove"]),
+    )
+    flat = flatten_threshold_dispatch(nested)
+    if flat.cond.b.v != 18 or len(flat.els) != 1 or not isinstance(flat.els[0], SIf):
+        raise SystemExit("Threshold-dispatch flattening did not create an ordered elseif chain")
+    if flat.els[0].cond.b.v != 22 or flat.els[0].then != ["case22"]:
+        raise SystemExit("Threshold-dispatch flattening changed branch destinations")
+
+    print("V15 READABLE OUTPUT OK: dispatcher, byte permutation, output buffer, captures and elseif normalization")
 
 
 if __name__ == "__main__":

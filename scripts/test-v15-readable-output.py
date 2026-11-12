@@ -19,12 +19,19 @@ local function recovered()
     local r15 = 0
     local r19 = {}
     local r20 = 0
+    local r5 = {}
+    r5 = { 32, 0, r5[5], 1, nil }
     local __orphan_upvalue_1 = 0
     local __orphan_upvalue_2 = {}
     local __orphan_upvalue_5 = 7
 
     while true do
         if r12 <= 60 then
+            local first = r5[1]
+            local second = r5[2]
+            local third = r5[3]
+            local fourth = r5[4]
+            local fifth = r5[5]
             r14 = bit32.band(r14 + 1, 255)
             r15 = bit32.band(r15 + r17[r14], 255)
             local r2_7 = r17[r14]
@@ -64,6 +71,7 @@ def main():
 
     expected = (
         "dispatchState",
+        "iteratorState",
         "permutation",
         "permutationIndex",
         "swapIndex",
@@ -76,7 +84,7 @@ def main():
     missing = [name for name in expected if name not in result]
     if missing:
         raise SystemExit("Readable-name regression failed; missing: " + ", ".join(missing))
-    for old in ("r12", "r17", "r14", "r15", "r19", "r20", "__orphan_upvalue_1", "__orphan_upvalue_2", "__orphan_upvalue_5"):
+    for old in ("r12", "r17", "r14", "r15", "r19", "r20", "r5", "__orphan_upvalue_1", "__orphan_upvalue_2", "__orphan_upvalue_5"):
         if old in result:
             raise SystemExit("Generated identifier survived readable pass: " + old)
     # A nested binary-search dispatcher on the same numeric state register

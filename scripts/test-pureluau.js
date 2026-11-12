@@ -502,5 +502,7 @@ test('renames mixed Luraph-style generated locals, parameters, tables, and helpe
   assert.match(result.output, /modeIndex/);
   assert.match(result.output, /dispatchTarget/);
   assert.match(result.output, /connectHeartbeatListener/);
-  assert.doesNotMatch(result.output, /\b(?:fn5|fn7|fn8|fn9|fn10|tbl4|arg|v3|n)\b/);
+  assert.match(result.output, /target2/);
+  // v3 is also a literal string in the supported-version list, so only check identifiers.
+  assert.doesNotMatch(result.output, /\b(?:fn5|fn7|fn8|fn9|fn10|tbl4|arg|n)\b/);
 });

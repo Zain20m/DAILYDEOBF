@@ -2515,7 +2515,7 @@ function extractJnkIeDownloadUrl(sourceText) {
   return match ? match[0].replace(/[)\]},.;]+$/g, '') : null;
 }
 
-async function fetchJnkIeLoaderSource(rawUrl, credentialText = '', existingStage1 = '') {
+async function fetchJnkIeLoaderSource(rawUrl, credentialText = '', existingStage1 = '', suppliedHwid = '') {
   const loaderUrl = new URL(rawUrl);
   const match = loaderUrl.pathname.match(
     /^\/api\/v1\/luascripts\/public\/([a-f0-9]{32,128})\/download\/?$/i
@@ -2553,7 +2553,16 @@ async function fetchJnkIeLoaderSource(rawUrl, credentialText = '', existingStage
   const hwidMatch = String(credentialText || '').match(
     /(?:getgenv\(\)\s*\.\s*)?(?:HWID|hwid)\s*=\s*["']([^"']+)["']/i
   );
-  const hwid = hwidMatch && hwidMatch[1] ? hwidMatch[1].trim() : '';
+  const hwid = String(suppliedHwid || (hwidMatch && hwidMatch[1]) || '').trim();
+  if (!hwid) {
+    return {
+      source: stage1,
+      complete: false,
+      requiresHwid: true,
+      reason: 'JNKIE requires the account/device HWID for delivery. Supply it privately, then retry.',
+      finalUrl: loaderUrl.toString(),
+    };
+  }
   const deliveryUrl = new URL('/api/v1/luascripts/delivery/' + hash, loaderUrl.origin);
   deliveryUrl.searchParams.set('v', '2');
   deliveryUrl.searchParams.set('errors', 'text');
@@ -3367,12 +3376,50 @@ async function processJnkIeFetcher(message, prompt, input) {
     ? String(input.source || '')
     : '';
   await prompt.edit({
-    content: '🔄 **JNKIE Fetcher**\nFetching the stage-one loader, then requesting delivery with the supplied SCRIPT_KEY...',
+    content: '🔄 **JNKIE Fetcher**\nFetching the stage-one loader and checking the required delivery inputs...',
     embeds: [],
     components: [],
   });
 
-  const result = await fetchJnkIeLoaderSource(rawUrl, combined, existingStage1);
+  const embeddedHwid = combined.match(
+    /(?:getgenv\(\)\s*\.\s*)?(?:HWID|hwid)\s*=\s*["']([^"']+)["']/i
+  );
+  let suppliedHwid = embeddedHwid && embeddedHwid[1] ? embeddedHwid[1].trim() : '';
+  let result = await fetchJnkIeLoaderSource(rawUrl, combined, existingStage1, suppliedHwid);
+
+  if (result && result.requiresHwid) {
+    let dmChannel;
+    try {
+      dmChannel = await message.author.createDM();
+      await dmChannel.send(
+        'JNKIE needs the HWID required by its normal delivery API. Reply to this message with the HWID. ' +
+        'It will be sent only to the JNKIE delivery endpoint and will not be posted in the server. ' +
+        'This request expires in 2 minutes.'
+      );
+    } catch {
+      throw new Error('JNKIE requires an HWID. I could not DM you; enable server-member DMs and retry so you can provide it privately.');
+    }
+
+    let collected;
+    try {
+      collected = await dmChannel.awaitMessages({
+        filter: (reply) => reply.author.id === message.author.id,
+        max: 1,
+        time: 120000,
+        errors: ['time'],
+      });
+    } catch {
+      throw new Error('Timed out waiting for the JNKIE HWID in DM. No delivery request was sent.');
+    }
+
+    const hwidMessage = collected.first();
+    suppliedHwid = String(hwidMessage && hwidMessage.content || '').trim();
+    if (hwidMessage) await hwidMessage.delete().catch(() => {});
+    if (!suppliedHwid || suppliedHwid.length > 512 || /[\r\n]/.test(suppliedHwid)) {
+      throw new Error('The supplied JNKIE HWID was empty or invalid. Retry with the exact HWID value.');
+    }
+    result = await fetchJnkIeLoaderSource(rawUrl, combined, existingStage1, suppliedHwid);
+  }
   if (!result) throw new Error('This is not a supported JNKIE public download URL.');
   const data = Buffer.from(result.source.endsWith('\n') ? result.source : result.source + '\n', 'utf8');
   if (data.length > MAX_OUTPUT_BYTES) throw new Error('JNKIE output exceeds the 18 MB Discord output limit.');

@@ -50,6 +50,17 @@ jobs:
           for version in ("14.7", "14.8", "14.9"):
               engine = cli.load_engine(version)
               print(f"Loaded Luraph v{version}: {type(engine).__name__}")
+          import tempfile
+          import os
+          parser = map149.luau_ast_executable()
+          with tempfile.NamedTemporaryFile("w", suffix=".luau", delete=False) as sample:
+              sample.write("return 1\\n")
+              sample_path = sample.name
+          try:
+              assert map149.load_ast(sample_path), "luau-ast returned an empty AST"
+          finally:
+              os.unlink(sample_path)
+          print(f"Luraph v14.9 AST parser resolved and ran: {parser}")
           print("All three VM drivers, mappers and devirtualizers imported.")
           PY
           python3 luraph-v14.7-engine/cli.py --help >/dev/null

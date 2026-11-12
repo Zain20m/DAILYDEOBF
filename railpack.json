@@ -3,7 +3,8 @@
   "provider": "node",
   "packages": {
     "node": "22",
-    "python": "3.13"
+    "python": "3.13",
+    "dotnet": "9"
   },
   "deploy": {
     "startCommand": "npm start"

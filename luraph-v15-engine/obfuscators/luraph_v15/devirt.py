@@ -656,11 +656,23 @@ class State:
 
 # --------------------------------------------------------------------------
 
+def _bounded_env_int(name, default, minimum, maximum):
+    """Read a bounded devirtualizer tuning value; ignore malformed environment values."""
+    try:
+        value = int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, value))
+
+
 WALK_MAX_ERRORS = 100    # request walks only (see Program._walk)
-WALK_RESTARTS = 64       # walks per function (each new jump register / carried local restarts it;
-                         # a stack VM finds its return-address slots one at a time)
-MAX_STACK_DEPTHS = 8     # stack VM: distinct stack depths per pc (see Program._walk)
-STACK_WALK_MAX = 30000   # stack VM: states per function before giving up on the carried stack pointer
+# The bot sets DEVIRT_WALK_LIMIT, but older builds ignored it and always used
+# 400,000 states. Honour the configured ceiling so large functions can finish
+# their CFG walk instead of being silently cut off.
+WALK_LIMIT = _bounded_env_int("DEVIRT_WALK_LIMIT", 400000, 10000, 2000000)
+WALK_RESTARTS = _bounded_env_int("DEVIRT_WALK_RESTARTS", 64, 8, 256)
+MAX_STACK_DEPTHS = _bounded_env_int("DEVIRT_MAX_STACK_DEPTHS", 8, 2, 64)
+STACK_WALK_MAX = _bounded_env_int("DEVIRT_STACK_WALK_MAX", 30000, 1000, 250000)
 
 
 class ProtoLifter:
@@ -2974,7 +2986,7 @@ class FunctionLifter:
         lf = ProtoLifter(vm, self.prog.dump, vmobj, proto, upvals, self.prog.globals)
         st = make_stepper(vm, lf)
         for _ in range(WALK_RESTARTS):
-            s0, order, restart = self.prog._walk(vm, lf, st, 400000)
+            s0, order, restart = self.prog._walk(vm, lf, st, WALK_LIMIT)
             if not restart:
                 break
         self.prog.requests |= lf.requests
@@ -3022,7 +3034,7 @@ class FunctionLifter:
             lf.walk_only = True
             st = make_stepper(cvm, lf)
             for _ in range(WALK_RESTARTS):
-                _, _, restart = self.prog._walk(cvm, lf, st, 400000)
+                _, _, restart = self.prog._walk(cvm, lf, st, WALK_LIMIT)
                 if not restart:
                     break
         except Unsupported:
@@ -3476,7 +3488,7 @@ def _walk_one(prog, vm, vmobj, proto, pkey):
         lf.walk_only = True
         st = make_stepper(vm, lf)
         for _ in range(WALK_RESTARTS):
-            s0, order, restart = prog._walk(vm, lf, st, 400000)
+            s0, order, restart = prog._walk(vm, lf, st, WALK_LIMIT)
             if not restart:
                 break
     except Unsupported:

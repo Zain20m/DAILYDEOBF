@@ -1,4 +1,4 @@
-name: Inspect uploaded Luraph 14 archives
+name: Import and inspect uploaded Luraph 14 archives
 
 on:
   push:
@@ -9,87 +9,126 @@ permissions:
   contents: write
 
 jobs:
-  inspect:
+  import:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
-      - name: Inspect ZIP metadata and source entrypoints without executing archive code
+      - name: Safely extract source files from both uploaded archives
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          from pathlib import Path
+          from pathlib import Path, PurePosixPath
           from zipfile import ZipFile, BadZipFile
           import hashlib
+          import json
+          import shutil
 
-          archives = [
-              Path("upload/DiscordDeobBot-VIP-Smart-Deob.zip"),
-              Path("upload/Luraph-v14.3-deobfuscator-main.zip"),
+          root = Path.cwd()
+          specifications = [
+              (root / "upload/DiscordDeobBot-VIP-Smart-Deob.zip", root / "luraph-v14.7-engine", "vip"),
+              (root / "upload/Luraph-v14.3-deobfuscator-main.zip", root / "luraph-v14.3-engine", "v143"),
           ]
-          out = ["# Uploaded Luraph archive inspection", ""]
-          for archive in archives:
+
+          def safe_extract_selected(archive, destination, mode):
               if not archive.is_file():
                   raise SystemExit(f"Missing archive: {archive}")
-              raw_hash = hashlib.sha256(archive.read_bytes()).hexdigest()
-              out += [f"## {archive.name}", "", f"- Size: {archive.stat().st_size:,} bytes", f"- SHA-256: `{raw_hash}`", ""]
-              try:
-                  with ZipFile(archive) as z:
-                      bad = z.testzip()
-                      if bad:
-                          raise SystemExit(f"ZIP CRC failure in {archive}: {bad}")
-                      entries = [x for x in z.infolist() if not x.is_dir()]
-                      out.append(f"- Files: {len(entries)}")
-                      out.append("")
-                      out.append("### File listing")
-                      out.append("")
-                      for item in entries[:800]:
-                          out.append(f"- `{item.filename}` ({item.file_size:,} bytes)")
-                      if len(entries) > 800:
-                          out.append(f"- ... {len(entries) - 800} more entries omitted")
-                      out += ["", "### Selected text files", ""]
-                      selected = []
-                      for item in entries:
-                          name = item.filename.lower().replace("\\", "/")
-                          base = name.rsplit("/", 1)[-1]
-                          wanted = (
-                              base.startswith("readme") or base in {
-                                  "requirements.txt", "pyproject.toml", "setup.py",
-                                  "package.json", "dockerfile", "procfile",
-                                  "main.py", "cli.py", "deob.py", "deobfuscator.py",
-                                  "bot.py", "__main__.py", "config.json"
-                              } or
-                              ("luraph" in base and base.endswith((".py", ".js", ".json")))
+              digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+              destination.mkdir(parents=True, exist_ok=True)
+              count = 0
+              with ZipFile(archive) as z:
+                  bad = z.testzip()
+                  if bad:
+                      raise SystemExit(f"ZIP CRC error in {archive.name}: {bad}")
+                  for info in z.infolist():
+                      if info.is_dir():
+                          continue
+                      rel = PurePosixPath(info.filename.replace("\\", "/"))
+                      if rel.is_absolute() or ".." in rel.parts:
+                          raise SystemExit(f"Unsafe archive path: {info.filename}")
+                      unix_mode = (info.external_attr >> 16) & 0xFFFF
+                      if unix_mode and (unix_mode & 0o170000) == 0o120000:
+                          raise SystemExit(f"Symlink entry rejected: {info.filename}")
+                      parts = rel.parts
+                      if mode == "vip":
+                          in_obfuscators = len(parts) >= 2 and parts[0] == "obfuscators"
+                          root_source = len(parts) == 1 and (
+                              parts[0].endswith((".py", ".luau")) or
+                              parts[0] in {"README.md", "requirements.txt", "setup_luau_linux.sh", "HOSTING.txt"}
                           )
-                          if wanted and item.file_size <= 30000:
-                              selected.append(item)
-                      total = 0
-                      for item in selected[:30]:
-                          if total > 65000:
-                              break
-                          data = z.read(item)
-                          try:
-                              decoded = data.decode("utf-8")
-                          except UnicodeDecodeError:
-                              continue
-                          decoded = decoded[:12000]
-                          total += len(decoded)
-                          out += [f"#### {item.filename}", "", "```text", decoded, "```", ""]
-                      if not selected:
-                          out.append("No obvious README or entrypoint metadata files found.")
-                          out.append("")
-              except BadZipFile:
-                  raise SystemExit(f"Invalid ZIP archive: {archive}")
-          Path("upload/LURAPH_ARCHIVE_INSPECTION.md").write_text("\n".join(out) + "\n", encoding="utf-8")
-          print("Archive inspection report created.")
+                          keep = (in_obfuscators or root_source) and parts[0] not in {"bot.py", "host_start.py"}
+                          keep = keep and not info.filename.lower().endswith((".exe", ".zip", ".pyc"))
+                      else:
+                          base = parts[-1]
+                          keep = (
+                              base.endswith(".py") or base in {"README.md", "LICENSE", "Luraph ASCII-art.txt"}
+                              or (base == "sunjingwoo.lua" and len(parts) > 1)
+                          )
+                          if base == "sunjingwoo.lua":
+                              rel = PurePosixPath("samples/sunjingwoo.lua")
+                      if not keep:
+                          continue
+                      target = destination.joinpath(*rel.parts)
+                      resolved = target.resolve()
+                      if destination.resolve() not in resolved.parents:
+                          raise SystemExit(f"Unsafe extracted path: {info.filename}")
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      target.write_bytes(z.read(info))
+                      count += 1
+              return {"archive": archive.name, "sha256": digest, "files_extracted": count}
+
+          results = []
+          for archive, destination, mode in specifications:
+              if destination.exists():
+                  shutil.rmtree(destination)
+              results.append(safe_extract_selected(archive, destination, mode))
+
+          vip = root / "luraph-v14.7-engine"
+          required_vip = [
+              "cli.py",
+              "harness.py",
+              "traceout.py",
+              "obfuscators/luraph_v14_7/__init__.py",
+              "obfuscators/luraph_v14_7/driver.py",
+          ]
+          missing = [name for name in required_vip if not (vip / name).is_file()]
+          if missing:
+              raise SystemExit("VIP archive is missing expected v14.7 files: " + ", ".join(missing))
+
+          for engine in (vip, root / "luraph-v14.3-engine"):
+              for path in engine.rglob("*.py"):
+                  compile(path.read_text(encoding="utf-8"), str(path), "exec")
+
+          v143 = root / "luraph-v14.3-engine"
+          required_143 = ["luraph_decoder.py", "proto_deserializer.py", "translate_proto.py"]
+          missing = [name for name in required_143 if not (v143 / name).is_file()]
+          if missing:
+              raise SystemExit("v14.3 archive is missing expected analysis modules: " + ", ".join(missing))
+
+          (root / "upload/LURAPH_ARCHIVE_IMPORT_INFO.json").write_text(
+              json.dumps(results, indent=2) + "\n", encoding="utf-8"
+          )
+          print(json.dumps(results, indent=2))
+          print("All extracted Python files passed syntax compilation.")
           PY
 
-      - name: Commit inspection report
+      - name: Verify the VIP v14.7 CLI can load
+        run: |
+          python3 luraph-v14.7-engine/cli.py --help >/dev/null
+          echo "Luraph v14.7 CLI help check passed."
+
+      - name: Commit extracted engine source
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add upload/LURAPH_ARCHIVE_INSPECTION.md
-          git commit -m "Inspect uploaded Luraph 14 archives"
+          git add luraph-v14.7-engine luraph-v14.3-engine upload/LURAPH_ARCHIVE_IMPORT_INFO.json
+          if git diff --cached --quiet; then
+            echo "No extracted engine changes."
+            exit 0
+          fi
+          git commit -m "Import Luraph v14.7 and v14.3 analysis engines"
           git push

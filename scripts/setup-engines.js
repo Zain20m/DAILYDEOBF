@@ -19,6 +19,38 @@ if (ib2Setup.error || ib2Setup.status !== 0) {
     (ib2Setup.error ? ib2Setup.error.message : 'setup script exited with code ' + ib2Setup.status));
 }
 
+const ironveilSetup = spawnSync(python, [path.join(__dirname, 'setup-ironveil.py')], {
+  cwd: root,
+  encoding: 'utf8',
+  maxBuffer: 2 * 1024 * 1024,
+});
+if (ironveilSetup.stdout) process.stdout.write(ironveilSetup.stdout);
+if (ironveilSetup.stderr) process.stderr.write(ironveilSetup.stderr);
+if (ironveilSetup.error || ironveilSetup.status !== 0) {
+  throw new Error('IronVeil source extraction failed: ' +
+    (ironveilSetup.error ? ironveilSetup.error.message : 'setup script exited with code ' + ironveilSetup.status));
+}
+
+const ironveilCompiler = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');
+if (!fs.existsSync(ironveilCompiler)) {
+  throw new Error('IronVeil requires TypeScript. Install dependencies with npm install.');
+}
+const ironveilBuild = spawnSync(process.execPath, [
+  ironveilCompiler,
+  '-p',
+  path.join(root, 'ironveil-engine', 'tsconfig.json'),
+], {
+  cwd: path.join(root, 'ironveil-engine'),
+  encoding: 'utf8',
+  maxBuffer: 4 * 1024 * 1024,
+});
+if (ironveilBuild.stdout) process.stdout.write(ironveilBuild.stdout);
+if (ironveilBuild.stderr) process.stderr.write(ironveilBuild.stderr);
+if (ironveilBuild.error || ironveilBuild.status !== 0) {
+  throw new Error('IronVeil TypeScript build failed: ' +
+    (ironveilBuild.error ? ironveilBuild.error.message : 'tsc exited with code ' + ironveilBuild.status));
+}
+
 
 const engines = [
   {

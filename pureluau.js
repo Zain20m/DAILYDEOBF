@@ -1280,14 +1280,14 @@ function inferCommonSemanticNames(source, declarations) {
       add(name, 'currentFpsSampleTime');
     } else if (new RegExp('\\b' + escaped + '\\s*=\\s*math\\.floor\\s*\\(\\s*n\\w*\\s*/').test(nearby)) {
       add(name, 'framesPerSecond');
-    } else if (new RegExp('\\b' + escaped + '\\s*=\\s*input\\.Position\\.X').test(nearby) &&
+    } else if (new RegExp('\\b' + escaped + '\\s*=\\s*input\\.Position\\.X\\s*-').test(nearby) &&
         /input\.Position\.X\s*-\s*position\.X/.test(nearby)) {
       add(name, 'dragDeltaX');
-    } else if (new RegExp('\\b' + escaped + '\\s*=\\s*input\\.Position\\.Y').test(nearby) &&
+    } else if (new RegExp('\\b' + escaped + '\\s*=\\s*input\\.Position\\.Y\\s*-').test(nearby) &&
         /input\.Position\.Y\s*-\s*position\.Y/.test(nearby)) {
       add(name, 'dragDeltaY');
     } else if (/position2\.X\.Scale\s*\*\s*CurrentCamera\.X/.test(nearby) &&
-        new RegExp('\\b' + escaped + '\\s*=\\s*position2\\.X\\.Scale').test(nearby)) {
+        new RegExp('\\b' + escaped + '\\s*=\\s*position2\\.X\\.Scale\\s*\\*').test(nearby)) {
       add(name, 'scaledXPosition');
     } else if (/UserInputType\.Touch|MouseButton1/.test(nearby) &&
         /InputBegan/.test(nearby) && /UserInputState\.End/.test(nearby) &&

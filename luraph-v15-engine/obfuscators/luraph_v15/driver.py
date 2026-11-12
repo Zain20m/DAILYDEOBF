@@ -130,8 +130,8 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
             text, stats, reqs, bufs = devirt.run_big_stack(devirt.lift_program, job.source_path, ppath, chunk_paths,
                                                            live and live())
             new = reqs - requested
-            print("[*]   %d functions, %d unlifted blocks, %d unstructured jumps, %d new constant requests (%.1fs)"
-                  % (stats["functions"], stats["errors"], stats["fallbacks"], len(new), time.time() - t1),
+            print("[*]   %d functions, %d unlifted blocks, %d unstructured jumps, %d extra captured protos, %d new constant requests (%.1fs)"
+                  % (stats["functions"], stats["errors"], stats["fallbacks"], stats.get("orphan_protos", 0), len(new), time.time() - t1),
                   file=sys.stderr)
             if (not new and devirt.same_patches(last_bufs, bufs)) or rnd == rounds:
                 break

@@ -44,6 +44,10 @@ const ENGINE_V15_DIR = path.join(__dirname, 'luraph-v15-engine');
 const ENGINE_V15_CLI = path.join(ENGINE_V15_DIR, 'deob.py');
 const ENGINE_151_DIR = path.join(__dirname, 'luraph-v15.1-engine');
 const ENGINE_151_CLI = path.join(ENGINE_151_DIR, 'deob.js');
+const ENGINE_V147_DIR = path.join(__dirname, 'luraph-v14.7-engine');
+const ENGINE_V147_CLI = path.join(ENGINE_V147_DIR, 'cli.py');
+const ENGINE_V143_DIR = path.join(__dirname, 'luraph-v14.3-engine');
+const ENGINE_V143_CLI = path.join(ENGINE_V143_DIR, 'daily_cli.py');
 const ENGINE_CENT_DIR = path.join(__dirname, 'centurion-engine');
 const ENGINE_CENT_CLI = path.join(ENGINE_CENT_DIR, 'centurion.py');
 const ENGINE_IB2_DIR = path.join(__dirname, 'ib2deobf');
@@ -1744,6 +1748,163 @@ async function sendAnalysisOutput(message, input, config) {
 
 async function processLuraphV15(message, prompt, input, displayLabel = 'Luraph v15', gameId = null) {
   return processLuraph151(message, prompt, input, gameId, '15');
+}
+
+async function processLuraph147(message, prompt, input) {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-luraph147-'));
+  const inputPath = path.join(tempRoot, 'input.lua');
+  const outputPath = path.join(tempRoot, 'Luraph147_deobfuscated.luau');
+  const reportPath = path.join(tempRoot, 'Luraph147_report.txt');
+  const progress = createAnalysisProgress(
+    prompt, input.filename, Buffer.byteLength(input.source, 'utf8'), 'Luraph v14.7'
+  );
+
+  try {
+    await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
+    await progress.start();
+    await progress.setPhase(
+      'Loading the dedicated Luraph v14.7 engine',
+      'Using the separate v14.7 VM mapper, runtime harness and devirtualizer.'
+    );
+
+    const result = await runPythonEngine(
+      ENGINE_V147_DIR,
+      ENGINE_V147_CLI,
+      inputPath,
+      outputPath,
+      ENGINE_TIMEOUT_MS,
+      [
+        '--engine', '14.7',
+        '--strings',
+        '--max-runs', '16',
+        '--devirt-rounds', '200',
+        '--budget', '60',
+        '--timeout', '180',
+      ],
+      {
+        env: {
+          DEVIRT_FULL_ROUNDS: '1',
+          DEVIRT_TIMING: '1',
+          DEVIRT_ERRS: '1',
+          DEVIRT_TB: '1',
+          DEVIRT_WALK_LIMIT: '750000',
+        },
+        onProgress: progress.onLine,
+      },
+    );
+
+    const stat = await fs.stat(outputPath).catch(() => null);
+    if (!stat || !stat.isFile() || !stat.size) {
+      throw new Error(
+        'Luraph v14.7 finished without producing a deobfuscated file.' +
+        '\n' + String(result.stderr || result.stdout || '').slice(-1400)
+      );
+    }
+    if (stat.size > MAX_OUTPUT_BYTES) {
+      throw new Error('Luraph v14.7 output exceeds the 18 MB Discord attachment limit.');
+    }
+
+    await prependDailyDeobfHeader(outputPath);
+    const diagnostic = String(result.stderr || result.stdout || '').slice(-10000);
+    const report = [
+      'DAILY DEOBF · Luraph v14.7',
+      'Input: ' + input.filename,
+      'Result: dedicated v14.7 VM devirtualization',
+      'Output bytes: ' + stat.size,
+      '',
+      'Engine diagnostics:',
+      diagnostic || '(No diagnostic output was emitted.)',
+      '',
+      'The recovered Luau is a best-effort reconstruction. VM paths or constants that were not captured may remain incomplete.',
+    ].join('\n');
+    await fs.writeFile(reportPath, report, 'utf8');
+
+    await message.reply({
+      content: '✅ **DAILY DEOBF · Luraph v14.7**\nDedicated v14.7 engine finished.\nOutput size: ' +
+        formatBytes(stat.size) + '\nAttached: Luraph147_deobfuscated.luau and engine report.',
+      files: [
+        new AttachmentBuilder(outputPath, { name: 'Luraph147_deobfuscated.luau' }),
+        new AttachmentBuilder(reportPath, { name: 'Luraph147_report.txt' }),
+      ],
+      allowedMentions: { repliedUser: false },
+    });
+    await progress.complete('The Luraph v14.7 reconstruction and engine report were attached.');
+    await prompt.edit({
+      content: '✅ Luraph v14.7 analysis finished. The reconstructed Luau file is attached above.',
+      components: [],
+    }).catch(() => {});
+  } catch (error) {
+    await progress.fail(error);
+    throw error;
+  } finally {
+    progress.stop();
+    await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function processLuraph143(message, prompt, input) {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-luraph143-'));
+  const inputPath = path.join(tempRoot, 'input.lua');
+  const reportPath = path.join(tempRoot, 'Luraph143_static_report.txt');
+  const binaryPath = reportPath + '.decoded.bin';
+  const progress = createAnalysisProgress(
+    prompt, input.filename, Buffer.byteLength(input.source, 'utf8'), 'Luraph v14.3 static analysis'
+  );
+
+  try {
+    await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
+    await progress.start();
+    await progress.setPhase(
+      'Decoding the Luraph v14.3 payload',
+      'Extracting the embedded payload and preparing a static VM/prototype report.'
+    );
+
+    const result = await runCommand(
+      process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3'),
+      [ENGINE_V143_CLI, inputPath, '-o', reportPath, '--max-report-mb', '12'],
+      ENGINE_V143_DIR,
+      ENGINE_TIMEOUT_MS,
+      { onProgress: progress.onLine },
+    );
+
+    const reportStat = await fs.stat(reportPath).catch(() => null);
+    if (!reportStat || !reportStat.size || reportStat.size > MAX_OUTPUT_BYTES) {
+      throw new Error(
+        'Luraph v14.3 did not produce a valid static report.' +
+        '\n' + String(result.stderr || result.stdout || '').slice(-1200)
+      );
+    }
+    const files = [
+      new AttachmentBuilder(reportPath, { name: 'Luraph143_static_report.txt' }),
+    ];
+    const binaryStat = await fs.stat(binaryPath).catch(() => null);
+    if (binaryStat && binaryStat.size > 0 && binaryStat.size <= MAX_OUTPUT_BYTES) {
+      files.push(new AttachmentBuilder(binaryPath, { name: 'Luraph143_decoded_payload.bin' }));
+    }
+
+    await message.reply({
+      content: '✅ **DAILY DEOBF · Luraph v14.3 (Static)**\nPayload decoding and static analysis finished.\n' +
+        (binaryStat && binaryStat.size > 0
+          ? 'Decoded payload: ' + formatBytes(binaryStat.size) + '\n'
+          : '') +
+        'Attached: static report' +
+        (files.length > 1 ? ' and decoded binary' : '') +
+        '.\n\nThis v14.3 package produces bytecode/prototype analysis, not complete runnable Luau source.',
+      files,
+      allowedMentions: { repliedUser: false },
+    });
+    await progress.complete('The v14.3 static report and any decoded payload were attached.');
+    await prompt.edit({
+      content: '✅ Luraph v14.3 static analysis finished. Check the attached report for parser coverage and limitations.',
+      components: [],
+    }).catch(() => {});
+  } catch (error) {
+    await progress.fail(error);
+    throw error;
+  } finally {
+    progress.stop();
+    await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 async function processIronbrew1(message, prompt, input) {
@@ -4369,6 +4530,14 @@ async function startWorkflow(message, inlineText = null) {
     ),
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
+        .setCustomId(`deobf-luraph-v147:${message.author.id}`)
+        .setLabel('Luraph 14.7 (VIP)')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`deobf-luraph-v143:${message.author.id}`)
+        .setLabel('Luraph 14.3 (Static)')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
         .setCustomId(`deobf-cancel:${message.author.id}`)
         .setLabel('Cancel')
         .setStyle(ButtonStyle.Secondary),
@@ -4492,6 +4661,26 @@ async function startWorkflow(message, inlineText = null) {
         await processJnkIeFetcher(message, prompt, await getWorkflowInput());
       } catch (error) {
         await showDeobfFailure(message, prompt, 'JNKIE Fetcher failed', error);
+      }
+      return;
+    }
+    if (interaction.customId === `deobf-luraph-v147:${message.author.id}`) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        await processLuraph147(message, prompt, await getWorkflowInput());
+      } catch (error) {
+        await showDeobfFailure(message, prompt, 'Luraph v14.7 failed', error);
+      }
+      return;
+    }
+    if (interaction.customId === `deobf-luraph-v143:${message.author.id}`) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        await processLuraph143(message, prompt, await getWorkflowInput());
+      } catch (error) {
+        await showDeobfFailure(message, prompt, 'Luraph v14.3 static analysis failed', error);
       }
       return;
     }

@@ -23,6 +23,8 @@ import re
 import subprocess
 import sys
 
+from obfuscators.luraph_v14_9.vmmap import luau_ast_executable
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 GENERATED = re.compile(r"^(?:[a-z]\d+(?:_\d+)*|arg\d+_*)$")
 KEYWORDS = {"and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in", "local",
@@ -145,11 +147,14 @@ class Namer:
             f.write(text)
             path = f.name
         try:
-            out = subprocess.run([os.path.join(HERE, "bin", "luau-ast.exe" if os.name == "nt" else "luau-ast"), path],
-                                 capture_output=True).stdout
+            exe = luau_ast_executable()
+            result = subprocess.run([exe, path], capture_output=True)
+            if result.returncode != 0:
+                detail = result.stderr.decode("latin-1", errors="replace").strip()
+                raise RuntimeError("luau-ast failed: " + (detail or str(result.returncode)))
+            self.root = json.loads(result.stdout.decode("latin-1"))["root"]
         finally:
             os.remove(path)
-        self.root = json.loads(out.decode("latin-1"))["root"]
         self.locals = {}        # decl location -> info
         self.globals = set()
         self.order = []

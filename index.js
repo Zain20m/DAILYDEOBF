@@ -3383,10 +3383,46 @@ async function processJnkIeFetcher(message, prompt, input) {
     components: [],
   });
 
-  // Optional equivalent of the toolkit's --hwid argument. No prompt and no
-  // generated/fake value: without it, the normal delivery POST is still made.
-  const result = await fetchJnkIeLoaderSource(rawUrl, combined, existingStage1);
+  // Match the toolkit: attempt delivery first without an HWID. If JNKIE
+  // explicitly requires one, collect the user's supplied value in DM and retry.
+  let result = await fetchJnkIeLoaderSource(rawUrl, combined, existingStage1);
   if (!result) throw new Error('This is not a supported JNKIE public download URL.');
+
+  if (/LDR-DENIED:HWID_REQUIRED/i.test(String(result.deliveryError || result.reason || ''))) {
+    let dm;
+    try {
+      dm = await message.author.send(
+        'JNKIE requires an HWID for this loader. Reply to this DM with the HWID supplied by the script provider. ' +
+        'Your reply will be used only for this fetch attempt and deleted after it is received. ' +
+        'You have 2 minutes. Do not send your Discord password or other account credentials.'
+      );
+    } catch {
+      throw new Error('JNKIE requires an HWID, but I could not DM you. Enable DMs from this server and run .deobf again.');
+    }
+
+    const collector = dm.channel.createMessageCollector({
+      time: 120_000,
+      max: 1,
+      filter: (reply) => reply.author.id === message.author.id && !reply.author.bot,
+    });
+    const supplied = await new Promise((resolve) => {
+      collector.on('collect', (reply) => resolve(reply));
+      collector.on('end', (collected) => {
+        if (!collected.size) resolve(null);
+      });
+    });
+    if (!supplied) throw new Error('Timed out waiting for the HWID DM. Run .deobf again to retry.');
+
+    const hwid = supplied.content.trim();
+    await supplied.delete().catch(() => {});
+    if (!hwid || hwid.length > 512 || /[\\r\\n]/.test(hwid)) {
+      throw new Error('The supplied HWID was empty or invalid. Run .deobf again.');
+    }
+
+    await dm.channel.send('HWID received. Retrying JNKIE delivery now.');
+    result = await fetchJnkIeLoaderSource(rawUrl, combined, existingStage1, hwid);
+    if (!result) throw new Error('This is not a supported JNKIE public download URL.');
+  }
 
   const data = Buffer.from(result.source.endsWith('\n') ? result.source : result.source + '\n', 'utf8');
   if (data.length > MAX_OUTPUT_BYTES) throw new Error('JNKIE output exceeds the 18 MB Discord output limit.');

@@ -21,6 +21,7 @@ on:
       - "scripts/deep-reconstruction-prompt.txt"
       - "scripts/setup-engines.js"
       - "scripts/test-151-loadstring-capture.py"
+      - "scripts/test-v15-readable-output.py"
       - "luraph-v15-engine/**"
       - "luraph-v15.1-engine/**"
       - "centurion-engine/**"

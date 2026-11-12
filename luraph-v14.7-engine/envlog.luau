@@ -2399,7 +2399,7 @@ E.loadstring = function(src, chunkname)
 			-- Match the loop itself, not a guessed VM dispatch assignment. Luraph
 			-- variants can begin their loop body with branches or helper calls.
 			patched = R.gsub(patched or src, "while%s+true%s+do",
-				"%0;__SPIN.n=__SPIN.n+1;if __SPIN.n>=__SPIN.step then __SPIN.f()end;")
+				"%0\\n__SPIN.n=__SPIN.n+1;if __SPIN.n>=__SPIN.step then __SPIN.f()end;")
 		end
 	end
 	local f, err = R.loadstring(patched or src, chunkname)

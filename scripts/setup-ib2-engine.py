@@ -36,7 +36,7 @@ def main():
         print("IronBrew 2 archive not present; its engine option will report unavailable.")
         return 0
 
-    native = runtime_folder() + "/native/"
+    native = "runtimes/" + runtime_folder() + "/native/"
     prefix = "ib2bot-main/ib2deobf/"
     DEST.mkdir(parents=True, exist_ok=True)
     extracted = set()

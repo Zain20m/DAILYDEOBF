@@ -43,47 +43,62 @@ def main() -> int:
     binary_path.parent.mkdir(parents=True, exist_ok=True)
     binary_path.write_bytes(payload)
 
-    decoder = Deserializer(payload)
-    pool, wrap_mode, constant_count = decoder.read_constant_pool()
-    proto_count = decoder.read_upvalue_section()
-    if proto_count > 100000:
-        raise SystemExit(f"Implausible prototype count: {proto_count}")
-
-    protos = []
-    for index in range(proto_count):
-        protos.append(decoder.read_proto())
-    patches = decoder.apply_patches()
-
     report = io.StringIO()
     report.write("DAILY DEOBF · Luraph v14.3 static analysis\n")
     report.write("Input: " + source.name + "\n")
     report.write("Decoded payload bytes: " + str(len(payload)) + "\n")
-    report.write("Constant count: " + str(constant_count) + "\n")
-    report.write("Wrap mode: " + str(wrap_mode) + "\n")
-    report.write("Top-level prototypes: " + str(len(protos)) + "\n")
-    report.write("Constant references patched: " + str(patches) + "\n")
-    report.write("Total instructions: " + str(sum(len(p["opcodes"]) for p in protos)) + "\n")
-    report.write("\nCONSTANT POOL\n")
-    report.write("--------------\n")
-    pool_buffer = io.StringIO()
-    with contextlib.redirect_stdout(pool_buffer):
-        dump_pool(pool)
-    report.write(pool_buffer.getvalue())
-    report.write("\nPROTOTYPE DISASSEMBLY\n")
-    report.write("---------------------\n")
 
-    truncated = False
-    max_chars = args.max_report_mb * 1024 * 1024
-    for index, proto in enumerate(protos):
-        rendered = render_proto(proto, index) + "\n\n"
-        current = report.tell()
-        if current + len(rendered) > max_chars:
-            remaining = max(0, max_chars - current)
-            report.write(rendered[:remaining])
-            report.write("\n[Report truncated at configured output limit.]\n")
-            truncated = True
-            break
-        report.write(rendered)
+    pool = []
+    protos = []
+    wrap_mode = None
+    constant_count = None
+    patches = 0
+    parse_error = None
+    try:
+        decoder = Deserializer(payload)
+        pool, wrap_mode, constant_count = decoder.read_constant_pool()
+        proto_count = decoder.read_upvalue_section()
+        if proto_count > 100000:
+            raise ValueError(f"Implausible prototype count: {proto_count}")
+        for index in range(proto_count):
+            protos.append(decoder.read_proto())
+        patches = decoder.apply_patches()
+    except Exception as exc:
+        parse_error = f"{type(exc).__name__}: {exc}"
+
+    if parse_error:
+        report.write("Prototype parsing: incomplete\n")
+        report.write("Parser diagnostic: " + parse_error + "\n")
+        report.write("The decoded binary is attached separately for further analysis.\n")
+    else:
+        report.write("Constant count: " + str(constant_count) + "\n")
+        report.write("Wrap mode: " + str(wrap_mode) + "\n")
+        report.write("Top-level prototypes: " + str(len(protos)) + "\n")
+        report.write("Constant references patched: " + str(patches) + "\n")
+        report.write("Total instructions: " + str(sum(len(p["opcodes"]) for p in protos)) + "\n")
+        report.write("\nCONSTANT POOL\n")
+        report.write("--------------\n")
+        pool_buffer = io.StringIO()
+        with contextlib.redirect_stdout(pool_buffer):
+            dump_pool(pool)
+        report.write(pool_buffer.getvalue())
+        report.write("\nPROTOTYPE DISASSEMBLY\n")
+        report.write("---------------------\n")
+
+        truncated = False
+        max_chars = args.max_report_mb * 1024 * 1024
+        for index, proto in enumerate(protos):
+            rendered = render_proto(proto, index) + "\n\n"
+            current = report.tell()
+            if current + len(rendered) > max_chars:
+                remaining = max(0, max_chars - current)
+                report.write(rendered[:remaining])
+                report.write("\n[Report truncated at configured output limit.]\n")
+                truncated = True
+                break
+            report.write(rendered)
+        if truncated:
+            report.write("The instruction report was truncated to stay within the output limit.\n")
 
     report.write("\nLIMITATIONS\n")
     report.write("-----------\n")
@@ -92,8 +107,6 @@ def main() -> int:
         "disassembly only. It does not reconstruct complete runnable Luau source. "
         "Unknown opcodes and unresolved operands may remain.\n"
     )
-    if truncated:
-        report.write("The instruction report was truncated to stay within the output limit.\n")
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(report.getvalue(), encoding="utf-8")

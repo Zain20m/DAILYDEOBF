@@ -21,10 +21,19 @@ const source = [
   'local state = if profile.Count > 1 then "ready" else "idle"',
   'local values = { 1, 2, 3 }',
   'values[1] += 4',
-  'for index = 1, 2 do',
+  'for index = 1, 3 do',
+  '  if index == 2 then',
+  '    continue',
+  '  end',
   '  count += index',
   'end',
-  'print(label, state, identity(count))',
+  'local quotient = count // 2',
+  'local object = { value = 0 }',
+  'function object:add(amount: number): number',
+  '  self.value += amount',
+  '  return self.value',
+  'end',
+  'print(label, state, identity(count), quotient, object:add(1))',
 ].join('\n');
 
 const program = new Parser(source).parse();

@@ -2935,8 +2935,8 @@ def main():
         text, stats, reqs, bufs = lift_program(a.source, a.protos, a.chunk)
         with open(a.all, "w", encoding="utf-8", newline="\n") as f:
             f.write(finish_text(text) + "\n")
-        print("%d functions, %d unlifted blocks, %d unstructured jumps, %d constant requests"
-              % (stats["functions"], stats["errors"], stats["fallbacks"], len(reqs)))
+        print("%d functions, %d unlifted blocks, %d unstructured jumps, %d extra captured protos, %d constant requests"
+              % (stats["functions"], stats["errors"], stats["fallbacks"], stats.get("orphan_protos", 0), len(reqs)))
         print("missing constants:", LAST_DUMP[0].misses if LAST_DUMP else None)
         return
     prog = Program(a.source, a.protos, a.chunk)
@@ -2972,15 +2972,51 @@ REG_PREFIX = "rstuvwxyzabcdefghijklmnopq"
 REG_ARRAY = 1000000     # register-resident arrays: Reg(REG_ARRAY + base)
 
 
+def _unbound_upvalue_name(index):
+    parts = index if isinstance(index, tuple) else (index,)
+    suffix = "_".join(re.sub(r"[^A-Za-z0-9_]", "_", str(part)) for part in parts)
+    return "__orphan_upvalue_" + suffix
+
+
+def _unbound_upvalue_indexes(value):
+    """Find upvalues referenced by one lifted IR graph without walking dump tables."""
+    indexes = set()
+    seen = set()
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if item is None or isinstance(item, (str, bytes, int, float, bool)):
+            continue
+        if isinstance(item, Upval):
+            indexes.add(item.idx)
+            continue
+        ident = id(item)
+        if ident in seen:
+            continue
+        seen.add(ident)
+        if isinstance(item, (LTable, Buf, Scope, Dump, OpaqueFn)):
+            continue
+        if isinstance(item, dict):
+            stack.extend(item.values())
+        elif isinstance(item, (list, tuple, set)):
+            stack.extend(item)
+        else:
+            attrs = getattr(item, "__dict__", None)
+            if isinstance(attrs, dict):
+                stack.extend(attrs.values())
+    return sorted(indexes, key=repr)
+
+
 class FunctionLifter:
     """Lifts one proto (and, recursively, the closures it creates) to Luau lines."""
 
     def __init__(self, prog):
         self.prog = prog
-        self.stats = {"functions": 0, "errors": 0, "fallbacks": 0}
-        self.lifted = set()
+        self.stats = {"functions": 0, "errors": 0, "fallbacks": 0, "orphan_protos": 0}
+        self.lifted = set()       # active recursion stack
+        self.completed = set()    # protos for which a source body was emitted
 
-    def lift(self, vm, vmobj, proto, upvals, upnames, depth=0):
+    def lift(self, vm, vmobj, proto, upvals, upnames, depth=0, orphan=False):
         self.stats["functions"] += 1
         self.lifted.add(id(proto))
         lf = ProtoLifter(vm, self.prog.dump, vmobj, proto, upvals, self.prog.globals)
@@ -2990,6 +3026,11 @@ class FunctionLifter:
             if not restart:
                 break
         self.prog.requests |= lf.requests
+        orphan_params = []
+        if orphan:
+            indexes = _unbound_upvalue_indexes(order)
+            upnames = {index: _unbound_upvalue_name(index) for index in indexes}
+            orphan_params = list(upnames.values())
         if lf.reg_arrays:
             k0 = s0.key(vm.kstack_link)
             for k, node in order:
@@ -3016,6 +3057,9 @@ class FunctionLifter:
             pid = self.prog.dump.pid_of_table.get(proto.tid)
             lines.insert(0, "-- proto %s" % (pid if pid is not None else "t%s" % proto.tid))
         self.stats["errors"] += nerr
+        self.completed.add(id(proto))
+        if orphan:
+            return lines, list(self.params), orphan_params
         return lines
 
     def frame_regs(self, vm, vmobj, c, depth=0):
@@ -3211,10 +3255,38 @@ def _vm_roots(prog):
 
 
 def program_roots(prog):
-    """[(tag, pid, cap)] of the root protos lift_program lifts, in order."""
+    """[(tag, pid, cap)] to walk for constant discovery, roots first."""
     vms, payload = _vm_roots(prog)
     loaders = bool(os.environ.get("DEVIRT_LOADERS"))
-    return [(tag, lst[0][1], lst[0][2]) for tag, lst in vms if tag == payload or loaders]
+    selected = {tag for tag, _ in vms if tag == payload or loaders}
+    roots = [(tag, lst[0][1], lst[0][2]) for tag, lst in vms if tag in selected]
+    if not os.environ.get("DEVIRT_ALL_PROTOS"):
+        return roots
+
+    # The runtime can capture prototypes that the reachable CFG never creates
+    # as a ClosureExpr (for example, a dormant branch or a delayed callback).
+    # Walk those prototypes independently so their lazy constants are requested
+    # during the same fixed-point rounds as ordinary reachable closures.
+    seen = set()
+    for tag, pid, cap in roots:
+        try:
+            seen.add(id(prog.vm_of(cap).proto_of(cap)))
+        except (Unsupported, KeyError, TypeError, AttributeError):
+            continue
+    for pid, cap in prog.dump.protos.items():
+        tag = cap.get("__maker")
+        if tag not in selected:
+            continue
+        try:
+            vm = prog.vm_of(cap)
+            proto = vm.proto_of(cap)
+        except (Unsupported, KeyError, TypeError, AttributeError):
+            continue
+        if id(proto) in seen:
+            continue
+        seen.add(id(proto))
+        roots.append((tag, pid, cap))
+    return roots
 
 
 def lift_program(source, protos_path, chunk_paths=(), fetch=None):
@@ -3266,6 +3338,50 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
         out.append("")
     if payload_pid is not None:
         out.append("return vm_root_%s(...)" % payload_pid)
+
+    orphan_count = 0
+    if os.environ.get("DEVIRT_ALL_PROTOS"):
+        selected = {tag for tag, _ in vms if tag == payload or loaders}
+        for pid, cap in prog.dump.protos.items():
+            tag = cap.get("__maker")
+            if tag not in selected:
+                continue
+            try:
+                vm = prog.vm_of(cap)
+                proto = vm.proto_of(cap)
+                vmobj = vm.vmobj_of(cap)
+            except (Unsupported, KeyError, TypeError, AttributeError) as ex:
+                out.append("-- Captured proto %s could not be mapped: %s" % (pid, str(ex)[:180]))
+                continue
+            if id(proto) in fl.completed:
+                continue
+            safe_pid = re.sub(r"[^A-Za-z0-9_]", "_", str(pid))
+            if not safe_pid or safe_pid[0].isdigit():
+                safe_pid = "p_" + safe_pid
+            name = "recovered_unreached_proto_" + safe_pid
+            try:
+                lines, proto_params, upvalue_params = fl.lift(
+                    vm, vmobj, proto, UpList(), {}, 0, orphan=True
+                )
+                signature = list(upvalue_params)
+                signature.extend(p for p in proto_params if p != "...")
+                if "..." in proto_params:
+                    signature.append("...")
+                out.append("-- Captured proto %s was not linked to a reachable closure." % pid)
+                out.append("-- Pass its original captured upvalues first, in the order shown by the parameters.")
+                out.append("local function %s(%s)" % (name, ", ".join(signature)))
+                out.extend("\t" + line for line in lines)
+                out.append("end")
+                out.append("")
+                orphan_count += 1
+            except Exception as ex:  # noqa: BLE001
+                fl.stats["errors"] += 1
+                out.append("-- Captured proto %s could not be lifted independently: %s" %
+                           (pid, str(ex).replace("\n", " ")[:240]))
+                out.append("")
+
+    fl.stats["orphan_protos"] = orphan_count
+
     # Luraph runtime functions the script calls (SharedFn): stubs up front
     shared = []
     for n in sorted(prog.dump.shared.values()):

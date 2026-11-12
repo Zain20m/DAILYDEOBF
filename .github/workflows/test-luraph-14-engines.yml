@@ -69,6 +69,22 @@ jobs:
           runtime_check = subprocess.run([runtime, "-e", "print('luau-runtime-ok')"], capture_output=True, text=True, timeout=15)
           assert runtime_check.returncode == 0 and "luau-runtime-ok" in runtime_check.stdout, runtime_check.stderr
           print(f"Luraph v14 runtime resolved and ran: {runtime}")
+          spin_test = r"""
+          local pattern = "while%s+true%s+do%s+[%w_,%s]-=%s*%(?%s*[%a_][%w_]*%s*%[%s*[%a_][%w_]*%s*%]%s*%)?%s*;?"
+          local samples = {
+            "while true do local opcode=ops[pc]\\nend",
+            "while  true  do\\n local opcode = (ops[pc]);\\nend",
+            "while true do local a,b=ops[pc]\\nend"
+          }
+          for _, source in ipairs(samples) do
+            local patched = string.gsub(source, pattern,
+              "%0__SPIN.n=__SPIN.n+1;if __SPIN.n>=__SPIN.step then __SPIN.f()end;")
+            assert(string.find(patched, "__SPIN.n", 1, true), source)
+          end
+          print("dynamic loadstring spin watchdog patterns passed")
+          """
+          spin_result = subprocess.run([runtime, "-e", spin_test], capture_output=True, text=True, timeout=15)
+          assert spin_result.returncode == 0 and "dynamic loadstring spin watchdog patterns passed" in spin_result.stdout, spin_result.stderr
           with tempfile.NamedTemporaryFile("w", suffix=".luau", delete=False) as sample:
               sample.write("return 1\\n")
               sample_path = sample.name

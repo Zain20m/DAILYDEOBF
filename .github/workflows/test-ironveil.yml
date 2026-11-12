@@ -5,6 +5,7 @@ on:
       - 'index.js'
       - 'scripts/ironveil-support/**'
       - 'scripts/setup-ironveil.py'
+      - 'scripts/test-ironveil-luau.js'
       - 'scripts/setup-engines.js'
       - 'package.json'
       - 'upload/ironveil-main 2.zip'

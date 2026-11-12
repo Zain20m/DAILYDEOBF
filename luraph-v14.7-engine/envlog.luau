@@ -2396,9 +2396,10 @@ E.loadstring = function(src, chunkname)
 		-- spin watchdog (see E.__SPIN): a chunk the driver never saw (the run
 		-- that would report it hung) gets its dispatch heads patched here
 		if CFG.spin and not (patched and R.find(patched, "__SPIN.n", 1, true)) then
-			patched = R.gsub(patched or src,
-				"while%s+true%s+do%s+[%w_,%s]-=%s*%(?%s*[%a_][%w_]*%s*%[%s*[%a_][%w_]*%s*%]%s*%)?%s*;?",
-				"%0__SPIN.n=__SPIN.n+1;if __SPIN.n>=__SPIN.step then __SPIN.f()end;")
+			-- Match the loop itself, not a guessed VM dispatch assignment. Luraph
+			-- variants can begin their loop body with branches or helper calls.
+			patched = R.gsub(patched or src, "while%s+true%s+do",
+				"%0;__SPIN.n=__SPIN.n+1;if __SPIN.n>=__SPIN.step then __SPIN.f()end;")
 		end
 	end
 	local f, err = R.loadstring(patched or src, chunkname)

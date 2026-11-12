@@ -2553,7 +2553,7 @@ async function fetchJnkIeLoaderSource(rawUrl, credentialText = '', existingStage
   const hwidMatch = String(credentialText || '').match(
     /(?:getgenv\(\)\s*\.\s*)?(?:HWID|hwid)\s*=\s*["']([^"']+)["']/i
   );
-  const hwid = String(suppliedHwid || (hwidMatch && hwidMatch[1]) || '').trim();
+  const hwid = String(suppliedHwid || (hwidMatch && hwidMatch[1]) || process.env.JNKIE_HWID || '').trim();
   if (!hwid) {
     return {
       source: stage1,

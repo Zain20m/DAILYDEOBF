@@ -645,6 +645,12 @@ function detectEngineSuggestion(source) {
     if (version === '14.7') {
       return { engine: 'luraph-v147', label: 'Luraph 14.7', confidence: 'high', reason: 'The source contains an explicit Luraph v14.7 version banner.' };
     }
+    if (version === '14.8') {
+      return { engine: 'luraph-v148', label: 'Luraph 14.8', confidence: 'high', reason: 'The source contains an explicit Luraph v14.8 version banner.' };
+    }
+    if (version === '14.9') {
+      return { engine: 'luraph-v149', label: 'Luraph 14.9', confidence: 'high', reason: 'The source contains an explicit Luraph v14.9 version banner.' };
+    }
     if (version === '14.3') {
       return { engine: 'luraph-v143', label: 'Luraph 14.3 static analysis', confidence: 'high', reason: 'The source contains an explicit Luraph v14.3 version banner. The available archive provides static payload decoding.' };
     }
@@ -1756,21 +1762,21 @@ async function processLuraphV15(message, prompt, input, displayLabel = 'Luraph v
   return processLuraph151(message, prompt, input, gameId, '15');
 }
 
-async function processLuraph147(message, prompt, input) {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-luraph147-'));
+async function processLuraph14x(message, prompt, input, version) {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-luraph14x-'));
   const inputPath = path.join(tempRoot, 'input.lua');
-  const outputPath = path.join(tempRoot, 'Luraph147_deobfuscated.luau');
-  const reportPath = path.join(tempRoot, 'Luraph147_report.txt');
+  const outputPath = path.join(tempRoot, 'Luraph14x_deobfuscated.luau');
+  const reportPath = path.join(tempRoot, 'Luraph14x_report.txt');
   const progress = createAnalysisProgress(
-    prompt, input.filename, Buffer.byteLength(input.source, 'utf8'), 'Luraph v14.7'
+    prompt, input.filename, Buffer.byteLength(input.source, 'utf8'), 'Luraph v14.' + version + ''
   );
 
   try {
     await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
     await progress.start();
     await progress.setPhase(
-      'Loading the dedicated Luraph v14.7 engine',
-      'Using the separate v14.7 VM mapper, runtime harness and devirtualizer.'
+      'Loading the dedicated Luraph v14.' + version + ' engine',
+      'Using the separate v14.' + version + ' VM mapper, runtime harness and devirtualizer.'
     );
 
     const result = await runPythonEngine(
@@ -1780,7 +1786,7 @@ async function processLuraph147(message, prompt, input) {
       outputPath,
       ENGINE_TIMEOUT_MS,
       [
-        '--engine', '14.7',
+        '--engine', version,
         '--strings',
         '--max-runs', '16',
         '--devirt-rounds', '200',
@@ -1802,18 +1808,18 @@ async function processLuraph147(message, prompt, input) {
     const stat = await fs.stat(outputPath).catch(() => null);
     if (!stat || !stat.isFile() || !stat.size) {
       throw new Error(
-        'Luraph v14.7 finished without producing a deobfuscated file.' +
+        'Luraph v14.' + version + ' finished without producing a deobfuscated file.' +
         '\n' + String(result.stderr || result.stdout || '').slice(-1400)
       );
     }
     if (stat.size > MAX_OUTPUT_BYTES) {
-      throw new Error('Luraph v14.7 output exceeds the 18 MB Discord attachment limit.');
+      throw new Error('Luraph v14.' + version + ' output exceeds the 18 MB Discord attachment limit.');
     }
 
     await prependDailyDeobfHeader(outputPath);
     const diagnostic = String(result.stderr || result.stdout || '').slice(-10000);
     const report = [
-      'DAILY DEOBF · Luraph v14.7',
+      'DAILY DEOBF · Luraph v14.' + version + '',
       'Input: ' + input.filename,
       'Result: dedicated v14.7 VM devirtualization',
       'Output bytes: ' + stat.size,
@@ -1826,17 +1832,17 @@ async function processLuraph147(message, prompt, input) {
     await fs.writeFile(reportPath, report, 'utf8');
 
     await message.reply({
-      content: '✅ **DAILY DEOBF · Luraph v14.7**\nDedicated v14.7 engine finished.\nOutput size: ' +
-        formatBytes(stat.size) + '\nAttached: Luraph147_deobfuscated.luau and engine report.',
+      content: '✅ **DAILY DEOBF · Luraph v14.' + version + '**\nDedicated v14.' + version + ' engine finished.\nOutput size: ' +
+        formatBytes(stat.size) + '\nAttached: Luraph14x_deobfuscated.luau and engine report.',
       files: [
-        new AttachmentBuilder(outputPath, { name: 'Luraph147_deobfuscated.luau' }),
-        new AttachmentBuilder(reportPath, { name: 'Luraph147_report.txt' }),
+        new AttachmentBuilder(outputPath, { name: 'Luraph14x_deobfuscated.luau' }),
+        new AttachmentBuilder(reportPath, { name: 'Luraph14x_report.txt' }),
       ],
       allowedMentions: { repliedUser: false },
     });
-    await progress.complete('The Luraph v14.7 reconstruction and engine report were attached.');
+    await progress.complete('The Luraph v14.' + version + ' reconstruction and engine report were attached.');
     await prompt.edit({
-      content: '✅ Luraph v14.7 analysis finished. The reconstructed Luau file is attached above.',
+      content: '✅ Luraph v14.' + version + ' analysis finished. The reconstructed Luau file is attached above.',
       components: [],
     }).catch(() => {});
   } catch (error) {
@@ -1846,6 +1852,19 @@ async function processLuraph147(message, prompt, input) {
     progress.stop();
     await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+
+async function processLuraph147(message, prompt, input) {
+  return processLuraph14x(message, prompt, input, '14.7');
+}
+
+async function processLuraph148(message, prompt, input) {
+  return processLuraph14x(message, prompt, input, '14.8');
+}
+
+async function processLuraph149(message, prompt, input) {
+  return processLuraph14x(message, prompt, input, '14.9');
 }
 
 async function processLuraph143(message, prompt, input) {
@@ -4540,6 +4559,14 @@ async function startWorkflow(message, inlineText = null) {
         .setLabel(engineSuggestion && engineSuggestion.engine === 'luraph-v147' ? 'Recommended: Luraph 14.7' : 'Luraph 14.7 (VIP)')
         .setStyle(engineSuggestion && engineSuggestion.engine === 'luraph-v147' ? ButtonStyle.Success : ButtonStyle.Secondary),
       new ButtonBuilder()
+        .setCustomId(`deobf-luraph-v148:${message.author.id}`)
+        .setLabel(engineSuggestion && engineSuggestion.engine === 'luraph-v148' ? 'Recommended: Luraph 14.8' : 'Luraph 14.8')
+        .setStyle(engineSuggestion && engineSuggestion.engine === 'luraph-v148' ? ButtonStyle.Success : ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`deobf-luraph-v149:${message.author.id}`)
+        .setLabel(engineSuggestion && engineSuggestion.engine === 'luraph-v149' ? 'Recommended: Luraph 14.9' : 'Luraph 14.9')
+        .setStyle(engineSuggestion && engineSuggestion.engine === 'luraph-v149' ? ButtonStyle.Success : ButtonStyle.Secondary),
+      new ButtonBuilder()
         .setCustomId(`deobf-luraph-v143:${message.author.id}`)
         .setLabel(engineSuggestion && engineSuggestion.engine === 'luraph-v143' ? 'Recommended: Luraph 14.3' : 'Luraph 14.3 (Static)')
         .setStyle(engineSuggestion && engineSuggestion.engine === 'luraph-v143' ? ButtonStyle.Success : ButtonStyle.Secondary),
@@ -4677,6 +4704,26 @@ async function startWorkflow(message, inlineText = null) {
         await processLuraph147(message, prompt, await getWorkflowInput());
       } catch (error) {
         await showDeobfFailure(message, prompt, 'Luraph v14.7 failed', error);
+      }
+      return;
+    }
+    if (interaction.customId === `deobf-luraph-v148:${message.author.id}`) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        await processLuraph148(message, prompt, await getWorkflowInput());
+      } catch (error) {
+        await showDeobfFailure(message, prompt, 'Luraph v14.8 failed', error);
+      }
+      return;
+    }
+    if (interaction.customId === `deobf-luraph-v149:${message.author.id}`) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        await processLuraph149(message, prompt, await getWorkflowInput());
+      } catch (error) {
+        await showDeobfFailure(message, prompt, 'Luraph v14.9 failed', error);
       }
       return;
     }

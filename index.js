@@ -3505,7 +3505,7 @@ async function handleObfuscatorCommand(interaction) {
         (repairChanges.length
           ? ' Applied ' + repairChanges.length + ' conservative syntax correction(s) before retrying.'
           : '') +
-        ' This engine currently targets Lua 5.3 syntax; unsupported Luau syntax and type annotations may still need manual compatibility work.',
+        ' Luau syntax and type annotations are normalized before the IronVeil compiler; some advanced control-flow and runtime-specific constructs may still be unsupported by the engine.',
       files: [new AttachmentBuilder(outputBuffer, { name: outputName })],
     });
     completed = true;

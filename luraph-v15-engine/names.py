@@ -24,7 +24,7 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-GENERATED = re.compile(r"^(?:[a-z]\d+(?:_\d+)*|arg\d+_*)$")
+GENERATED = re.compile(r"^(?:[a-z]\d+(?:_\d+)*|arg\d+_*|__orphan_upvalue_\d+)$")
 KEYWORDS = {"and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in", "local",
             "nil", "not", "or", "repeat", "return", "then", "true", "until", "while", "continue", "type",
             "export", "self"}
@@ -166,6 +166,149 @@ class Namer:
 
     def collect(self):
         self.visit_block(self.root)
+        self.infer_generated_roles()
+
+    def scope_source(self, info):
+        """Source text inside a local's lexical scope."""
+        start, end = info["scope"]
+        lines = self.text.splitlines()
+        first = max(0, start[0])
+        last = min(len(lines), end[0] + 1)
+        return "\\n".join(lines[first:last])
+
+    def infer_generated_roles(self):
+        """Name common Luraph VM artifacts by their actual data-flow patterns.
+
+        This is deliberately limited to generated locals and the explicit
+        __orphan_upvalue_N placeholders. It never rewrites user-authored names.
+        """
+        generated = [
+            info for info in self.locals.values()
+            if GENERATED.match(info["name"])
+        ]
+        scopes = {id(info): self.scope_source(info) for info in generated}
+        permutation_tables = set()
+
+        # RC4-style permutation table: save T[i], assign T[i] = T[j],
+        # then restore T[j] = saved. This exact data-flow shape is stronger
+        # evidence than merely seeing a byte mask or a table write.
+        for info in generated:
+            name = re.escape(info["name"])
+            swap = re.search(
+                r"\\blocal\\s+([A-Za-z_]\\w*)\\s*=\\s*" + name +
+                r"\\s*\\[\\s*([A-Za-z_]\\w*)\\s*\\]\\s*" +
+                name + r"\\s*\\[\\s*\\2\\s*\\]\\s*=\\s*" +
+                name + r"\\s*\\[\\s*([A-Za-z_]\\w*)\\s*\\]\\s*" +
+                name + r"\\s*\\[\\s*\\3\\s*\\]\\s*=\\s*\\1\\b",
+                scopes[id(info)],
+                re.S,
+            )
+            if swap and "bit32.band" in scopes[id(info)] and "255" in scopes[id(info)]:
+                permutation_tables.add(info["name"])
+
+        roles = {}
+        for info in generated:
+            name = info["name"]
+            escaped = re.escape(name)
+            source = scopes[id(info)]
+            role = None
+
+            if name.startswith("__orphan_upvalue_"):
+                if re.search(
+                    rf"\\b{escaped}\\s*(?:\\+=\\s*1|=\\s*{escaped}\\s*\\+\\s*1)\\b",
+                    source,
+                ):
+                    role = "captureIndex"
+                elif re.search(rf"\\b{escaped}\\s*\\[[^\\]]+\\]\\s*=", source):
+                    role = "capturedTable"
+                elif re.search(rf"\\b{escaped}\\s*\\[[^\\]]+\\]", source):
+                    role = "lookupTable"
+                else:
+                    role = "capturedValue"
+
+            elif name in permutation_tables:
+                role = "permutation"
+
+            elif re.search(
+                rf"\\b{escaped}\\s*\\[\\s*\\d+\\s*\\]",
+                source,
+            ) and len(re.findall(rf"\\b{escaped}\\s*\\[", source)) >= 4 and re.search(
+                rf"\\blocal\\s+{escaped}\\s*=\\s*\\{{[^}}]*,[^}}]*,[^}}]*,[^}}]*\\}}",
+                source,
+            ):
+                role = "loopControl"
+
+            else:
+                state_writes = len(re.findall(rf"\\b{escaped}\\s*=\\s*-?\\d+\\b", source))
+                state_tests = len(re.findall(rf"\\b{escaped}\\s*(?:<=|>=|==)\\s*-?\\d+\\b", source))
+                if state_writes >= 4 and state_tests >= 4:
+                    role = "state"
+
+            roles[name] = role
+
+        # Name the two RC4 indices and the output buffer from the recognized
+        # permutation table. Repeated matches in separate routines are safe:
+        # the normal scope-collision pass will suffix overlapping names.
+        for info in generated:
+            name = info["name"]
+            escaped = re.escape(name)
+            source = scopes[id(info)]
+            if roles.get(name) is not None:
+                continue
+
+            if re.search(
+                rf"bit32\\.band\\(\\s*{escaped}\\s*\\+\\s*1\\s*,\\s*255\\s*\\)",
+                source,
+            ):
+                roles[name] = "permutationIndex"
+                continue
+
+            perm_names = [re.escape(value) for value in permutation_tables]
+            assigned = False
+            for perm in perm_names:
+                if re.search(
+                    rf"bit32\\.band\\(\\s*{escaped}\\s*\\+\\s*{perm}\\s*\\[[^\\]]+\\]\\s*,\\s*255\\s*\\)",
+                    source,
+                ):
+                    roles[name] = "swapIndex"
+                    assigned = True
+                    break
+                output = re.search(
+                    rf"\\b([A-Za-z_]\\w*)\\s*\\[\\s*{escaped}\\s*\\]\\s*=\\s*{perm}\\s*\\[\\s*bit32\\.band\\(",
+                    source,
+                )
+                if output:
+                    roles[name] = "outputIndex"
+                    roles[output.group(1)] = "outputBuffer"
+                    assigned = True
+                    break
+            if assigned:
+                continue
+
+            # A key-scheduling expression has the form
+            # j + S[i] + key[i % keyLength + 1], all masked to one byte.
+            for perm in perm_names:
+                mixed = re.search(
+                    rf"bit32\\.band\\(\\s*[A-Za-z_]\\w*\\s*\\+\\s*{perm}\\s*\\[[^\\]]+\\]\\s*\\+\\s*{escaped}\\s*\\[[^\\]]*%\\s*([A-Za-z_]\\w*)\\s*\\+\\s*1\\]\\s*,\\s*255\\s*\\)",
+                    source,
+                )
+                if mixed:
+                    roles[name] = "keyBytes"
+                    roles[mixed.group(1)] = "keyLength"
+                    assigned = True
+                    break
+            if assigned:
+                continue
+
+            # Byte-masked counters used as permutation indices are often the
+            # same i variable without the increment expression in this block.
+            if perm_names and re.search(rf"bit32\\.band\\(\\s*{escaped}\\s*,\\s*255\\s*\\)", source):
+                roles[name] = "permutationIndex"
+
+        for info in generated:
+            role = roles.get(info["name"])
+            if role:
+                info["hint"] = role
 
     def visit_block(self, blk):
         end = loc(blk["location"])[1]

@@ -20,6 +20,7 @@ const { inspectLiftText } = require('./scripts/lift-validation');
 const { convertToPureLuau } = require('./pureluau');
 const { detectFlowAuthLuraphVersion } = require('./scripts/flowauth-version');
 const { detectIronBrewSuggestion } = require('./scripts/ironbrew-detection');
+const { repairIronVeilSource } = require('./scripts/ironveil-auto-repair');
 const {
   resolveStaticSources,
   suggestLoadstringHttpGetCorrection,
@@ -3462,11 +3463,29 @@ async function handleObfuscatorCommand(interaction) {
     workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dailydeobf-ironveil-'));
     const inputPath = path.join(workDir, 'input.lua');
     const outputPath = path.join(workDir, 'output.lua');
-    await fs.writeFile(inputPath, source, { encoding: 'utf8', mode: 0o600 });
+    let workingSource = source;
+    await fs.writeFile(inputPath, workingSource, { encoding: 'utf8', mode: 0o600 });
 
-    await interaction.editReply('**[4/5]** Running IronVeil obfuscation. Large files may take a while...');
-    await runCommand(process.execPath, [ENGINE_IRONVEIL_CLI, inputPath, outputPath],
-      ENGINE_IRONVEIL_DIR, 5 * 60_000);
+    await interaction.editReply('**[4/6]** Running IronVeil obfuscation...');
+    let repairChanges = [];
+    try {
+      await runCommand(process.execPath, [ENGINE_IRONVEIL_CLI, inputPath, outputPath],
+        ENGINE_IRONVEIL_DIR, 5 * 60_000);
+    } catch (firstError) {
+      const repaired = repairIronVeilSource(workingSource);
+      if (!repaired.changed) throw firstError;
+
+      repairChanges = repaired.changes;
+      workingSource = repaired.source;
+      await interaction.editReply(
+        '**[5/6]** IronVeil reported a syntax error. Applying ' +
+        repairChanges.length + ' safe syntax correction(s), then retrying...'
+      );
+      await fs.writeFile(inputPath, workingSource, { encoding: 'utf8', mode: 0o600 });
+      await fs.rm(outputPath, { force: true }).catch(() => {});
+      await runCommand(process.execPath, [ENGINE_IRONVEIL_CLI, inputPath, outputPath],
+        ENGINE_IRONVEIL_DIR, 5 * 60_000);
+    }
 
     const outputStat = await fs.stat(outputPath).catch(() => null);
     if (!outputStat || !outputStat.isFile() || outputStat.size === 0) {
@@ -3480,9 +3499,13 @@ async function handleObfuscatorCommand(interaction) {
     const baseName = path.basename(originalName, extension)
       .replace(/[^A-Za-z0-9._-]/g, '_') || 'script';
     const outputName = 'ironveil-' + baseName + '.lua';
-    await interaction.editReply('**[5/5]** Obfuscation complete. Uploading the result...');
+    await interaction.editReply('**[6/6]** Obfuscation complete. Uploading the result...');
     await interaction.editReply({
-      content: 'IronVeil finished. Your original upload was not modified. This engine currently targets Lua 5.3 syntax; some Luau-only syntax and type annotations are not supported.',
+      content: 'IronVeil finished. Your original upload was not modified.' +
+        (repairChanges.length
+          ? ' Applied ' + repairChanges.length + ' conservative syntax correction(s) before retrying.'
+          : '') +
+        ' This engine currently targets Lua 5.3 syntax; unsupported Luau syntax and type annotations may still need manual compatibility work.',
       files: [new AttachmentBuilder(outputBuffer, { name: outputName })],
     });
     completed = true;

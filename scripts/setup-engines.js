@@ -2,8 +2,22 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
+
+const python = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+const ib2Setup = spawnSync(python, [path.join(__dirname, 'setup-ib2-engine.py')], {
+  cwd: root,
+  encoding: 'utf8',
+  maxBuffer: 2 * 1024 * 1024,
+});
+if (ib2Setup.stdout) process.stdout.write(ib2Setup.stdout);
+if (ib2Setup.stderr) process.stderr.write(ib2Setup.stderr);
+if (ib2Setup.error || ib2Setup.status !== 0) {
+  throw new Error('IronBrew 2 runtime extraction failed: ' +
+    (ib2Setup.error ? ib2Setup.error.message : 'setup script exited with code ' + ib2Setup.status));
+}
 
 const engines = [
   {
@@ -46,6 +60,22 @@ const engines = [
       'runtime/envlog.luau',
       'bin/luau',
       'bin/luau-ast',
+    ],
+  },
+  {
+    label: 'IronBrew 2',
+    directory: 'ib2deobf',
+    required: [
+      'KeraLua.dll',
+      'Loretta.CodeAnalysis.dll',
+      'Loretta.CodeAnalysis.Lua.dll',
+      'Loretta.CodeAnalysis.Lua.Experimental.dll',
+      'LuaAnalysis.Common.dll',
+      'LuaAnalysis.Ironbrew2.deps.json',
+      'LuaAnalysis.Ironbrew2.dll',
+      'LuaAnalysis.Ironbrew2.runtimeconfig.json',
+      'NLua.dll',
+      'Tsu.dll',
     ],
   },
   {
@@ -103,4 +133,11 @@ for (const engine of engines) {
   }
 }
 
-console.log('Validated Luraph v15, 15.1, IronBrew 1 and Centurion engines.');
+const ib2Runtime = process.platform === 'win32'
+  ? (process.arch === 'arm64' ? 'runtimes/win-arm64/native/lua54.dll' : 'runtimes/win-x64/native/lua54.dll')
+  : (process.arch === 'arm64' ? 'runtimes/linux-arm64/native/liblua54.so' : 'runtimes/linux-x64/native/liblua54.so');
+if (!fs.existsSync(path.join(root, 'ib2deobf', ib2Runtime))) {
+  throw new Error('IronBrew 2 is missing its platform runtime: ' + ib2Runtime);
+}
+
+console.log('Validated Luraph v15, 15.1, IronBrew 1, IronBrew 2 and Centurion engines.');

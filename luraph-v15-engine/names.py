@@ -272,7 +272,14 @@ class Namer:
                 roles[ident] = "permutationIndex"
                 continue
 
-            perm_names = [re.escape(value) for value in permutation_names]
+            info_start, info_end = info["scope"]
+            perm_names = [
+                re.escape(candidate["name"])
+                for candidate in generated
+                if id(candidate) in permutation_ids
+                and candidate["scope"][0] <= info_end
+                and info_start <= candidate["scope"][1]
+            ]
             assigned = False
             for perm in perm_names:
                 if re.search(
@@ -292,9 +299,14 @@ class Namer:
                     # local identity where possible, not by global spelling.
                     buffer_name = output.group(1)
                     for candidate in generated:
-                        if candidate["name"] == buffer_name and re.search(
-                            rf"\b{re.escape(buffer_name)}\s*\[\s*{escaped}\s*\]",
-                            scopes[id(candidate)],
+                        if (
+                            candidate["name"] == buffer_name
+                            and candidate["scope"][0] <= info_end
+                            and info_start <= candidate["scope"][1]
+                            and re.search(
+                                rf"\b{re.escape(buffer_name)}\s*\[\s*{escaped}\s*\]",
+                                scopes[id(candidate)],
+                            )
                         ):
                             roles[id(candidate)] = "outputBuffer"
                     assigned = True
@@ -312,7 +324,11 @@ class Namer:
                     roles[ident] = "keyBytes"
                     key_length = mixed.group(1)
                     for candidate in generated:
-                        if candidate["name"] == key_length:
+                        if (
+                            candidate["name"] == key_length
+                            and candidate["scope"][0] <= info_end
+                            and info_start <= candidate["scope"][1]
+                        ):
                             roles[id(candidate)] = "keyLength"
                     assigned = True
                     break

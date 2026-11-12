@@ -1467,14 +1467,18 @@ async function startFulcrumWorkflow(message) {
     const recoveredPath = path.join(outputDir, 'recovered.lua');
     const reportPath = path.join(outputDir, 'REPORT.md');
     const stringsPath = path.join(outputDir, 'strings.txt');
+    const recoveredStat = await fs.stat(recoveredPath);
+    const reportStat = await fs.stat(reportPath);
+    const stringsStat = await fs.stat(stringsPath).catch(() => null);
+    if (!recoveredStat.size) throw new Error('Fulcrum produced an empty recovered source file.');
+    if (recoveredStat.size > MAX_OUTPUT_BYTES || reportStat.size > 2 * 1024 * 1024) {
+      throw new Error('Fulcrum source or report exceeded the configured attachment size limit.');
+    }
     const recovered = await fs.readFile(recoveredPath);
     const report = await fs.readFile(reportPath);
-    const strings = await fs.readFile(stringsPath).catch(() => Buffer.alloc(0));
-    if (!recovered.length) throw new Error('Fulcrum produced an empty recovered source file.');
-    if (recovered.length > MAX_OUTPUT_BYTES || report.length > 2 * 1024 * 1024 ||
-        strings.length > MAX_OUTPUT_BYTES) {
-      throw new Error('Fulcrum output exceeded the configured attachment size limit.');
-    }
+    const strings = stringsStat && stringsStat.size <= MAX_OUTPUT_BYTES
+      ? await fs.readFile(stringsPath)
+      : null;
 
     const originalName = input.filename || 'script.lua';
     const originalBase = path.basename(originalName, path.extname(originalName));
@@ -1495,13 +1499,18 @@ async function startFulcrumWorkflow(message) {
       components: [],
     });
 
-    if (strings.length) {
+    if (strings && strings.length) {
       const stringParts = makeSourceParts(strings, safeBase + '.fulcrum-strings.txt');
       await message.reply({
         content: 'Decoded string table:',
         files: stringParts.map((part) => new AttachmentBuilder(part.data, { name: part.name })),
         allowedMentions: { repliedUser: false },
-      });
+      }).catch(() => {});
+    } else if (stringsStat && stringsStat.size > MAX_OUTPUT_BYTES) {
+      await message.reply({
+        content: 'The recovered source and report were sent. The decoded string table was too large to attach.',
+        allowedMentions: { repliedUser: false },
+      }).catch(() => {});
     }
   } catch (error) {
     const details = String(error && error.message || error).slice(0, 1100);

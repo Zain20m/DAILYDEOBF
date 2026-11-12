@@ -3484,7 +3484,7 @@ else
 end
 print("=========== DAILYDEOBF ENVIRONMENT LOGGER: END ===========")
 print("Report was printed locally. No data was uploaded.")
-\`;
+`;
 
 async function sendRobloxEnvironmentLogger(message) {
   const file = Buffer.from(ROBLOX_ENVIRONMENT_LOGGER, 'utf8');

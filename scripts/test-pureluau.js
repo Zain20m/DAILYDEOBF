@@ -473,3 +473,34 @@ test('keeps boolean chains unchanged when an inverse flag has extra uses or comm
   assert.equal(withComment.simplifiedBooleanChains, 0);
   assert.match(withComment.output, /this comment must not be swallowed/);
 });
+
+test('renames mixed Luraph-style generated locals, parameters, tables, and helpers', () => {
+  const source = [
+    'local function fn5() return getTarget() end',
+    'local function fn7(target) return target end',
+    'local function fn8(target) return target end',
+    'local n = 1',
+    'local tbl4 = {"v1", "v2", "v3"}',
+    'local function fn9(arg)',
+    '  if n == 2 then',
+    '    fn8(arg)',
+    '  else',
+    '    fn7(arg)',
+    '  end',
+    'end',
+    'local flag = false',
+    'local v3 = fn5()',
+    'local function fn10()',
+    '  RunService.Heartbeat:Connect(function()',
+    '    if not autoSteal.AutoStealEnabled or flag then return end',
+    '    if v3 then fn9(v3) end',
+    '  end)',
+    'end'
+  ].join('\\n');
+  const result = convertToPureLuau(source);
+  assert.match(result.output, /supportedVersions/);
+  assert.match(result.output, /modeIndex/);
+  assert.match(result.output, /dispatchTarget/);
+  assert.match(result.output, /connectHeartbeatListener/);
+  assert.doesNotMatch(result.output, /\\b(?:fn5|fn7|fn8|fn9|fn10|tbl4|arg|v3|n)\\b/);
+});

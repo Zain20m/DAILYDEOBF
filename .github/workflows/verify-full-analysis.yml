@@ -14,6 +14,8 @@ on:
       - "docs/roblox-open-cloud-exec.md"
       - "pureluau.js"
       - "scripts/test-pureluau.js"
+      - "scripts/automatic-pureluau.js"
+      - "scripts/test-automatic-pureluau.js"
       - "scripts/flowauth-version.js"
       - "scripts/test-flowauth-version.js"
       - "scripts/deep-reconstruction-prompt.txt"

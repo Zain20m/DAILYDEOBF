@@ -26,8 +26,23 @@ def patch_spin(src):
     """Spin watchdog (envlog's --cfg spin): every VM dispatch loop head counts
     steps in __SPIN.n and calls __SPIN.f() every __SPIN.step of them. Table
     operations only, plus that rare call (no locals: see patch_entries)."""
-    return re.sub(r"while true do (?:local )?[A-Za-z_]+(?:,[A-Za-z_]+)*=\s*\(?[A-Za-z_]+\[[A-Za-z_]+\]\)?;",
-                  lambda m: m.group(0) + "__SPIN.n=__SPIN.n+1;if __SPIN.n>=__SPIN.step then __SPIN.f()end;", src)
+    # Luau permits omitting semicolons, and Luraph builds differ in whitespace.
+    # The old matcher required a literal space after "do" and a trailing ";",
+    # so valid dispatch loops could be missed entirely. Without a patched loop
+    # head the runtime heartbeat stops and the outer stall watchdog kills the
+    # process after ~20 seconds.
+    pattern = (
+        r"while\s+true\s+do\s+(?:local\s+)?"
+        r"[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s*=\s*"
+        r"\(?\s*[A-Za-z_]\w*\s*\[\s*[A-Za-z_]\w*\s*\]\s*\)?\s*;?"
+    )
+    marker = "__SPIN.n=__SPIN.n+1;"
+    def inject(match):
+        head = match.group(0)
+        if marker in head:
+            return head
+        return head + marker + "if __SPIN.n>=__SPIN.step then __SPIN.f()end;"
+    return re.sub(pattern, inject, src)
 
 
 def patch_chunk(src, tmpdir):

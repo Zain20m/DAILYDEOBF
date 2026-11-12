@@ -1,0 +1,95 @@
+name: Inspect uploaded Luraph 14 archives
+
+on:
+  push:
+    paths:
+      - ".github/workflows/inspect-luraph-archives.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inspect ZIP metadata and source entrypoints without executing archive code
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, BadZipFile
+          import hashlib
+
+          archives = [
+              Path("upload/DiscordDeobBot-VIP-Smart-Deob.zip"),
+              Path("upload/Luraph-v14.3-deobfuscator-main.zip"),
+          ]
+          out = ["# Uploaded Luraph archive inspection", ""]
+          for archive in archives:
+              if not archive.is_file():
+                  raise SystemExit(f"Missing archive: {archive}")
+              raw_hash = hashlib.sha256(archive.read_bytes()).hexdigest()
+              out += [f"## {archive.name}", "", f"- Size: {archive.stat().st_size:,} bytes", f"- SHA-256: `{raw_hash}`", ""]
+              try:
+                  with ZipFile(archive) as z:
+                      bad = z.testzip()
+                      if bad:
+                          raise SystemExit(f"ZIP CRC failure in {archive}: {bad}")
+                      entries = [x for x in z.infolist() if not x.is_dir()]
+                      out.append(f"- Files: {len(entries)}")
+                      out.append("")
+                      out.append("### File listing")
+                      out.append("")
+                      for item in entries[:800]:
+                          out.append(f"- `{item.filename}` ({item.file_size:,} bytes)")
+                      if len(entries) > 800:
+                          out.append(f"- ... {len(entries) - 800} more entries omitted")
+                      out += ["", "### Selected text files", ""]
+                      selected = []
+                      for item in entries:
+                          name = item.filename.lower().replace("\\", "/")
+                          base = name.rsplit("/", 1)[-1]
+                          wanted = (
+                              base.startswith("readme") or base in {
+                                  "requirements.txt", "pyproject.toml", "setup.py",
+                                  "package.json", "dockerfile", "procfile",
+                                  "main.py", "cli.py", "deob.py", "deobfuscator.py",
+                                  "bot.py", "__main__.py", "config.json"
+                              } or
+                              ("luraph" in base and base.endswith((".py", ".js", ".json")))
+                          )
+                          if wanted and item.file_size <= 30000:
+                              selected.append(item)
+                      total = 0
+                      for item in selected[:30]:
+                          if total > 65000:
+                              break
+                          data = z.read(item)
+                          try:
+                              decoded = data.decode("utf-8")
+                          except UnicodeDecodeError:
+                              continue
+                          decoded = decoded[:12000]
+                          total += len(decoded)
+                          out += [f"#### {item.filename}", "", "```text", decoded, "```", ""]
+                      if not selected:
+                          out.append("No obvious README or entrypoint metadata files found.")
+                          out.append("")
+              except BadZipFile:
+                  raise SystemExit(f"Invalid ZIP archive: {archive}")
+          Path("upload/LURAPH_ARCHIVE_INSPECTION.md").write_text("\n".join(out) + "\n", encoding="utf-8")
+          print("Archive inspection report created.")
+          PY
+
+      - name: Commit inspection report
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add upload/LURAPH_ARCHIVE_INSPECTION.md
+          git commit -m "Inspect uploaded Luraph 14 archives"
+          git push

@@ -146,6 +146,8 @@ async function requestPinnedAddress(url, address, options = {}) {
       host === 'cdn.luaprotect.dev' ||
       host === 'exec.luaprotect.dev' ||
       host.endsWith('.luaprotect.dev') ||
+      host === 'jnkie.com' ||
+      host.endsWith('.jnkie.com') ||
       host.includes('luarmor') ||
       host.includes('vantarmor') ||
       host.includes('luavify');
@@ -2506,6 +2508,149 @@ async function fetchVantarmorLoaderSource(rawUrl, credentialText = '') {
 }
 
 
+function extractJnkIeDownloadUrl(sourceText) {
+  const match = String(sourceText || '').match(
+    /https:\/\/api\.jnkie\.com\/api\/v1\/luascripts\/public\/([a-f0-9]{32,128})\/download(?:\?[^\s"'<>]*)?/i
+  );
+  return match ? match[0].replace(/[)\]},.;]+$/g, '') : null;
+}
+
+async function fetchJnkIeLoaderSource(rawUrl, credentialText = '', existingStage1 = '') {
+  const loaderUrl = new URL(rawUrl);
+  const match = loaderUrl.pathname.match(
+    /^\/api\/v1\/luascripts\/public\/([a-f0-9]{32,128})\/download\/?$/i
+  );
+  if (loaderUrl.protocol !== 'https:' ||
+      loaderUrl.hostname.toLowerCase() !== 'api.jnkie.com' ||
+      !match) return null;
+
+  const hash = match[1].toLowerCase();
+  let stage1 = String(existingStage1 || '').replace(/\r\n/g, '\n');
+  if (!stage1.trim()) {
+    const first = await fetchPublicText(loaderUrl.toString(), {
+      headers: { 'user-agent': 'Roblox/WinInet', accept: '*/*' },
+      maxTime: 25,
+    });
+    stage1 = decodeSource(first.bytes).replace(/\r\n/g, '\n');
+  }
+  if (!stage1.trim()) throw new Error('JNKIE returned an empty stage-one loader.');
+  if (/^\s*(?:<!doctype html|<html\b)/i.test(stage1)) {
+    throw new Error('JNKIE returned an HTML page instead of its stage-one loader.');
+  }
+
+  const keyMatch = String(credentialText || '').match(
+    /(?:getgenv\(\)\s*\.\s*)?SCRIPT_KEY\s*=\s*["']([^"']+)["']/i
+  );
+  if (!keyMatch || !keyMatch[1].trim()) {
+    return {
+      source: stage1,
+      complete: false,
+      reason: 'SCRIPT_KEY was not present in the supplied paste. Returned the stage-one loader only.',
+      finalUrl: loaderUrl.toString(),
+    };
+  }
+
+  const hwidMatch = String(credentialText || '').match(
+    /(?:getgenv\(\)\s*\.\s*)?(?:HWID|hwid)\s*=\s*["']([^"']+)["']/i
+  );
+  const hwid = hwidMatch && hwidMatch[1] ? hwidMatch[1].trim() : '';
+  const deliveryUrl = new URL('/api/v1/luascripts/delivery/' + hash, loaderUrl.origin);
+  deliveryUrl.searchParams.set('v', '2');
+  deliveryUrl.searchParams.set('errors', 'text');
+  if (hwid) deliveryUrl.searchParams.set('hwid', hwid);
+
+  const addresses = await assertPublicUrl(deliveryUrl);
+  let response = null;
+  const connectionErrors = [];
+  const headers = {
+    'user-agent': 'Roblox/WinInet',
+    accept: '*/*',
+    'content-type': 'text/plain',
+    ...(hwid ? { 'x-hwid': hwid } : {}),
+  };
+  for (const address of addresses) {
+    try {
+      response = await requestPinnedAddress(deliveryUrl, address, {
+        method: 'POST',
+        headers,
+        body: keyMatch[1].trim(),
+        maxTime: 25,
+      });
+      break;
+    } catch (error) {
+      connectionErrors.push(String(error && (error.message || error) || 'connection failed'));
+    }
+  }
+  if (!response) {
+    throw new Error('JNKIE delivery connection failed: ' + connectionErrors.join(' | ').slice(0, 600));
+  }
+
+  const location = response.headers.get('location');
+  const responseBytes = await readResponse(response, MAX_INPUT_BYTES);
+  const responseText = responseBytes.toString('utf8').replace(/\r\n/g, '\n').trim();
+
+  if (/^LDR-DENIED:/i.test(responseText)) {
+    return {
+      source: stage1,
+      complete: false,
+      reason: responseText.slice(0, 400),
+      finalUrl: loaderUrl.toString(),
+    };
+  }
+
+  let payloadBytes = responseBytes;
+  let payloadUrl = deliveryUrl.toString();
+  const redirectStatus = [301, 302, 303, 307, 308].includes(response.status);
+  const cdnUrlText = responseText.match(/^https:\/\/cdn\.jnkie\.com\/[^\s"'<>]+$/i);
+  if (redirectStatus || cdnUrlText) {
+    const targetText = location || (cdnUrlText && cdnUrlText[0]);
+    if (!targetText) {
+      return {
+        source: stage1,
+        complete: false,
+        reason: 'JNKIE delivery redirected without a Location URL. Returned stage-one loader only.',
+        finalUrl: loaderUrl.toString(),
+      };
+    }
+    let target;
+    try { target = new URL(targetText, deliveryUrl); }
+    catch { throw new Error('JNKIE returned an invalid CDN URL.'); }
+    if (target.protocol !== 'https:' || target.hostname.toLowerCase() !== 'cdn.jnkie.com' ||
+        target.username || target.password) {
+      throw new Error('JNKIE delivery returned a CDN URL outside the approved cdn.jnkie.com host.');
+    }
+    const downloaded = await fetchPublicText(target.toString(), {
+      headers: { 'user-agent': 'Roblox/WinInet', accept: '*/*' },
+      maxTime: 30,
+    });
+    payloadBytes = downloaded.bytes;
+    payloadUrl = downloaded.finalUrl || target.toString();
+  } else if (response.status < 200 || response.status >= 300) {
+    return {
+      source: stage1,
+      complete: false,
+      reason: 'JNKIE delivery returned HTTP ' + response.status + (responseText ? ': ' + responseText.slice(0, 250) : ''),
+      finalUrl: loaderUrl.toString(),
+    };
+  }
+
+  const payload = decodeSource(payloadBytes).replace(/\r\n/g, '\n');
+  if (/^\s*(?:<!doctype html|<html\b)/i.test(payload)) {
+    throw new Error('JNKIE delivery returned HTML instead of a Lua payload.');
+  }
+  if (!payload.trim()) throw new Error('JNKIE returned an empty delivery payload.');
+  if (/^LDR-DENIED:/i.test(payload.trim())) {
+    return {
+      source: stage1,
+      complete: false,
+      reason: payload.trim().slice(0, 400),
+      finalUrl: loaderUrl.toString(),
+    };
+  }
+  return { source: payload, complete: true, reason: '', finalUrl: payloadUrl };
+}
+
+
 function buildScriptFetchedEmbed(attachment, batchIndex, batchCount, totalFiles, totalUrls, failedUrls) {
   const capture = attachment && attachment.capture || {};
   const source = String(capture.source || '');
@@ -2684,6 +2829,15 @@ async function startGetWorkflow(message, inlineSource = null) {
           finalUrl: rawUrl,
           contentType: 'application/lua',
           status: 200,
+        };
+      }
+      const jnkieResult = await fetchJnkIeLoaderSource(rawUrl, credentialText);
+      if (jnkieResult !== null) {
+        return {
+          source: jnkieResult.source,
+          finalUrl: jnkieResult.finalUrl || rawUrl,
+          contentType: jnkieResult.complete ? 'application/lua' : 'application/lua; JNKIE stage-one only',
+          status: jnkieResult.complete ? 200 : 206,
         };
       }
       const rootOptions = input.url && rawUrl === input.url ? (input.curlOptions || {}) : {};
@@ -3203,6 +3357,47 @@ async function processLuaProtectFetcher(message, prompt, input) {
   return sendLuaProtectRunnerBody(message, prompt, combined, rawUrl || null);
 }
 
+
+async function processJnkIeFetcher(message, prompt, input) {
+  const combined = String(input.originalText || '') + '\n' + String(input.source || '');
+  const rawUrl = input.url || extractJnkIeDownloadUrl(combined);
+  if (!rawUrl) throw new Error('No supported JNKIE public download URL was found in the supplied source.');
+
+  const existingStage1 = input.url && input.responseStatus
+    ? String(input.source || '')
+    : '';
+  await prompt.edit({
+    content: '🔄 **JNKIE Fetcher**\nFetching the stage-one loader, then requesting delivery with the supplied SCRIPT_KEY...',
+    embeds: [],
+    components: [],
+  });
+
+  const result = await fetchJnkIeLoaderSource(rawUrl, combined, existingStage1);
+  if (!result) throw new Error('This is not a supported JNKIE public download URL.');
+  const data = Buffer.from(result.source.endsWith('\n') ? result.source : result.source + '\n', 'utf8');
+  if (data.length > MAX_OUTPUT_BYTES) throw new Error('JNKIE output exceeds the 18 MB Discord output limit.');
+
+  const complete = Boolean(result.complete);
+  const filename = complete ? 'jnkie_payload.lua' : 'jnkie_stage1_loader.lua';
+  await message.reply({
+    embeds: [dailyEmbed(
+      complete ? 'JNKIE payload fetched' : 'JNKIE stage-one loader fetched',
+      complete
+        ? 'Retrieved ' + formatBytes(data.length) + ' from the JNKIE delivery flow. The payload is attached for inspection; review it before running.'
+        : 'Only the stage-one loader was available. ' + String(result.reason || 'Delivery did not return a payload.') + '\n\nNo HWID was fabricated or bypassed.',
+      complete ? DAILY_COLORS.success : DAILY_COLORS.warning
+    )],
+    files: [new AttachmentBuilder(data, { name: filename })],
+    allowedMentions: { repliedUser: false },
+  });
+  await prompt.edit({
+    content: complete
+      ? '✅ JNKIE payload attached as **' + filename + '**.'
+      : '⚠️ JNKIE returned stage one only as **' + filename + '**. Check the delivery requirement shown above.',
+    components: [],
+  }).catch(() => {});
+}
+
 async function processVantarmorFetcher(message, prompt, input) {
   const source = String(input.source || '');
   const originalText = String(input.originalText || '');
@@ -3437,6 +3632,15 @@ async function resolveDeobfTargetSource(input) {
           finalUrl: rawUrl,
           contentType: 'application/lua',
           status: 200,
+        };
+      }
+      const jnkieResult = await fetchJnkIeLoaderSource(rawUrl, credentialText);
+      if (jnkieResult !== null) {
+        return {
+          source: jnkieResult.source,
+          finalUrl: jnkieResult.finalUrl || rawUrl,
+          contentType: jnkieResult.complete ? 'application/lua' : 'application/lua; JNKIE stage-one only',
+          status: jnkieResult.complete ? 200 : 206,
         };
       }
       const fetched = await fetchPublicText(rawUrl, {});
@@ -3686,6 +3890,10 @@ async function startWorkflow(message, inlineText = null) {
         .setLabel('LuaProtect Fetcher')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
+        .setCustomId(`deobf-jnkie:${message.author.id}`)
+        .setLabel('JNKIE Fetcher')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
         .setCustomId(`deobf-cancel:${message.author.id}`)
         .setLabel('Cancel')
         .setStyle(ButtonStyle.Secondary),
@@ -3794,6 +4002,16 @@ async function startWorkflow(message, inlineText = null) {
         await processLuaProtectFetcher(message, prompt, await getWorkflowInput());
       } catch (error) {
         await showDeobfFailure(message, prompt, 'LuaProtect Fetcher failed', error);
+      }
+      return;
+    }
+    if (interaction.customId === `deobf-jnkie:${message.author.id}`) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        await processJnkIeFetcher(message, prompt, await getWorkflowInput());
+      } catch (error) {
+        await showDeobfFailure(message, prompt, 'JNKIE Fetcher failed', error);
       }
       return;
     }

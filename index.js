@@ -3407,11 +3407,10 @@ local report = {
         isClient = safeRead(function() return RunService:IsClient() end),
         isServer = safeRead(function() return RunService:IsServer() end),
         isRunning = safeRead(function() return RunService:IsRunning() end),
-        heartbeatConnected = safeRead(function() return RunService.Heartbeat.Connected end),
         localPlayerAvailable = player ~= nil,
-        localPlayerName = player and safeRead(function() return player.Name end) or "Not available on server",
-        localPlayerDisplayName = player and safeRead(function() return player.DisplayName end) or "Not available on server",
-        localPlayerUserId = player and safeRead(function() return player.UserId end) or "Not available on server",
+        characterLoaded = player ~= nil and player.Character ~= nil,
+        characterHasHumanoid = player ~= nil and player.Character ~= nil
+            and player.Character:FindFirstChildOfClass("Humanoid") ~= nil,
     },
 
     workspace = {

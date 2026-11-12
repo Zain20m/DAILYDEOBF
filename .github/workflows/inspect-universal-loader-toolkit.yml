@@ -1,0 +1,43 @@
+name: Inspect Universal Loader Toolkit upload
+
+on:
+  push:
+    paths:
+      - '.github/workflows/inspect-universal-loader-toolkit.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  extract-toolkit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract uploaded toolkit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f 'upload/UniversalLoaderToolkit (1).zip'
+          rm -rf /tmp/universal-loader-toolkit
+          mkdir -p /tmp/universal-loader-toolkit
+          unzip -q 'upload/UniversalLoaderToolkit (1).zip' -d /tmp/universal-loader-toolkit
+          mkdir -p upload/universal-loader-toolkit-extracted
+          cp -a /tmp/universal-loader-toolkit/. upload/universal-loader-toolkit-extracted/
+          find upload/universal-loader-toolkit-extracted -type f -maxdepth 5 -print
+
+      - name: Commit extracted inspection files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add upload/universal-loader-toolkit-extracted
+          if git diff --cached --quiet; then
+            echo 'No extracted files changed'
+            exit 0
+          fi
+          git commit -m 'Extract Universal Loader Toolkit for inspection'
+          git push

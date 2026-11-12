@@ -1176,6 +1176,49 @@ def reachable_rev(start, succ):
 # --------------------------------------------------------------------------
 # cleanup of the structured AST
 
+
+def flatten_threshold_dispatch(st):
+    """Flatten nested if-state <= N then if-state <= M decision trees.
+
+    Luraph often emits a binary-search tree for a switch dispatcher. When the
+    same plain local/register is compared to numeric constants, the tree can
+    be expressed as a readable ordered elseif chain without changing behavior.
+    """
+    while isinstance(st, SIf) and len(st.then) == 1 and isinstance(st.then[0], SIf):
+        outer = st.cond
+        inner_if = st.then[0]
+        inner = inner_if.cond
+        if not (
+            isinstance(outer, Bin) and outer.op == "CompareLe"
+            and isinstance(inner, Bin) and inner.op == "CompareLe"
+            and isinstance(outer.b, Const) and isinstance(inner.b, Const)
+            and type(outer.b.v) in (int, float)
+            and type(inner.b.v) in (int, float)
+            and inner.b.v < outer.b.v
+        ):
+            break
+
+        def variable_key(expr):
+            if isinstance(expr, Reg):
+                return ("reg", expr.n)
+            if type(expr).__name__ == "LocalName":
+                return ("local", expr.name)
+            return None
+
+        key = variable_key(outer.a)
+        if key is None or variable_key(inner.a) != key:
+            break
+
+        # if x <= outer then if x <= inner then A else B end else C end
+        # becomes if x <= inner then A elseif x <= outer then B else C end.
+        st = SIf(
+            inner,
+            inner_if.then,
+            SBlock([SIf(outer, inner_if.els, st.els)]),
+        )
+    return st
+
+
 def negate(c):
     from luasym import Un, Bin
     if isinstance(c, Un) and c.op == "Not":
@@ -1196,6 +1239,7 @@ def cleanup(stmts, in_loop_tail=False):
         if isinstance(st, SIf):
             st.then = cleanup(st.then, in_loop_tail and last)
             st.els = cleanup(st.els, in_loop_tail and last)
+            st = flatten_threshold_dispatch(st)
             if in_loop_tail and last:
                 # else: if c then continue end; R  ->  elseif not c then R
                 st.els = _tail_guard_to_if(st.els)

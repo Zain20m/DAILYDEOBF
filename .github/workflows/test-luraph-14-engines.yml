@@ -1,0 +1,60 @@
+name: Test imported Luraph v14 engines
+
+on:
+  push:
+    paths:
+      - "luraph-v14.7-engine/**"
+      - "luraph-v14.3-engine/**"
+      - ".github/workflows/test-luraph-14-engines.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile imported Python sources
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          engines = [Path("luraph-v14.7-engine"), Path("luraph-v14.3-engine")]
+          count = 0
+          for engine in engines:
+              for source in engine.rglob("*.py"):
+                  compile(source.read_text(encoding="utf-8"), str(source), "exec")
+                  count += 1
+          print(f"Compiled {count} Python source files.")
+          PY
+
+      - name: Load the Luraph v14.7 engine
+        env:
+          PYTHONPATH: luraph-v14.7-engine
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python3 - <<'PY'
+          import cli
+          from obfuscators.luraph_v14_7 import driver, vmmap, devirt
+          engine = cli.load_engine("14.7")
+          print("Loaded engine:", type(engine).__name__)
+          print("Driver, VM mapper and devirtualizer imports passed.")
+          PY
+
+      - name: Run the Luraph v14.3 bundled sample through the adapter
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python3 luraph-v14.3-engine/daily_cli.py \
+            luraph-v14.3-engine/samples/sunjingwoo.lua \
+            --output /tmp/Luraph143_static_report.txt \
+            --max-report-mb 3
+          test -s /tmp/Luraph143_static_report.txt
+          test -s /tmp/Luraph143_static_report.txt.decoded.bin
+          echo "Report preview:"
+          head -n 18 /tmp/Luraph143_static_report.txt
+          echo "Luraph v14.3 decoder/adapter smoke test passed."

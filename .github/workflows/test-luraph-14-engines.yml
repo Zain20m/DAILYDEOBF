@@ -44,6 +44,7 @@ jobs:
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
           python3 - <<'PY'
+          from pathlib import Path
           import cli
           import harness
           from obfuscators.luraph_v14_7 import driver as driver147, vmmap as map147, devirt as devirt147
@@ -53,11 +54,11 @@ jobs:
               engine = cli.load_engine(version)
               print(f"Loaded Luraph v{version}: {type(engine).__name__}")
           spin_samples = [
-              ("while true do local opcode=ops[pc]\\nend", "do"),
-              ("while  true  do\\n  if ready then step() end\\nend", "do"),
-              ("while running and ready\\n do work() end", "do"),
+              ("while true do local opcode=ops[pc]\nend", "do"),
+              ("while  true  do\n  if ready then step() end\nend", "do"),
+              ("while running and ready\n do work() end", "do"),
               ("while true do helper() end", "do"),
-              ("repeat\\n  work()\\nuntil done", "repeat"),
+              ("repeat\n  work()\nuntil done", "repeat"),
               ("for i = 1, 10 do work(i) end", "do"),
               ("for key, value in pairs(items) do work(key, value) end", "do"),
           ]
@@ -66,7 +67,7 @@ jobs:
               patched = driver149.patch_spin(sample)
               assert marker in patched, sample
               assert patched.count(marker) == 1, sample
-              assert delimiter + "\\n" + marker in patched, sample
+              assert delimiter + "\n" + marker in patched, sample
           envlog = Path("luraph-v14.7-engine/envlog.luau").read_text(encoding="utf-8")
           assert 'R.gsub(patched, "while%s+.-%s+do"' in envlog
           assert 'R.gsub(patched, "for%s+.-%s+do"' in envlog
@@ -81,16 +82,23 @@ jobs:
           assert runtime_check.returncode == 0 and "luau-runtime-ok" in runtime_check.stdout, runtime_check.stderr
           print(f"Luraph v14 runtime resolved and ran: {runtime}")
           spin_test = r"""
-          local pattern = "while%s+true%s+do%s+[%w_,%s]-=%s*%(?%s*[%a_][%w_]*%s*%[%s*[%a_][%w_]*%s*%]%s*%)?%s*;?"
+          local marker = "__SPIN.n=__SPIN.n+1;"
+          local function instrument(source)
+            source = string.gsub(source, "while%s+.-%s+do", "%0\n" .. marker)
+            source = string.gsub(source, "for%s+.-%s+do", "%0\n" .. marker)
+            source = string.gsub(source, "repeat%s+", "%0\n" .. marker)
+            return source
+          end
           local samples = {
-            "while true do local opcode=ops[pc]\\nend",
-            "while  true  do\\n local opcode = (ops[pc]);\\nend",
-            "while true do local a,b=ops[pc]\\nend"
+            "while true do work() end",
+            "while running\n and ready do work() end",
+            "repeat work() until done",
+            "for i = 1, 10 do work(i) end",
+            "for key, value in pairs(items) do work(key, value) end"
           }
           for _, source in ipairs(samples) do
-            local patched = string.gsub(source, pattern,
-              "%0__SPIN.n=__SPIN.n+1;if __SPIN.n>=__SPIN.step then __SPIN.f()end;")
-            assert(string.find(patched, "__SPIN.n", 1, true), source)
+            local patched = instrument(source)
+            assert(string.find(patched, marker, 1, true), source)
           end
           print("dynamic loadstring spin watchdog patterns passed")
           """

@@ -2385,6 +2385,35 @@ function redactSpyUrl(raw) {
   } catch { return String(raw || '<dynamic URL>').slice(0, 500); }
 }
 
+
+async function fetchLuaProtectLoaderSource(rawUrl) {
+  const loaderUrl = new URL(rawUrl);
+  const isLuaProtect = loaderUrl.protocol === 'https:' &&
+    loaderUrl.hostname.toLowerCase() === 'exec.luaprotect.dev' &&
+    /^\/api\/runner-body\/[A-Za-z0-9_-]+\/?$/i.test(loaderUrl.pathname);
+  if (!isLuaProtect) return null;
+
+  const fetched = await fetchPublicText(loaderUrl.toString(), {
+    headers: {
+      'user-agent': 'Roblox/WinInet',
+      accept: 'text/plain, application/octet-stream, application/json, */*',
+    },
+    maxTime: 25,
+  });
+  const body = decodeSource(fetched.bytes).replace(/\r\n/g, '\n');
+  if (fetched.status < 200 || fetched.status >= 300) {
+    if (fetched.status === 401 || fetched.status === 403) {
+      throw new Error('LuaProtect denied the runner-body request (HTTP ' + fetched.status + '). The endpoint rejected the Roblox User-Agent request or requires authorization.');
+    }
+    throw new Error('LuaProtect returned HTTP ' + fetched.status + '.');
+  }
+  if (!body.trim()) throw new Error('LuaProtect returned an empty runner-body response.');
+  if (/^(<!doctype html|<html|\s*<\?xml)/i.test(body)) {
+    throw new Error('LuaProtect returned a webpage instead of Lua source.');
+  }
+  return body;
+}
+
 async function fetchVantarmorLoaderSource(rawUrl, credentialText = '') {
   const loaderUrl = new URL(rawUrl);
   const isVantarmor = loaderUrl.protocol === 'https:' &&
@@ -2618,6 +2647,8 @@ async function startGetWorkflow(message, inlineSource = null) {
         };
       }
       const credentialText = String(input.originalText || '') + '\\n' + String(input.source || '');
+      const luaProtectSource = await fetchLuaProtectLoaderSource(rawUrl);
+      if (luaProtectSource !== null) return { source: luaProtectSource, finalUrl: rawUrl, contentType: 'application/lua', status: 200 };
       const vantarmorSource = await fetchVantarmorLoaderSource(rawUrl, credentialText);
       if (vantarmorSource !== null) {
         return {
@@ -3078,6 +3109,46 @@ function helpText() {
 }
 
 
+
+async function processLuaProtectFetcher(message, prompt, input) {
+  const combined = String(input.originalText || '') + '\n' + String(input.source || '');
+  const rawUrl = input.url || (combined.match(/https?:\/\/[^\s"'<>]+/i) || [])[0];
+  if (!rawUrl) throw new Error('Send a direct LuaProtect runner-body URL.');
+  const loaderUrl = new URL(rawUrl.replace(/[)\]},.;]+$/g, ''));
+  if (loaderUrl.protocol !== 'https:' ||
+      loaderUrl.hostname.toLowerCase() !== 'exec.luaprotect.dev' ||
+      !/^\/api\/runner-body\/[A-Za-z0-9_-]+\/?$/i.test(loaderUrl.pathname)) {
+    throw new Error('LuaProtect Fetcher accepts https://exec.luaprotect.dev/api/runner-body/<id> URLs only.');
+  }
+
+  await prompt.edit({
+    content: '🔄 **LuaProtect Fetcher**\nRequesting the runner body with the Roblox User-Agent...',
+    embeds: [],
+    components: [],
+  });
+  const recovered = await fetchLuaProtectLoaderSource(loaderUrl.toString());
+  if (recovered === null) throw new Error('This is not a supported LuaProtect runner-body URL.');
+  const data = Buffer.from(recovered.endsWith('\n') ? recovered : recovered + '\n', 'utf8');
+  if (data.length > MAX_OUTPUT_BYTES) throw new Error('Recovered source exceeds the 18 MB Discord output limit.');
+
+  const outputPath = path.join(os.tmpdir(), 'daily-luaprotect-' + message.id + '.lua');
+  try {
+    await fs.writeFile(outputPath, data, { mode: 0o600 });
+    await message.reply({
+      embeds: [dailyEmbed(
+        'LuaProtect source fetched',
+        'Retrieved ' + formatBytes(data.length) + ' from the LuaProtect runner-body endpoint. This fetches the server response; it does not unpack an inner obfuscator or VM.',
+        DAILY_COLORS.success
+      )],
+      files: [new AttachmentBuilder(outputPath, { name: 'luaprotect_recovered.lua' })],
+      allowedMentions: { repliedUser: false },
+    });
+    await prompt.edit({ content: '✅ LuaProtect returned the source. Attached as **luaprotect_recovered.lua**.', components: [] }).catch(() => {});
+  } finally {
+    await fs.rm(outputPath, { force: true }).catch(() => {});
+  }
+}
+
 async function processVantarmorFetcher(message, prompt, input) {
   const source = String(input.source || '');
   const originalText = String(input.originalText || '');
@@ -3303,6 +3374,8 @@ async function resolveDeobfTargetSource(input) {
         };
       }
       const credentialText = String(input.originalText || '') + '\n' + rootSource;
+      const luaProtectSource = await fetchLuaProtectLoaderSource(rawUrl);
+      if (luaProtectSource !== null) return { source: luaProtectSource, finalUrl: rawUrl, contentType: 'application/lua', status: 200 };
       const vantarmorSource = await fetchVantarmorLoaderSource(rawUrl, credentialText);
       if (vantarmorSource !== null) {
         return {
@@ -3520,6 +3593,10 @@ async function startWorkflow(message, inlineText = null) {
         .setLabel('Vantarmor / Universal')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
+        .setCustomId(`deobf-luaprotect:${message.author.id}`)
+        .setLabel('LuaProtect Fetcher')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
         .setCustomId(`deobf-cancel:${message.author.id}`)
         .setLabel('Cancel')
         .setStyle(ButtonStyle.Secondary),
@@ -3607,6 +3684,16 @@ async function startWorkflow(message, inlineText = null) {
         await processVantarmorFetcher(message, prompt, await getWorkflowInput());
       } catch (error) {
         await showDeobfFailure(message, prompt, 'Universal Loader Fetcher failed', error);
+      }
+      return;
+    }
+    if (interaction.customId === 'deobf-luaprotect:' + message.author.id) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        await processLuaProtectFetcher(message, prompt, await getWorkflowInput());
+      } catch (error) {
+        await showDeobfFailure(message, prompt, 'LuaProtect Fetcher failed', error);
       }
       return;
     }

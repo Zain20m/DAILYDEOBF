@@ -54,7 +54,7 @@ jobs:
               print(f"Loaded Luraph v{version}: {type(engine).__name__}")
           spin_samples = [
               "while true do local opcode=ops[pc]\nend",
-              "while  true  do\\n  local opcode = (ops[pc]);\\nend",
+              "while  true  do\n  local opcode = (ops[pc]);\nend",
               "while true do local a,b=ops[pc]\nend",
           ]
           for sample in spin_samples:

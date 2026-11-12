@@ -54,13 +54,14 @@ jobs:
               print(f"Loaded Luraph v{version}: {type(engine).__name__}")
           spin_samples = [
               "while true do local opcode=ops[pc]\nend",
-              "while  true  do\n  local opcode = (ops[pc]);\nend",
-              "while true do local a,b=ops[pc]\nend",
+              "while  true  do\n  if ready then step() end\nend",
+              "while true do helper() end",
+              "while true do\n  local a,b=ops[pc]\nend",
           ]
           for sample in spin_samples:
               patched = driver149.patch_spin(sample)
-              assert "__SPIN.n=__SPIN.n+1;" in patched, sample
-          print("Luraph v14.9 spin watchdog matches semicolon-free dispatch loops.")
+              assert "do;__SPIN.n=__SPIN.n+1;" in patched, sample
+          print("Luraph v14.9 watchdog covers arbitrary while-true loop bodies.")
           import tempfile
           import os
           parser = map149.luau_ast_executable()

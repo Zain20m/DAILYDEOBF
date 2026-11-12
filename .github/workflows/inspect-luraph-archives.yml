@@ -67,7 +67,7 @@ jobs:
                           base = parts[-1]
                           keep = (
                               base.endswith(".py") or base in {"README.md", "LICENSE", "Luraph ASCII-art.txt"}
-                              or (base == "sunjingwoo.lua" and len(parts) > 1)
+                              or base == "sunjingwoo.lua"
                           )
                           if base == "sunjingwoo.lua":
                               rel = PurePosixPath("samples/sunjingwoo.lua")

@@ -33,9 +33,9 @@ def patch_spin(src):
         return match.group(0) + "\n" + marker + "if __SPIN.n>=__SPIN.step then __SPIN.f()end;"
     # Stop at the first loop delimiter, including when the condition spans lines.
     patterns = (
-        r"\\bwhile\\b(?:(?!\\bdo\\b)[\\s\\S])*\\bdo\\b",
-        r"\\bfor\\b(?:(?!\\bdo\\b)[\\s\\S])*\\bdo\\b",
-        r"\\brepeat\\b",
+        r"\bwhile\b(?:(?!\bdo\b)[\s\S])*\bdo\b",
+        r"\bfor\b(?:(?!\bdo\b)[\s\S])*\bdo\b",
+        r"\brepeat\b",
     )
     for pattern in patterns:
         src = re.sub(pattern, inject, src)

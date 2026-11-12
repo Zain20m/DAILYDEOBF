@@ -21,7 +21,9 @@ function repairIronVeilSource(source) {
     if (!match) continue;
 
     const [, indent, identifier, operator, expression] = match;
-    if (!expression || expression.startsWith('--') || /;\s*$/.test(expression)) continue;
+    // Avoid comments, statement separators, and expressions that cannot be
+    // safely normalized by this line-based compatibility pass.
+    if (!expression || expression.includes('--') || /;\s*$/.test(expression)) continue;
     const arithmetic = operators[operator];
     lines[index] = indent + identifier + ' = ' + identifier + ' ' + arithmetic + ' (' + expression + ')';
     changes.push({ line: index + 1, from: operator, to: arithmetic });

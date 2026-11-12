@@ -25,18 +25,39 @@ BIN = os.path.join(HERE, "bin")
 LUAU_URL = "https://github.com/luau-lang/luau/releases/latest/download/luau-windows.zip"
 
 
+def _runtime_candidates(name):
+    """Yield this engine's binary and the shared v15 engine's copy."""
+    yield os.path.join(BIN, name)
+    shared_bin = os.path.join(os.path.dirname(HERE), "luraph-v15-engine", "bin")
+    yield os.path.join(shared_bin, name)
+
+
+def _find_runtime_binary(name):
+    for candidate in _runtime_candidates(name):
+        if os.path.isfile(candidate):
+            if os.name != "nt" and not os.access(candidate, os.X_OK):
+                try:
+                    os.chmod(candidate, os.stat(candidate).st_mode | 0o111)
+                except OSError:
+                    continue
+            if os.name == "nt" or os.access(candidate, os.X_OK):
+                return candidate
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        candidate = os.path.join(directory, name)
+        if os.path.isfile(candidate) and (os.name == "nt" or os.access(candidate, os.X_OK)):
+            return candidate
+    return None
+
+
 def find_luau():
     exe = "luau.exe" if os.name == "nt" else "luau"
-    local = os.path.join(BIN, exe)
-    if os.path.exists(local):
-        return local
-    for d in os.environ.get("PATH", "").split(os.pathsep):
-        p = os.path.join(d, exe)
-        if os.path.exists(p):
-            return p
+    found = _find_runtime_binary(exe)
+    if found:
+        return found
     if os.name != "nt":
-        sys.exit("luau not found: build it with `python deobf/build_luau.py` (needs git, cmake, a C++ "
-                 "compiler) or put one in " + BIN)
+        checked = ", ".join(_runtime_candidates(exe))
+        sys.exit("luau runtime not found. Checked " + checked +
+                 " and PATH. Run npm start to provision shared Luau binaries.")
     print("[*] downloading Luau runtime...", file=sys.stderr)
     print("[!] stock Luau lacks the Vector3 members (v:Dot, v.Magnitude, ...): build the patched "
           "runtime with `python deobf/build_luau.py`", file=sys.stderr)
@@ -47,12 +68,17 @@ def find_luau():
         for name in ("luau.exe", "luau-ast.exe"):
             z.extract(name, BIN)
     os.remove(zpath)
-    return local
+    return os.path.join(BIN, exe)
 
 
 def luau_ast():
-    """Path of luau-ast (prints a file's AST as JSON; decode it as latin-1)."""
-    return os.path.join(BIN, "luau-ast.exe" if os.name == "nt" else "luau-ast")
+    """Resolve luau-ast from this engine, the shared v15 engine, or PATH."""
+    name = "luau-ast.exe" if os.name == "nt" else "luau-ast"
+    found = _find_runtime_binary(name)
+    if found:
+        return found
+    checked = ", ".join(_runtime_candidates(name))
+    raise FileNotFoundError("Luau AST executable not found. Checked " + checked + " and PATH.")
 
 
 def long_string(s):

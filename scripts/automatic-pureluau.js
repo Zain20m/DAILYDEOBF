@@ -19,7 +19,7 @@ function createAutomaticPureLuauResult(source, originalName = 'script.lua') {
   if (!sourceText.trim()) {
     return { status: 'skipped', reason: 'No readable source text was produced.' };
   }
-  if (sourceText.includes('\\0')) {
+  if (sourceText.includes('\0')) {
     return { status: 'skipped', reason: 'The recovered output contains binary NUL bytes, so it was not sent to the Luau text pass.' };
   }
 
@@ -82,7 +82,7 @@ function createAutomaticPureLuauResult(source, originalName = 'script.lua') {
     outputName,
     reportName,
     outputBuffer,
-    reportBuffer: Buffer.from(reportLines.join('\\n'), 'utf8'),
+    reportBuffer: Buffer.from(reportLines.join('\n'), 'utf8'),
     identifiersRenamed: Number(result.identifiersRenamed || 0),
     formatterSyntaxValidated: Boolean(result.formatterSyntaxValidated),
     structuralValidationPassed: Boolean(result.structuralValidationPassed),

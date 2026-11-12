@@ -52,6 +52,9 @@ jobs:
                       if unix_mode and (unix_mode & 0o170000) == 0o120000:
                           raise SystemExit(f"Symlink entry rejected: {info.filename}")
                       parts = rel.parts
+                      if mode == "v143" and len(parts) > 1 and parts[0] == "Luraph-v14.3-deobfuscator-main":
+                          parts = parts[1:]
+                          rel = PurePosixPath(*parts)
                       if mode == "vip":
                           in_obfuscators = len(parts) >= 2 and parts[0] == "obfuscators"
                           root_source = len(parts) == 1 and (

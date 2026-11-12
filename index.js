@@ -3573,6 +3573,41 @@ async function startWorkflow(message, inlineText = null) {
     }
   }
 
+  // LuaProtect stubs are launchers, not the protected payload. Resolve the
+  // embedded runner hash before plain-Lua detection or engine selection.
+  if (input.source && !input.pendingUrlFailure) {
+    const luaProtectRunnerUrl = extractLuaProtectRunnerUrl(input.source);
+    if (luaProtectRunnerUrl) {
+      await prompt.edit({
+        embeds: [dailyEmbed(
+          'LuaProtect bootstrap detected',
+          'Extracted the runner hash from the stub. Downloading the actual runner body before analysis...',
+          DAILY_COLORS.primary
+        )],
+      });
+      const runnerSource = await fetchLuaProtectLoaderSource(luaProtectRunnerUrl);
+      if (runnerSource === null) throw new Error('LuaProtect runner URL could not be resolved.');
+      input = {
+        ...input,
+        source: runnerSource,
+        filename: 'luaprotect_runner.lua',
+        url: luaProtectRunnerUrl,
+        originalInput: {
+          source: input.source,
+          filename: input.filename,
+          url: input.url || null,
+        },
+        selectedTarget: {
+          source: runnerSource,
+          filename: 'luaprotect_runner.lua',
+          url: luaProtectRunnerUrl,
+          bytes: Buffer.byteLength(runnerSource, 'utf8'),
+          depth: 1,
+        },
+      };
+    }
+  }
+
   let targetResolution = null;
   if (input.source && !input.pendingUrlFailure) {
     try {

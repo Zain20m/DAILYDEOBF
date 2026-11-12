@@ -10,6 +10,8 @@ import os
 import subprocess
 import tempfile
 
+from obfuscators.luraph_v14_9.vmmap import luau_ast_executable
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -18,11 +20,14 @@ def _ast(text):
         f.write(text)
         path = f.name
     try:
-        out = subprocess.run([os.path.join(HERE, "bin", "luau-ast.exe" if os.name == "nt" else "luau-ast"), path],
-                             capture_output=True).stdout
+        exe = luau_ast_executable()
+        result = subprocess.run([exe, path], capture_output=True)
+        if result.returncode != 0:
+            detail = result.stderr.decode("latin-1", errors="replace").strip()
+            raise RuntimeError("luau-ast failed: " + (detail or str(result.returncode)))
+        return json.loads(result.stdout.decode("latin-1"))["root"]
     finally:
         os.remove(path)
-    return json.loads(out.decode("latin-1"))["root"]
 
 
 def _walk(n, fn):

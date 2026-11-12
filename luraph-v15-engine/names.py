@@ -141,6 +141,7 @@ class Namer:
     def __init__(self, text):
         import tempfile
         self.text = text
+        self.lines = text.splitlines()
         with tempfile.NamedTemporaryFile("w", suffix=".luau", delete=False, encoding="utf-8", newline="\n") as f:
             f.write(text)
             path = f.name
@@ -171,10 +172,9 @@ class Namer:
     def scope_source(self, info):
         """Source text inside a local's lexical scope."""
         start, end = info["scope"]
-        lines = self.text.splitlines()
         first = max(0, start[0])
-        last = min(len(lines), end[0] + 1)
-        return "\n".join(lines[first:last])
+        last = min(len(self.lines), end[0] + 1)
+        return "\n".join(self.lines[first:last])
 
     def infer_generated_roles(self):
         """Name common Luraph VM artifacts from local data-flow patterns.
@@ -187,7 +187,13 @@ class Namer:
             info for info in self.locals.values()
             if GENERATED.match(info["name"])
         ]
-        scopes = {id(info): self.scope_source(info) for info in generated}
+        scope_cache = {}
+        scopes = {}
+        for info in generated:
+            scope = tuple(info["scope"])
+            if scope not in scope_cache:
+                scope_cache[scope] = self.scope_source(info)
+            scopes[id(info)] = scope_cache[scope]
         permutation_ids = set()
         permutation_names = set()
 

@@ -3311,6 +3311,30 @@ async function startGetWorkflow(message, inlineSource = null) {
 }
 
 
+async function ensureIronVeilBuilt() {
+  const existing = await fs.stat(ENGINE_IRONVEIL_CLI).catch(() => null);
+  if (existing && existing.isFile()) return;
+
+  const python = process.env.PYTHON_BIN ||
+    (process.platform === 'win32' ? 'python' : 'python3');
+  const setupScript = path.join(__dirname, 'scripts', 'setup-ironveil.py');
+  const compiler = path.join(__dirname, 'node_modules', 'typescript', 'bin', 'tsc');
+
+  await runCommand(python, [setupScript], __dirname, 120_000);
+  const compilerStat = await fs.stat(compiler).catch(() => null);
+  if (!compilerStat || !compilerStat.isFile()) {
+    throw new Error('IronVeil build dependency is missing: TypeScript. Run npm install and restart the bot.');
+  }
+  await runCommand(process.execPath, [
+    compiler, '-p', path.join(ENGINE_IRONVEIL_DIR, 'tsconfig.json'),
+  ], ENGINE_IRONVEIL_DIR, 120_000);
+
+  const built = await fs.stat(ENGINE_IRONVEIL_CLI).catch(() => null);
+  if (!built || !built.isFile()) {
+    throw new Error('IronVeil build completed without creating dist/cli.js.');
+  }
+}
+
 async function handleObfuscatorCommand(interaction) {
   const engine = interaction.options.getString('obfuscator');
   const attachment = interaction.options.getAttachment('file');
@@ -3326,6 +3350,7 @@ async function handleObfuscatorCommand(interaction) {
   await interaction.deferReply({ ephemeral: true });
   let workDir = null;
   try {
+    await ensureIronVeilBuilt();
     const originalName = path.basename(String(attachment.name || 'script.lua').replace(/\\/g, '/'));
     const extension = path.extname(originalName).toLowerCase();
     if (!['.lua', '.luau', '.txt'].includes(extension)) {
@@ -3343,10 +3368,6 @@ async function handleObfuscatorCommand(interaction) {
     const inputBuffer = await readResponse(response, MAX_INPUT_BYTES);
     const source = decodeSource(inputBuffer);
 
-    const cliStat = await fs.stat(ENGINE_IRONVEIL_CLI).catch(() => null);
-    if (!cliStat || !cliStat.isFile()) {
-      throw new Error('IronVeil is not built. Restart the bot so scripts/setup-engines.js can prepare it.');
-    }
     workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dailydeobf-ironveil-'));
     const inputPath = path.join(workDir, 'input.lua');
     const outputPath = path.join(workDir, 'output.lua');

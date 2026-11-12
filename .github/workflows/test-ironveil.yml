@@ -26,6 +26,8 @@ jobs:
           node-version: 20
       - run: npm install --ignore-scripts --no-audit --no-fund
       - run: node scripts/setup-engines.js
+      - name: Test automatic syntax repair
+        run: node scripts/test-ironveil-auto-repair.js
       - name: Smoke test CLI
         run: |
           cat > /tmp/ironveil-input.lua <<'LUA'

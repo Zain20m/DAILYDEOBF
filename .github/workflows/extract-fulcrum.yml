@@ -1,0 +1,69 @@
+name: Extract Fulcrum archive for inspection
+
+on:
+  push:
+    paths:
+      - ".github/workflows/extract-fulcrum.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Safely extract archive
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path, PurePosixPath
+          from zipfile import ZipFile
+          import shutil
+
+          archive = Path("upload/fulcrum-deobf.zip")
+          destination = Path("upload/fulcrum-source")
+          if not archive.is_file():
+              raise SystemExit("Fulcrum archive is missing")
+
+          if destination.exists():
+              shutil.rmtree(destination)
+          destination.mkdir(parents=True)
+
+          with ZipFile(archive) as bundle:
+              members = bundle.infolist()
+              if len(members) > 5000:
+                  raise SystemExit("Archive contains too many entries")
+              total = 0
+              for member in members:
+                  name = member.filename.replace("\\", "/")
+                  pure = PurePosixPath(name)
+                  if pure.is_absolute() or ".." in pure.parts:
+                      raise SystemExit(f"Unsafe archive path: {name}")
+                  if not name or name.endswith("/") or "__MACOSX" in pure.parts:
+                      continue
+                  if pure.parts and pure.parts[0].lower() in {".git", "__pycache__"}:
+                      continue
+                  total += member.file_size
+                  if member.file_size > 20 * 1024 * 1024 or total > 100 * 1024 * 1024:
+                      raise SystemExit("Archive exceeds inspection size limits")
+                  relative = Path(*pure.parts[1:]) if pure.parts[0].lower() == "fulcrum-deobf" and len(pure.parts) > 1 else Path(*pure.parts)
+                  target = destination / relative
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  with bundle.open(member) as source, target.open("wb") as output:
+                      shutil.copyfileobj(source, output)
+
+          files = [p for p in destination.rglob("*") if p.is_file()]
+          print(f"Extracted {len(files)} files ({sum(p.stat().st_size for p in files)} bytes)")
+          for path in sorted(files):
+              print(f"{path}: {path.stat().st_size} bytes")
+          PY
+
+      - name: Commit extracted source for review
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: extract Fulcrum source for review"
+          file_pattern: "upload/fulcrum-source/**"

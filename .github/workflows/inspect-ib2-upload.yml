@@ -25,7 +25,7 @@ jobs:
                   f.write("\\n===== TEXT SOURCES =====\\n")
                   for item in rows:
                       name = item.filename.lower()
-                      if item.is_dir() or not name.endswith((".md", ".txt", ".cs", ".csproj", ".sln", ".json", ".yml", ".yaml", ".py", ".xml")):
+                      if item.is_dir() or not name.endswith((".md", ".txt", ".cs", ".csproj", ".sln", ".json", ".yml", ".yaml", ".py", ".xml", ".js")):
                           continue
                       if item.file_size > 120000 or total + item.file_size > 600000:
                           f.write(f"\\n[SKIPPED SIZE LIMIT] {item.filename} ({item.file_size} bytes)\\n")

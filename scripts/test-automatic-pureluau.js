@@ -10,7 +10,7 @@ test('creates a readable Luau attachment and a rename report', () => {
     '  local flag2 = arg and true or false',
     '  return flag2',
     'end',
-  ].join('\\n');
+  ].join('\n');
 
   const result = createAutomaticPureLuauResult(source, 'IronBrew1_devirtualized.lua');
   assert.equal(result.status, 'complete');
@@ -23,7 +23,7 @@ test('creates a readable Luau attachment and a rename report', () => {
 
 test('skips empty input and binary-looking source', () => {
   assert.equal(createAutomaticPureLuauResult('   ').status, 'skipped');
-  assert.equal(createAutomaticPureLuauResult('local x = 1\\0local y = 2').status, 'skipped');
+  assert.equal(createAutomaticPureLuauResult('local x = 1\0local y = 2').status, 'skipped');
 });
 
 test('skips inputs above the configured complete-processing limit without truncating', () => {

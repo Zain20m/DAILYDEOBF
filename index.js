@@ -47,22 +47,39 @@ const ENGINE_CENT_DIR = path.join(__dirname, 'centurion-engine');
 const ENGINE_CENT_CLI = path.join(ENGINE_CENT_DIR, 'centurion.py');
 const ENGINE_IB2_DIR = path.join(__dirname, 'ib2deobf');
 const ENGINE_IB2_DLL = path.join(ENGINE_IB2_DIR, 'LuaAnalysis.Ironbrew2.dll');
+const ENGINE_IRONVEIL_DIR = path.join(__dirname, 'ironveil-engine');
+const ENGINE_IRONVEIL_CLI = path.join(ENGINE_IRONVEIL_DIR, 'dist', 'cli.js');
 const activeUsers = new Set();
 const commandGuildId = process.env.GUILD_ID || '';
 
-const slashCommands = ['purelua'].map((name) => new SlashCommandBuilder()
-  .setName(name)
-  .setDescription('Convert Lua/Luau source with the static PureLuau readability pass')
-  .addAttachmentOption((option) => option
-    .setName('file')
-    .setDescription('Upload a .lua, .luau, .pureluau or .txt source file')
-    .setRequired(false))
-  .addStringOption((option) => option
-    .setName('source')
-    .setDescription('Paste Lua/Luau source text (up to 6000 characters)')
-    .setMaxLength(6000)
-    .setRequired(false))
-  .toJSON());
+const slashCommands = [
+  new SlashCommandBuilder()
+    .setName('purelua')
+    .setDescription('Convert Lua/Luau source with the static PureLuau readability pass')
+    .addAttachmentOption((option) => option
+      .setName('file')
+      .setDescription('Upload a .lua, .luau, .pureluau or .txt source file')
+      .setRequired(false))
+    .addStringOption((option) => option
+      .setName('source')
+      .setDescription('Paste Lua/Luau source text (up to 6000 characters)')
+      .setMaxLength(6000)
+      .setRequired(false))
+    .toJSON(),
+  new SlashCommandBuilder()
+    .setName('obf')
+    .setDescription('Obfuscate a Lua source file')
+    .addStringOption((option) => option
+      .setName('obfuscator')
+      .setDescription('Choose an obfuscator')
+      .setRequired(true)
+      .addChoices({ name: 'IronVeil', value: 'ironveil' }))
+    .addAttachmentOption((option) => option
+      .setName('file')
+      .setDescription('Upload the source file to obfuscate')
+      .setRequired(true))
+    .toJSON(),
+];
 
 if (!TOKEN) {
   console.error('Missing DISCORD_TOKEN environment variable.');
@@ -3294,6 +3311,78 @@ async function startGetWorkflow(message, inlineSource = null) {
 }
 
 
+async function handleObfuscatorCommand(interaction) {
+  const engine = interaction.options.getString('obfuscator');
+  const attachment = interaction.options.getAttachment('file');
+  if (engine !== 'ironveil') {
+    await interaction.reply({ content: 'That obfuscator is not available.', ephemeral: true });
+    return;
+  }
+  if (!attachment) {
+    await interaction.reply({ content: 'Upload a .lua, .luau or .txt file.', ephemeral: true });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  let workDir = null;
+  try {
+    const originalName = path.basename(String(attachment.name || 'script.lua').replace(/\\/g, '/'));
+    const extension = path.extname(originalName).toLowerCase();
+    if (!['.lua', '.luau', '.txt'].includes(extension)) {
+      throw new Error('IronVeil accepts .lua, .luau and .txt source files.');
+    }
+    if (Number.isFinite(attachment.size) && attachment.size > MAX_INPUT_BYTES) {
+      throw new Error('The uploaded file exceeds the 18 MB input limit.');
+    }
+    const response = await fetch(attachment.url, {
+      redirect: 'error',
+      signal: AbortSignal.timeout(20_000),
+      headers: { 'user-agent': 'DAILY-DEOBF/1.0' },
+    });
+    if (!response.ok) throw new Error('Discord file download returned HTTP ' + response.status + '.');
+    const inputBuffer = await readResponse(response, MAX_INPUT_BYTES);
+    const source = decodeSource(inputBuffer);
+
+    const cliStat = await fs.stat(ENGINE_IRONVEIL_CLI).catch(() => null);
+    if (!cliStat || !cliStat.isFile()) {
+      throw new Error('IronVeil is not built. Restart the bot so scripts/setup-engines.js can prepare it.');
+    }
+    workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dailydeobf-ironveil-'));
+    const inputPath = path.join(workDir, 'input.lua');
+    const outputPath = path.join(workDir, 'output.lua');
+    await fs.writeFile(inputPath, source, { encoding: 'utf8', mode: 0o600 });
+
+    await runCommand(process.execPath, [ENGINE_IRONVEIL_CLI, inputPath, outputPath],
+      ENGINE_IRONVEIL_DIR, 5 * 60_000);
+
+    const outputStat = await fs.stat(outputPath).catch(() => null);
+    if (!outputStat || !outputStat.isFile() || outputStat.size === 0) {
+      throw new Error('IronVeil finished without producing an output file.');
+    }
+    if (outputStat.size > MAX_OUTPUT_BYTES) {
+      throw new Error('The obfuscated output exceeds the 18 MB attachment limit.');
+    }
+
+    const outputBuffer = await fs.readFile(outputPath);
+    const baseName = path.basename(originalName, extension)
+      .replace(/[^A-Za-z0-9._-]/g, '_') || 'script';
+    const outputName = 'ironveil-' + baseName + '.lua';
+    await interaction.editReply({
+      content: 'IronVeil finished. Your original upload was not modified. This engine targets Lua 5.3-compatible syntax; Luau-only syntax and type annotations may be rejected.',
+      files: [new AttachmentBuilder(outputBuffer, { name: outputName })],
+    });
+  } catch (error) {
+    console.error('IronVeil obfuscation failed:', error);
+    await interaction.editReply(
+      'IronVeil could not process that file: ' +
+      String(error && error.message || error).slice(0, 700) +
+      '. Your original file was left unchanged.'
+    ).catch(() => {});
+  } finally {
+    if (workDir) await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 async function handlePureLuauCommand(interaction) {
   const attachment = interaction.options.getAttachment('file');
   const pastedSource = interaction.options.getString('source');
@@ -4345,7 +4434,7 @@ client.once(Events.ClientReady, async (readyClient) => {
       ? Routes.applicationGuildCommands(readyClient.user.id, commandGuildId)
       : Routes.applicationCommands(readyClient.user.id);
     await rest.put(route, { body: slashCommands });
-    console.log('Registered /purelua slash command.');
+    console.log('Registered /purelua and /obf slash commands.');
   } catch (error) {
     console.error('Slash-command registration failed:', error.message);
   }
@@ -4355,6 +4444,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
   if (interaction.commandName === 'purelua') {
     await handlePureLuauCommand(interaction);
+    return;
+  }
+  if (interaction.commandName === 'obf') {
+    if (activeUsers.has(interaction.user.id)) {
+      await interaction.reply({ content: 'You already have an active job. Finish it or wait for it to expire.', ephemeral: true });
+      return;
+    }
+    activeUsers.add(interaction.user.id);
+    try {
+      await handleObfuscatorCommand(interaction);
+    } finally {
+      activeUsers.delete(interaction.user.id);
+    }
   }
 });
 

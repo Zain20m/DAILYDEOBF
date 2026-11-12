@@ -3693,17 +3693,17 @@ async function startWorkflow(message, inlineText = null) {
   ];
   const codeMark = String.fromCharCode(96);
   let sourcePreview = String(input.source || '')
-    .replace(/\\r\\n?/g, '\\n')
-    .split('\\n')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
     .slice(0, 5)
-    .join('\\n');
-  sourcePreview = sourcePreview.replace(/\\x60\\x60\\x60/g, "'''");
+    .join('\n');
+  sourcePreview = sourcePreview.replace(/\x60\x60\x60/g, "'''");
   if (sourcePreview.length > 900) sourcePreview = sourcePreview.slice(0, 897) + '...';
   if (!sourcePreview.trim()) sourcePreview = '-- No readable preview available';
 
   const pickerDescription = [
     input.downloadError
-      ? '⚠️ **Original URL download error**\\n' + input.downloadError.slice(0, 900)
+      ? '⚠️ **Original URL download error**\n' + input.downloadError.slice(0, 900)
       : null,
     input.pendingUrlFailure
       ? 'The original URL could not be downloaded automatically. Choose an engine, then attach the Lua/Luau file or paste its source.'
@@ -3717,17 +3717,17 @@ async function startWorkflow(message, inlineText = null) {
         : 'The input is ready for engine selection.'),
     input.source ? '' : null,
     input.source ? '**Preview (first 5 lines):**' : null,
-    input.source ? codeMark.repeat(3) + 'lua\\n' + sourcePreview + '\\n' + codeMark.repeat(3) : null,
+    input.source ? codeMark.repeat(3) + 'lua\n' + sourcePreview + '\n' + codeMark.repeat(3) : null,
     targetResolution && targetResolution.error
       ? '**Scan note:** ' + targetResolution.error.slice(0, 300)
       : null,
     targetResolution && targetResolution.captureDetails && targetResolution.captureDetails.length
-      ? '**Fetched files:**\\n' + targetResolution.captureDetails.slice(0, 4).map((item) =>
+      ? '**Fetched files:**\n' + targetResolution.captureDetails.slice(0, 4).map((item) =>
           '• ' + String(item.name || 'unnamed').slice(0, 65) + ' · ' + formatBytes(item.bytes) +
           (item.excluded ? ' · ' + item.excluded : '')
-        ).join('\\n')
+        ).join('\n')
       : null,
-  ].filter(Boolean).join('\\n');
+  ].filter(Boolean).join('\n');
 
   const pickerEmbed = dailyEmbed('Choose a deobfuscator', pickerDescription, input.downloadError
     ? DAILY_COLORS.warning

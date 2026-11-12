@@ -1763,20 +1763,21 @@ async function processLuraphV15(message, prompt, input, displayLabel = 'Luraph v
 }
 
 async function processLuraph14x(message, prompt, input, version) {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-luraph14x-'));
+  const versionTag = version.replace('.', '');
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-luraph' + versionTag + '-'));
   const inputPath = path.join(tempRoot, 'input.lua');
-  const outputPath = path.join(tempRoot, 'Luraph14x_deobfuscated.luau');
-  const reportPath = path.join(tempRoot, 'Luraph14x_report.txt');
+  const outputPath = path.join(tempRoot, 'Luraph' + versionTag + '_deobfuscated.luau');
+  const reportPath = path.join(tempRoot, 'Luraph' + versionTag + '_report.txt');
   const progress = createAnalysisProgress(
-    prompt, input.filename, Buffer.byteLength(input.source, 'utf8'), 'Luraph v14.' + version + ''
+    prompt, input.filename, Buffer.byteLength(input.source, 'utf8'), 'Luraph v' + version
   );
 
   try {
     await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
     await progress.start();
     await progress.setPhase(
-      'Loading the dedicated Luraph v14.' + version + ' engine',
-      'Using the separate v14.' + version + ' VM mapper, runtime harness and devirtualizer.'
+      'Loading the dedicated Luraph v' + version + ' engine',
+      'Using the separate v' + version + ' VM mapper, runtime harness and devirtualizer.'
     );
 
     const result = await runPythonEngine(
@@ -1808,18 +1809,18 @@ async function processLuraph14x(message, prompt, input, version) {
     const stat = await fs.stat(outputPath).catch(() => null);
     if (!stat || !stat.isFile() || !stat.size) {
       throw new Error(
-        'Luraph v14.' + version + ' finished without producing a deobfuscated file.' +
+        'Luraph v' + version + ' finished without producing a deobfuscated file.' +
         '\n' + String(result.stderr || result.stdout || '').slice(-1400)
       );
     }
     if (stat.size > MAX_OUTPUT_BYTES) {
-      throw new Error('Luraph v14.' + version + ' output exceeds the 18 MB Discord attachment limit.');
+      throw new Error('Luraph v' + version + ' output exceeds the 18 MB Discord attachment limit.');
     }
 
     await prependDailyDeobfHeader(outputPath);
     const diagnostic = String(result.stderr || result.stdout || '').slice(-10000);
     const report = [
-      'DAILY DEOBF · Luraph v14.' + version + '',
+      'DAILY DEOBF · Luraph v' + version,
       'Input: ' + input.filename,
       'Result: dedicated v14.7 VM devirtualization',
       'Output bytes: ' + stat.size,
@@ -1832,17 +1833,17 @@ async function processLuraph14x(message, prompt, input, version) {
     await fs.writeFile(reportPath, report, 'utf8');
 
     await message.reply({
-      content: '✅ **DAILY DEOBF · Luraph v14.' + version + '**\nDedicated v14.' + version + ' engine finished.\nOutput size: ' +
-        formatBytes(stat.size) + '\nAttached: Luraph14x_deobfuscated.luau and engine report.',
+      content: '✅ **DAILY DEOBF · Luraph v' + version + '**\nDedicated v' + version + ' engine finished.\nOutput size: ' +
+        formatBytes(stat.size) + '\nAttached: Luraph' + versionTag + '_deobfuscated.luau and engine report.',
       files: [
-        new AttachmentBuilder(outputPath, { name: 'Luraph14x_deobfuscated.luau' }),
-        new AttachmentBuilder(reportPath, { name: 'Luraph14x_report.txt' }),
+        new AttachmentBuilder(outputPath, { name: 'Luraph' + versionTag + '_deobfuscated.luau' }),
+        new AttachmentBuilder(reportPath, { name: 'Luraph' + versionTag + '_report.txt' }),
       ],
       allowedMentions: { repliedUser: false },
     });
-    await progress.complete('The Luraph v14.' + version + ' reconstruction and engine report were attached.');
+    await progress.complete('The Luraph v' + version + ' reconstruction and engine report were attached.');
     await prompt.edit({
-      content: '✅ Luraph v14.' + version + ' analysis finished. The reconstructed Luau file is attached above.',
+      content: '✅ Luraph v' + version + ' analysis finished. The reconstructed Luau file is attached above.',
       components: [],
     }).catch(() => {});
   } catch (error) {

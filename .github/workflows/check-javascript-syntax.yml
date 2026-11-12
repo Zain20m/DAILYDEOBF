@@ -5,6 +5,8 @@ on:
     paths:
       - 'index.js'
       - 'pureluau.js'
+      - 'scripts/automatic-pureluau.js'
+      - 'scripts/test-automatic-pureluau.js'
       - 'luraph-v15.1-engine/src/parallel.js'
       - '.github/workflows/check-javascript-syntax.yml'
   pull_request:
@@ -23,4 +25,6 @@ jobs:
       - run: |
           node --check index.js
           node --check pureluau.js
+          node --check scripts/automatic-pureluau.js
+          node --check scripts/test-automatic-pureluau.js
           node --check luraph-v15.1-engine/src/parallel.js

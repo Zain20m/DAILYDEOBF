@@ -2545,24 +2545,14 @@ async function fetchJnkIeLoaderSource(rawUrl, credentialText = '', existingStage
     return {
       source: stage1,
       complete: false,
-      reason: 'SCRIPT_KEY was not present in the supplied paste. Returned the stage-one loader only.',
+      reason: 'Missing SCRIPT_KEY. Returned the stage-one loader only.',
       finalUrl: loaderUrl.toString(),
     };
   }
 
-  const hwidMatch = String(credentialText || '').match(
-    /(?:getgenv\(\)\s*\.\s*)?(?:HWID|hwid)\s*=\s*["']([^"']+)["']/i
-  );
-  const hwid = String(suppliedHwid || (hwidMatch && hwidMatch[1]) || process.env.JNKIE_HWID || '').trim();
-  if (!hwid) {
-    return {
-      source: stage1,
-      complete: false,
-      requiresHwid: true,
-      reason: 'JNKIE requires the account/device HWID for delivery. Supply it privately, then retry.',
-      finalUrl: loaderUrl.toString(),
-    };
-  }
+  // The toolkit treats HWID as optional input. It does not fabricate one or
+  // stop before delivery when none is supplied.
+  const hwid = String(suppliedHwid || process.env.JNKIE_HWID || '').trim();
   const deliveryUrl = new URL('/api/v1/luascripts/delivery/' + hash, loaderUrl.origin);
   deliveryUrl.searchParams.set('v', '2');
   deliveryUrl.searchParams.set('errors', 'text');
@@ -2603,6 +2593,17 @@ async function fetchJnkIeLoaderSource(rawUrl, credentialText = '', existingStage
       source: stage1,
       complete: false,
       reason: responseText.slice(0, 400),
+      deliveryError: responseText.slice(0, 400),
+      finalUrl: loaderUrl.toString(),
+    };
+  }
+
+  if ([400, 401, 403].includes(response.status)) {
+    return {
+      source: stage1,
+      complete: false,
+      reason: 'JNKIE delivery HTTP ' + response.status + (responseText ? ': ' + responseText.slice(0, 300) : ''),
+      deliveryError: responseText || ('HTTP ' + response.status),
       finalUrl: loaderUrl.toString(),
     };
   }
@@ -2639,6 +2640,7 @@ async function fetchJnkIeLoaderSource(rawUrl, credentialText = '', existingStage
       source: stage1,
       complete: false,
       reason: 'JNKIE delivery returned HTTP ' + response.status + (responseText ? ': ' + responseText.slice(0, 250) : ''),
+      deliveryError: responseText || ('HTTP ' + response.status),
       finalUrl: loaderUrl.toString(),
     };
   }
@@ -2653,12 +2655,12 @@ async function fetchJnkIeLoaderSource(rawUrl, credentialText = '', existingStage
       source: stage1,
       complete: false,
       reason: payload.trim().slice(0, 400),
+      deliveryError: payload.trim().slice(0, 400),
       finalUrl: loaderUrl.toString(),
     };
   }
   return { source: payload, complete: true, reason: '', finalUrl: payloadUrl };
 }
-
 
 function buildScriptFetchedEmbed(attachment, batchIndex, batchCount, totalFiles, totalUrls, failedUrls) {
   const capture = attachment && attachment.capture || {};
@@ -3376,71 +3378,43 @@ async function processJnkIeFetcher(message, prompt, input) {
     ? String(input.source || '')
     : '';
   await prompt.edit({
-    content: '🔄 **JNKIE Fetcher**\nFetching the stage-one loader and checking the required delivery inputs...',
+    content: '🔄 **JNKIE Fetcher**\nFetching stage one, then posting SCRIPT_KEY to the JNKIE delivery endpoint...',
     embeds: [],
     components: [],
   });
 
-  const embeddedHwid = combined.match(
-    /(?:getgenv\(\)\s*\.\s*)?(?:HWID|hwid)\s*=\s*["']([^"']+)["']/i
-  );
-  let suppliedHwid = embeddedHwid && embeddedHwid[1] ? embeddedHwid[1].trim() : '';
-  let result = await fetchJnkIeLoaderSource(rawUrl, combined, existingStage1, suppliedHwid);
-
-  if (result && result.requiresHwid) {
-    let dmChannel;
-    try {
-      dmChannel = await message.author.createDM();
-      await dmChannel.send(
-        'JNKIE needs the HWID required by its normal delivery API. Reply to this message with the HWID. ' +
-        'It will be sent only to the JNKIE delivery endpoint and will not be posted in the server. ' +
-        'This request expires in 2 minutes.'
-      );
-    } catch {
-      throw new Error('JNKIE requires an HWID. I could not DM you; enable server-member DMs and retry so you can provide it privately.');
-    }
-
-    let collected;
-    try {
-      collected = await dmChannel.awaitMessages({
-        filter: (reply) => reply.author.id === message.author.id,
-        max: 1,
-        time: 120000,
-        errors: ['time'],
-      });
-    } catch {
-      throw new Error('Timed out waiting for the JNKIE HWID in DM. No delivery request was sent.');
-    }
-
-    const hwidMessage = collected.first();
-    suppliedHwid = String(hwidMessage && hwidMessage.content || '').trim();
-    if (hwidMessage) await hwidMessage.delete().catch(() => {});
-    if (!suppliedHwid || suppliedHwid.length > 512 || /[\r\n]/.test(suppliedHwid)) {
-      throw new Error('The supplied JNKIE HWID was empty or invalid. Retry with the exact HWID value.');
-    }
-    result = await fetchJnkIeLoaderSource(rawUrl, combined, existingStage1, suppliedHwid);
-  }
+  // Optional equivalent of the toolkit's --hwid argument. No prompt and no
+  // generated/fake value: without it, the normal delivery POST is still made.
+  const result = await fetchJnkIeLoaderSource(rawUrl, combined, existingStage1);
   if (!result) throw new Error('This is not a supported JNKIE public download URL.');
+
   const data = Buffer.from(result.source.endsWith('\n') ? result.source : result.source + '\n', 'utf8');
   if (data.length > MAX_OUTPUT_BYTES) throw new Error('JNKIE output exceeds the 18 MB Discord output limit.');
 
   const complete = Boolean(result.complete);
-  const filename = complete ? 'jnkie_payload.lua' : 'jnkie_stage1_loader.lua';
+  const filename = complete ? 'jnkie_payload.lua' : 'stage1_loader.lua';
+  const files = [new AttachmentBuilder(data, { name: filename })];
+  if (result.deliveryError) {
+    const errorData = Buffer.from(String(result.deliveryError).slice(0, 4000) + '\n', 'utf8');
+    files.push(new AttachmentBuilder(errorData, { name: 'delivery_error.txt' }));
+  }
+
   await message.reply({
     embeds: [dailyEmbed(
-      complete ? 'JNKIE payload fetched' : 'JNKIE stage-one loader fetched',
+      complete ? 'JNKIE payload fetched' : 'JNKIE stage-one loader saved',
       complete
-        ? 'Retrieved ' + formatBytes(data.length) + ' from the JNKIE delivery flow. The payload is attached for inspection; review it before running.'
-        : 'Only the stage-one loader was available. ' + String(result.reason || 'Delivery did not return a payload.') + '\n\nNo HWID was fabricated or bypassed.',
+        ? 'Retrieved ' + formatBytes(data.length) + ' from JNKIE delivery. The payload is attached for inspection; review it before running.'
+        : 'Saved the stage-one loader. ' + String(result.reason || 'Delivery did not return a payload.') +
+          (result.deliveryError ? '\nThe exact delivery response is attached as **delivery_error.txt**.' : ''),
       complete ? DAILY_COLORS.success : DAILY_COLORS.warning
     )],
-    files: [new AttachmentBuilder(data, { name: filename })],
+    files,
     allowedMentions: { repliedUser: false },
   });
   await prompt.edit({
     content: complete
       ? '✅ JNKIE payload attached as **' + filename + '**.'
-      : '⚠️ JNKIE returned stage one only as **' + filename + '**. Check the delivery requirement shown above.',
+      : '⚠️ JNKIE stage one attached as **' + filename + '**. See the delivery response if one was returned.',
     components: [],
   }).catch(() => {});
 }

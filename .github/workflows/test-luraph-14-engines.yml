@@ -60,7 +60,7 @@ jobs:
           ]
           for sample in spin_samples:
               patched = driver149.patch_spin(sample)
-              assert "do;__SPIN.n=__SPIN.n+1;" in patched, sample
+              assert "do\\n__SPIN.n=__SPIN.n+1;" in patched, sample
           print("Luraph v14.9 watchdog covers arbitrary while-true loop bodies.")
           import tempfile
           import os

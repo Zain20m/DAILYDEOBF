@@ -2386,20 +2386,29 @@ E.loadstring = function(src, chunkname)
 		return exprP("loadstring(" .. tok(src) .. ")", "function")
 	end
 	local patched = nil
-	if R.type(src) == "string" and #src >= 4096 then
-		local key = srcKey(src)
-		patched = __CHUNKS and __CHUNKS[key]
-		if not patched and not NEWCHUNKS[key] then
-			NEWCHUNKS[key] = src
-			R.insert(NEWCHUNKS, key)
+	if R.type(src) == "string" then
+		-- Keep the original long-chunk capture behavior, but do not limit the
+		-- spin watchdog to large chunks. Small dynamically loaded helpers can
+		-- contain the VM loop too.
+		if #src >= 4096 then
+			local key = srcKey(src)
+			patched = __CHUNKS and __CHUNKS[key]
+			if not patched and not NEWCHUNKS[key] then
+				NEWCHUNKS[key] = src
+				R.insert(NEWCHUNKS, key)
+			end
 		end
-		-- spin watchdog (see E.__SPIN): a chunk the driver never saw (the run
-		-- that would report it hung) gets its dispatch heads patched here
 		if CFG.spin and not (patched and R.find(patched, "__SPIN.n", 1, true)) then
-			-- Match the loop itself, not a guessed VM dispatch assignment. Luraph
-			-- variants can begin their loop body with branches or helper calls.
-			patched = R.gsub(patched or src, "while%s+true%s+do",
-				"%0\\n__SPIN.n=__SPIN.n+1;if __SPIN.n>=__SPIN.step then __SPIN.f()end;")
+			patched = patched or src
+			-- Cover conditional while loops, numeric/generic for loops and
+			-- repeat-until loops. Lua's non-greedy pattern stops at the first
+			-- loop delimiter even when the condition spans multiple lines.
+			patched = R.gsub(patched, "while%s+.-%s+do",
+				"%0\n__SPIN.n=__SPIN.n+1;if __SPIN.n>=__SPIN.step then __SPIN.f()end;")
+			patched = R.gsub(patched, "for%s+.-%s+do",
+				"%0\n__SPIN.n=__SPIN.n+1;if __SPIN.n>=__SPIN.step then __SPIN.f()end;")
+			patched = R.gsub(patched, "repeat%s+",
+				"%0\n__SPIN.n=__SPIN.n+1;if __SPIN.n>=__SPIN.step then __SPIN.f()end;")
 		end
 	end
 	local f, err = R.loadstring(patched or src, chunkname)

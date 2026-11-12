@@ -1783,29 +1783,7 @@ async function sendAnalysisOutput(message, input, config) {
     });
   }
 
-  // Keep the original large protected input downloadable beside the recovered
-  // result. These are sent separately so the input cannot consume the output
-  // attachment budget and prevent the reconstructed Luau from being delivered.
-  if (Array.isArray(config.extraArtifacts) && config.extraArtifacts.length) {
-    const extraFiles = [];
-    let extraBytes = 0;
-    for (const artifact of config.extraArtifacts) {
-      const artifactPath = path.join(outputDir, artifact.path);
-      const bytes = await fileSize(artifactPath);
-      if (!bytes || bytes > MAX_OUTPUT_BYTES || extraBytes + bytes > MAX_OUTPUT_BYTES) continue;
-      extraFiles.push(new AttachmentBuilder(await fs.readFile(artifactPath), {
-        name: artifact.name || path.basename(artifactPath),
-      }));
-      extraBytes += bytes;
-    }
-    if (extraFiles.length) {
-      await message.reply({
-        content: '📎 Original protected input and reconstruction support files:',
-        files: extraFiles,
-        allowedMentions: { repliedUser: false },
-      });
-    }
-  }
+  // Do not send the protected input or intermediate reconstruction artifacts to the user.
 
   return { hasLiftedSource, hasLiftCandidate, prototypeCount, chunks: chunkFiles.length, validation, pureLuau: pureLuauResult };
 }

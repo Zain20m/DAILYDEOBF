@@ -33,6 +33,8 @@ local function recovered()
             __orphan_upvalue_1 += 1
             __orphan_upvalue_2[__orphan_upvalue_1] = 4
             r12 = 49
+        elseif r12 <= 63 then
+            r12 = 58
         else
             r12 = 62
         end

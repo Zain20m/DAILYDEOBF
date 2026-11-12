@@ -1822,7 +1822,7 @@ async function processLuraph14x(message, prompt, input, version) {
     const report = [
       'DAILY DEOBF · Luraph v' + version,
       'Input: ' + input.filename,
-      'Result: dedicated v14.7 VM devirtualization',
+      'Result: dedicated v' + version + ' VM devirtualization',
       'Output bytes: ' + stat.size,
       '',
       'Engine diagnostics:',

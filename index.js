@@ -642,6 +642,12 @@ function detectEngineSuggestion(source) {
     if (version === '15.1') {
       return { engine: 'luraph-151', label: 'Luraph 15.1', confidence: 'high', reason: 'The source contains an explicit Luraph 15.1 version banner.' };
     }
+    if (version === '14.7') {
+      return { engine: 'luraph-v147', label: 'Luraph 14.7', confidence: 'high', reason: 'The source contains an explicit Luraph v14.7 version banner.' };
+    }
+    if (version === '14.3') {
+      return { engine: 'luraph-v143', label: 'Luraph 14.3 static analysis', confidence: 'high', reason: 'The source contains an explicit Luraph v14.3 version banner. The available archive provides static payload decoding.' };
+    }
   }
 
   if (/\b(?:LPH_ATTRIBUTES|LPH_PRECHECK|LPH_ASSUME|LPH_ENCBUF)\b/.test(text)) {
@@ -4531,12 +4537,12 @@ async function startWorkflow(message, inlineText = null) {
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`deobf-luraph-v147:${message.author.id}`)
-        .setLabel('Luraph 14.7 (VIP)')
-        .setStyle(ButtonStyle.Secondary),
+        .setLabel(engineSuggestion && engineSuggestion.engine === 'luraph-v147' ? 'Recommended: Luraph 14.7' : 'Luraph 14.7 (VIP)')
+        .setStyle(engineSuggestion && engineSuggestion.engine === 'luraph-v147' ? ButtonStyle.Success : ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(`deobf-luraph-v143:${message.author.id}`)
-        .setLabel('Luraph 14.3 (Static)')
-        .setStyle(ButtonStyle.Secondary),
+        .setLabel(engineSuggestion && engineSuggestion.engine === 'luraph-v143' ? 'Recommended: Luraph 14.3' : 'Luraph 14.3 (Static)')
+        .setStyle(engineSuggestion && engineSuggestion.engine === 'luraph-v143' ? ButtonStyle.Success : ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(`deobf-cancel:${message.author.id}`)
         .setLabel('Cancel')

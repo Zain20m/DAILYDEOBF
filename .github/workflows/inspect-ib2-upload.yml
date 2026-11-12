@@ -40,7 +40,7 @@ jobs:
                       f.write(text)
                       f.write("\\n")
                       total += len(data)
-          print(out.read_text(encoding="utf-8")[:12000])
+          print(out.read_text(encoding="utf-8")[-30000:])
           PY
       - uses: actions/upload-artifact@v4
         with:

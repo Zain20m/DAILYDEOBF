@@ -18,6 +18,7 @@ const path = require('node:path');
 const zlib = require('node:zlib');
 const { inspectLiftText } = require('./scripts/lift-validation');
 const { convertToPureLuau } = require('./pureluau');
+const { createAutomaticPureLuauResult } = require('./scripts/automatic-pureluau');
 const { detectFlowAuthLuraphVersion } = require('./scripts/flowauth-version');
 const { detectIronBrewSuggestion } = require('./scripts/ironbrew-detection');
 const { repairIronVeilSource } = require('./scripts/ironveil-auto-repair');
@@ -755,6 +756,7 @@ async function sendOriginalLua(message, prompt, input, reason) {
     files: [new AttachmentBuilder(data, { name: outputName })],
     allowedMentions: { repliedUser: false },
   });
+  await sendAutomaticPureLuau(message, source, outputName, 'the .deobf plain-source return path');
   await prompt.edit({
     content: '✅ No supported obfuscation signature was detected. Returned the original source unchanged as **' + outputName + '**.',
     components: [],
@@ -910,6 +912,43 @@ async function prependDailyDeobfHeader(filePath) {
   const source = (await fs.readFile(filePath, 'utf8')).replace(/^\uFEFF/, '');
   if (source.split(/\r?\n/, 1)[0].trim().toLowerCase() === DAILY_DEOBF_HEADER) return;
   await fs.writeFile(filePath, DAILY_DEOBF_HEADER + '\n' + source.replace(/^(?:\r?\n)+/, ''), 'utf8');
+}
+
+async function sendAutomaticPureLuau(message, sourceText, originalName, contextLabel) {
+  let result;
+  try {
+    result = createAutomaticPureLuauResult(sourceText, originalName);
+  } catch (error) {
+    console.error('Automatic PureLuau conversion failed:', error);
+    return {
+      status: 'failed',
+      reason: String(error && error.message || error).slice(0, 300),
+    };
+  }
+
+  if (result.status !== 'complete') return result;
+
+  try {
+    await message.reply({
+      embeds: [dailyEmbed(
+        'PureLuau · Automatic readability pass',
+        'PureLuau ran automatically after ' + String(contextLabel || 'deobfuscation') + '. The raw engine output remains attached separately.\n\nConverted: **' + result.outputName + '**\nIdentifiers renamed: ' + result.identifiersRenamed + '\nFormatter syntax check: ' + (result.formatterSyntaxValidated ? 'passed' : 'not validated') + '\nStructural check: ' + (result.structuralValidationPassed ? 'passed' : 'review required'),
+        DAILY_COLORS.success
+      )],
+      files: [
+        new AttachmentBuilder(result.outputBuffer, { name: result.outputName }),
+        new AttachmentBuilder(result.reportBuffer, { name: result.reportName }),
+      ],
+      allowedMentions: { repliedUser: false },
+    });
+    return { ...result, note: 'PureLuau output attached as ' + result.outputName + '.' };
+  } catch (error) {
+    console.error('Automatic PureLuau upload failed:', error);
+    return {
+      status: 'failed',
+      reason: 'The conversion completed, but Discord could not upload the PureLuau files: ' + String(error && error.message || error).slice(0, 220),
+    };
+  }
 }
 
 function createAnalysisProgress(prompt, filename, inputBytes, label, options = {}) {
@@ -1719,6 +1758,21 @@ async function sendAnalysisOutput(message, input, config) {
     allowedMentions: { repliedUser: false },
   });
 
+  let pureLuauResult = {
+    status: 'skipped',
+    reason: environmentProbeOnly
+      ? 'Only environment-probe output was produced; no recovered source was available.'
+      : 'No Luau source candidate was produced by this engine run.',
+  };
+  if (hasLiftCandidate && !environmentProbeOnly && candidateBytes > 0) {
+    pureLuauResult = await sendAutomaticPureLuau(
+      message,
+      await fs.readFile(candidatePath, 'utf8'),
+      candidateOutputName,
+      config.label + ' VM lift'
+    );
+  }
+
   for (let index = 0; index < candidateParts.length; index++) {
     const part = candidateParts[index];
     await message.reply({
@@ -1753,7 +1807,7 @@ async function sendAnalysisOutput(message, input, config) {
     }
   }
 
-  return { hasLiftedSource, hasLiftCandidate, prototypeCount, chunks: chunkFiles.length, validation };
+  return { hasLiftedSource, hasLiftCandidate, prototypeCount, chunks: chunkFiles.length, validation, pureLuau: pureLuauResult };
 }
 
 
@@ -1841,7 +1895,13 @@ async function processLuraph14x(message, prompt, input, version) {
       ],
       allowedMentions: { repliedUser: false },
     });
-    await progress.complete('The Luraph v' + version + ' reconstruction and engine report were attached.');
+    await sendAutomaticPureLuau(
+      message,
+      await fs.readFile(outputPath, 'utf8'),
+      'Luraph' + versionTag + '_deobfuscated.luau',
+      'Luraph v' + version + ' deobfuscation'
+    );
+    await progress.complete('The Luraph v' + version + ' reconstruction, engine report and automatic PureLuau pass finished.');
     await prompt.edit({
       content: '✅ Luraph v' + version + ' analysis finished. The reconstructed Luau file is attached above.',
       components: [],
@@ -2050,7 +2110,13 @@ async function processIronbrew1(message, prompt, input) {
       files,
       allowedMentions: { repliedUser: false },
     });
-    await progress.complete('IronBrew analysis finished and its result files were attached.');
+    await sendAutomaticPureLuau(
+      message,
+      await fs.readFile(selectedPath, 'utf8'),
+      useLift ? 'IronBrew1_devirtualized.luau' : 'IronBrew1_trace.luau',
+      useLift ? 'the IronBrew 1 VM lift' : 'the IronBrew 1 trace fallback'
+    );
+    await progress.complete('IronBrew analysis and its automatic PureLuau readability pass finished.');
     await prompt.edit({
       content: '✅ IronBrew 1 analysis finished. ' +
         (useLift ? 'The VM lift was attached.' : 'Only the behaviour trace was available.'),
@@ -2117,6 +2183,7 @@ async function processIronbrew2(message, prompt, input) {
     ];
     let resultLabel = 'Bytecode recovered';
     let oracleNote = 'No external service was contacted. Set IRONBREW2_ORACLE_KEY to opt in to the optional Oracle source-decompilation step.';
+    let recoveredSourceText = null;
 
     if (oracleKey) {
       await progress.setPhase(
@@ -2151,7 +2218,8 @@ async function processIronbrew2(message, prompt, input) {
         if (!String(sourceText || '').trim()) {
           throw new Error('Oracle returned an empty decompilation.');
         }
-        const sourceBuffer = Buffer.from(String(sourceText), 'utf8');
+        recoveredSourceText = String(sourceText);
+        const sourceBuffer = Buffer.from(recoveredSourceText, 'utf8');
         if (sourceBuffer.length > MAX_OUTPUT_BYTES) {
           throw new Error('Oracle source output exceeds the 18 MB attachment limit.');
         }
@@ -2183,7 +2251,12 @@ async function processIronbrew2(message, prompt, input) {
       files,
       allowedMentions: { repliedUser: false },
     });
-    await progress.complete('IronBrew 2 analysis finished and its result files were attached.');
+    if (recoveredSourceText) {
+      await sendAutomaticPureLuau(message, recoveredSourceText, 'IronBrew2_deobfuscated.lua', 'IronBrew 2 source conversion');
+    }
+    await progress.complete(recoveredSourceText
+      ? 'IronBrew 2 source conversion and automatic PureLuau readability pass finished.'
+      : 'IronBrew 2 bytecode-only analysis finished; no Luau source was available for PureLuau.');
     await prompt.edit({
       content: '✅ IronBrew 2 analysis finished. ' + resultLabel + '.',
       components: [],
@@ -2295,7 +2368,13 @@ async function processCenturion(message, prompt, input) {
       files: [new AttachmentBuilder(outputPath, { name: outputName })],
       allowedMentions: { repliedUser: false },
     });
-    await progress.complete('The Centurion Luau output was attached.');
+    await sendAutomaticPureLuau(
+      message,
+      await fs.readFile(outputPath, 'utf8'),
+      outputName,
+      'Centurion source extraction'
+    );
+    await progress.complete('The Centurion Luau output and automatic PureLuau readability pass were attached.');
     await prompt.edit({
       content: '✅ Centurion analysis finished. Output: ' + outputName + '.',
       components: [],
@@ -3954,7 +4033,8 @@ async function sendLuaProtectRunnerBody(message, prompt, sourceText, directUrl =
       files: [new AttachmentBuilder(outputPath, { name: 'luaprotect_runner.lua' })],
       allowedMentions: { repliedUser: false },
     });
-    await prompt.edit({ content: '✅ LuaProtect runner body downloaded and attached as **luaprotect_runner.lua**.', components: [] }).catch(() => {});
+    await sendAutomaticPureLuau(message, recovered, 'luaprotect_runner.lua', 'LuaProtect runner fetch');
+    await prompt.edit({ content: '✅ LuaProtect runner body downloaded. The automatic PureLuau pass was also attempted.', components: [] }).catch(() => {});
   } finally {
     await fs.rm(outputPath, { force: true }).catch(() => {});
   }
@@ -4045,10 +4125,16 @@ async function processJnkIeFetcher(message, prompt, input) {
     files,
     allowedMentions: { repliedUser: false },
   });
+  await sendAutomaticPureLuau(
+    message,
+    result.source,
+    filename,
+    complete ? 'JNKIE payload fetch' : 'JNKIE stage-one loader fetch'
+  );
   await prompt.edit({
     content: complete
-      ? '✅ JNKIE payload attached as **' + filename + '**.'
-      : '⚠️ JNKIE stage one attached as **' + filename + '**. See the delivery response if one was returned.',
+      ? '✅ JNKIE payload attached as **' + filename + '**. Automatic PureLuau readability processing was also attempted.'
+      : '⚠️ JNKIE stage one attached as **' + filename + '**. Automatic PureLuau readability processing was also attempted; see the delivery response if one was returned.',
     components: [],
   }).catch(() => {});
 }
@@ -4156,8 +4242,9 @@ async function processVantarmorFetcher(message, prompt, input) {
       files: files.slice(0, 10),
       allowedMentions: { repliedUser: false },
     });
+    await sendAutomaticPureLuau(message, recovered, safeOutputName, 'universal loader fetch');
     await prompt.edit({
-      content: '✅ Loader fetched. HTTP method report and returned response files are attached.',
+      content: '✅ Loader fetched. HTTP method report, returned response files and the automatic PureLuau result are attached.',
       components: [],
     }).catch(() => {});
     return;
@@ -4246,7 +4333,8 @@ async function processVantarmorFetcher(message, prompt, input) {
       files: [new AttachmentBuilder(outputPath, { name: 'vantarmor_recovered.lua' })],
       allowedMentions: { repliedUser: false },
     });
-    await prompt.edit({ content: '✅ Vantarmor returned the Lua source. Attached as **vantarmor_recovered.lua**.', components: [] }).catch(() => {});
+    await sendAutomaticPureLuau(message, recovered, 'vantarmor_recovered.lua', 'Vantarmor source fetch');
+    await prompt.edit({ content: '✅ Vantarmor returned the Lua source. The automatic PureLuau readability pass was also attempted.', components: [] }).catch(() => {});
   } finally {
     clearTimeout(timeout);
     await fs.rm(outputPath, { force: true }).catch(() => {});

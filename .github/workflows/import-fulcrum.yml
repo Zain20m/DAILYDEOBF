@@ -1,0 +1,88 @@
+name: Import Fulcrum deobfuscator source
+
+on:
+  push:
+    paths:
+      - ".github/workflows/import-fulcrum.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Safely extract Fulcrum source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path, PurePosixPath
+          from zipfile import ZipFile
+          import shutil
+
+          archive = Path("upload/fulcrum-deobf.zip")
+          if not archive.is_file():
+              raise SystemExit(f"Missing archive: {archive}")
+          destination = Path("fulcrum-engine")
+          if destination.exists():
+              shutil.rmtree(destination)
+          destination.mkdir(parents=True)
+
+          allowed = {".py", ".lua", ".luau", ".js", ".mjs", ".cjs", ".ts", ".json", ".toml", ".yaml", ".yml", ".md", ".txt", ".sh"}
+          skipped = []
+          extracted = []
+          with ZipFile(archive) as z:
+              bad = z.testzip()
+              if bad:
+                  raise SystemExit(f"ZIP CRC failure: {bad}")
+              for info in z.infolist():
+                  if info.is_dir():
+                      continue
+                  rel = PurePosixPath(info.filename.replace("\\\\", "/"))
+                  if rel.is_absolute() or ".." in rel.parts:
+                      raise SystemExit(f"Unsafe archive path: {info.filename}")
+                  mode = (info.external_attr >> 16) & 0xFFFF
+                  if mode and (mode & 0o170000) == 0o120000:
+                      raise SystemExit(f"Symlink rejected: {info.filename}")
+                  if rel.suffix.lower() not in allowed:
+                      skipped.append(info.filename)
+                      continue
+                  target = destination.joinpath(*rel.parts)
+                  if destination.resolve() not in target.resolve().parents:
+                      raise SystemExit(f"Unsafe target path: {info.filename}")
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_bytes(z.read(info))
+                  extracted.append(str(target))
+          if not extracted:
+              raise SystemExit("No source or documentation files found in Fulcrum archive.")
+          print(f"Extracted {len(extracted)} source/documentation files.")
+          for name in extracted:
+              print(name)
+          print(f"Skipped {len(skipped)} non-source files.")
+          PY
+      - name: Validate extracted Python syntax
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          files = list(Path("fulcrum-engine").rglob("*.py"))
+          for path in files:
+              compile(path.read_text(encoding="utf-8"), str(path), "exec")
+          print(f"Validated {len(files)} Python files.")
+          PY
+      - name: Commit imported source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add fulcrum-engine
+          if git diff --cached --quiet; then
+            echo "No source changes."
+            exit 0
+          fi
+          git commit -m "Import Fulcrum deobfuscator source"
+          git push

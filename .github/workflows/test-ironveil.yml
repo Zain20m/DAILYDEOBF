@@ -1,0 +1,41 @@
+name: Test IronVeil integration
+on:
+  push:
+    paths:
+      - 'scripts/ironveil-support/**'
+      - 'scripts/setup-ironveil.py'
+      - 'scripts/setup-engines.js'
+      - 'package.json'
+      - 'upload/ironveil-main 2.zip'
+      - '.github/workflows/test-ironveil.yml'
+  pull_request:
+    paths:
+      - 'scripts/ironveil-support/**'
+      - 'scripts/setup-ironveil.py'
+      - 'scripts/setup-engines.js'
+      - 'package.json'
+jobs:
+  ironveil:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - run: python3 scripts/setup-ironveil.py
+      - run: node node_modules/typescript/bin/tsc -p ironveil-engine/tsconfig.json
+      - name: Smoke test CLI
+        run: |
+          cat > /tmp/ironveil-input.lua <<'LUA'
+          local value = 7
+          local function add(number)
+            local result = value + number
+            return result
+          end
+          print(add(5))
+          LUA
+          node ironveil-engine/dist/cli.js /tmp/ironveil-input.lua /tmp/ironveil-output.lua
+          test -s /tmp/ironveil-output.lua
+          grep -q 'Obfuscated using ironveil' /tmp/ironveil-output.lua
+          node --check index.js

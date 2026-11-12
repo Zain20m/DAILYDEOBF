@@ -2595,7 +2595,7 @@ async function startGetWorkflow(message, inlineSource = null) {
     input = await collectGetInput(message, prompt);
   }
 
-  const luaProtectStub = extractLuaProtectRunnerUrl(String(input.source || '') + '\\n' + String(input.originalText || ''));
+  const luaProtectStub = extractLuaProtectRunnerUrl(String(input.source || '') + '\n' + String(input.originalText || ''));
   if (luaProtectStub) {
     await sendLuaProtectRunnerBody(message, prompt, input.source || input.originalText || '', luaProtectStub);
     return;
@@ -3140,8 +3140,8 @@ function helpText() {
 
 function extractLuaProtectRunnerUrl(sourceText) {
   const text = String(sourceText || '');
-  const match = text.match(/(?:local\\s+)?_h\\s*,\\s*_n\\s*=\\s*["']([a-f0-9]{16,64})["']\\s*,\\s*\\d+/i)
-    || text.match(/(?:local\\s+)?_h\\s*=\\s*["']([a-f0-9]{16,64})["']/i);
+  const match = text.match(/(?:local\s+)?_h\s*,\s*_n\s*=\s*["']([a-f0-9]{16,64})["']\s*,\s*\d+/i)
+    || text.match(/(?:local\s+)?_h\s*=\s*["']([a-f0-9]{16,64})["']/i);
   if (!match) return null;
   return 'https://exec.luaprotect.dev/api/runner-body/' + match[1];
 }
@@ -3149,21 +3149,21 @@ function extractLuaProtectRunnerUrl(sourceText) {
 async function sendLuaProtectRunnerBody(message, prompt, sourceText, directUrl = null) {
   const detectedUrl = directUrl || extractLuaProtectRunnerUrl(sourceText);
   if (!detectedUrl) throw new Error('No LuaProtect runner hash or runner-body URL was found in the supplied source.');
-  const loaderUrl = new URL(detectedUrl.replace(/[)\\]},.;]+$/g, ''));
+  const loaderUrl = new URL(detectedUrl.replace(/[)\]},.;]+$/g, ''));
   if (loaderUrl.protocol !== 'https:' ||
       loaderUrl.hostname.toLowerCase() !== 'exec.luaprotect.dev' ||
-      !/^\\/api\\/runner-body\\/[A-Za-z0-9_-]+\\/?$/i.test(loaderUrl.pathname)) {
+      !/^\/api\/runner-body\/[A-Za-z0-9_-]+\/?$/i.test(loaderUrl.pathname)) {
     throw new Error('LuaProtect Fetcher accepts LuaProtect runner-body URLs only.');
   }
 
   await prompt.edit({
-    content: '🔄 **LuaProtect Fetcher**\\nExtracted the runner hash. Downloading the matching runner body with Roblox/WinInet...',
+    content: '🔄 **LuaProtect Fetcher**\nExtracted the runner hash. Downloading the matching runner body with Roblox/WinInet...',
     embeds: [],
     components: [],
   });
   const recovered = await fetchLuaProtectLoaderSource(loaderUrl.toString());
   if (recovered === null) throw new Error('This is not a supported LuaProtect runner-body URL.');
-  const data = Buffer.from(recovered.endsWith('\\n') ? recovered : recovered + '\\n', 'utf8');
+  const data = Buffer.from(recovered.endsWith('\n') ? recovered : recovered + '\n', 'utf8');
   if (data.length > MAX_OUTPUT_BYTES) throw new Error('Recovered source exceeds the 18 MB Discord output limit.');
 
   const outputPath = path.join(os.tmpdir(), 'daily-luaprotect-' + message.id + '.lua');
@@ -3185,8 +3185,8 @@ async function sendLuaProtectRunnerBody(message, prompt, sourceText, directUrl =
 }
 
 async function processLuaProtectFetcher(message, prompt, input) {
-  const combined = String(input.originalText || '') + '\\n' + String(input.source || '');
-  const rawUrl = input.url || (combined.match(/https?:\\/\\/[^\\s"'<>]+/i) || [])[0];
+  const combined = String(input.originalText || '') + '\n' + String(input.source || '');
+  const rawUrl = input.url || (combined.match(/https?:\/\/[^\s"'<>]+/i) || [])[0];
   return sendLuaProtectRunnerBody(message, prompt, combined, rawUrl || null);
 }
 

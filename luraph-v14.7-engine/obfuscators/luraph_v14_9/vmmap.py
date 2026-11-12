@@ -6,6 +6,7 @@ Usage: python obfuscators/luraph_v14_9/vmmap.py <protected.luau> [dispatch_index
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -25,6 +26,9 @@ def luau_ast_executable():
         os.path.join(ROOT, "bin", name),
         os.path.join(os.path.dirname(ROOT), "luraph-v15-engine", "bin", name),
     ]
+    path_candidate = shutil.which(name)
+    if path_candidate:
+        candidates.append(path_candidate)
     for candidate in candidates:
         if os.path.isfile(candidate):
             if os.name != "nt" and not os.access(candidate, os.X_OK):

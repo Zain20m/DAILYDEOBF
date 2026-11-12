@@ -1560,6 +1560,10 @@ function inferFallbackSemanticNames(source, tokens, declarations) {
   };
   const isObfuscated = (name) =>
     /^(?:fn\d+|arg\d*|v\d+|n\d+|tbl\d+|table\d+|flag\d*|_[A-Za-z0-9_]+)$/i.test(name);
+  // Avoid renaming ordinary hand-written variables such as a lone "arg".
+  // The broad fallback is enabled only when the file has a clear obfuscation cluster.
+  const obfuscatedNameCount = [...declarations.keys()].filter(isObfuscated).length;
+  if (obfuscatedNameCount < 4) return mappings;
 
   const functionRanges = [];
   for (let index = 0; index < items.length; index++) {
@@ -1598,9 +1602,8 @@ function inferFallbackSemanticNames(source, tokens, declarations) {
     let inferred = null;
 
     if (entry.kind === 'local-function') {
-      const range = functionRanges.find(item => item.start > entry.token.start - 80 && item.start < entry.token.end + 80);
-      const body = range?.body || getFunctionBodyText(source, entry.token, tokens, items,
-        new Map(items.map((item, index) => [item.token.start, index])));
+      const range = functionRanges.find(item => item.start < entry.token.start && item.bodyStart > entry.token.end);
+      const body = range?.body || '';
       if (/Heartbeat\s*:\s*Connect|Heartbeat\s*\.\s*Connect/.test(body)) inferred = 'connectHeartbeatListener';
       else if (/RenderStepped\s*:\s*Connect/.test(body)) inferred = 'connectRenderStepListener';
       else if (/InputBegan\s*:\s*Connect/.test(body)) inferred = 'connectInputListener';

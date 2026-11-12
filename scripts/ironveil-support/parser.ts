@@ -24,9 +24,17 @@ export class Parser {
     } catch (error: any) {
       const line = Number(error && error.line) || 0;
       const column = Number(error && error.column) || 0;
+      const lines = this.source.replace(/^\\uFEFF/, "").split(/\\r?\\n/);
+      const sourceLine = line > 0 && line <= lines.length ? lines[line - 1] : "";
+      const excerpt = sourceLine
+        ? "\\n" + sourceLine.slice(0, 220) +
+          (sourceLine.length > 220 ? " ..." : "") +
+          (column > 0 ? "\\n" + " ".repeat(Math.min(column - 1, 80)) + "^" : "")
+        : "";
       const where = line ? " at line " + line + (column ? ", column " + column : "") : "";
       throw new Error("IronVeil parser rejected the source" + where + ": " +
-        String(error && error.message || error).slice(0, 320));
+        String(error && error.message || error).slice(0, 240) + excerpt +
+        "\\nThis parser currently accepts Lua 5.3 syntax, not the full Luau language.");
     }
     if (!parsed || !Array.isArray(parsed.body)) {
       throw new Error("IronVeil parser returned an invalid program.");

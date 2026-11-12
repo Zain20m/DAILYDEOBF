@@ -25,8 +25,7 @@ jobs:
         with:
           node-version: 20
       - run: npm install --ignore-scripts --no-audit --no-fund
-      - run: python3 scripts/setup-ironveil.py
-      - run: node node_modules/typescript/bin/tsc -p ironveil-engine/tsconfig.json
+      - run: node scripts/setup-engines.js
       - name: Smoke test CLI
         run: |
           cat > /tmp/ironveil-input.lua <<'LUA'
@@ -40,4 +39,5 @@ jobs:
           node ironveil-engine/dist/cli.js /tmp/ironveil-input.lua /tmp/ironveil-output.lua
           test -s /tmp/ironveil-output.lua
           grep -q 'Obfuscated using ironveil' /tmp/ironveil-output.lua
+          node -e "require('luaparse').parse(require('fs').readFileSync('/tmp/ironveil-output.lua', 'utf8'), { luaVersion: '5.3' })"
           node --check index.js

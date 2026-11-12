@@ -1562,8 +1562,12 @@ function inferFallbackSemanticNames(source, tokens, declarations) {
     /^(?:fn\d+|arg\d*|v\d+|n\d+|tbl\d+|table\d+|flag\d*|_[A-Za-z0-9_]+)$/i.test(name);
   // Avoid renaming ordinary hand-written variables such as a lone "arg".
   // The broad fallback is enabled only when the file has a clear obfuscation cluster.
-  const obfuscatedNameCount = [...declarations.keys()].filter(isObfuscated).length;
-  if (obfuscatedNameCount < 4) return mappings;
+  const obfuscatedNames = [...declarations.keys()].filter(isObfuscated);
+  const obfuscatedNameCount = obfuscatedNames.length;
+  const hasGeneratedFunctions = obfuscatedNames.some(name => /^fn\d+$/i.test(name));
+  const hasGeneratedTables = obfuscatedNames.some(name => /^(?:tbl|table)\d+$/i.test(name));
+  const hasGeneratedValues = obfuscatedNames.some(name => /^(?:arg\d*|v\d+|n\d+|flag\d*)$/i.test(name));
+  if (obfuscatedNameCount < 9 || !hasGeneratedFunctions || !hasGeneratedTables || !hasGeneratedValues) return mappings;
 
   const functionRanges = [];
   for (let index = 0; index < items.length; index++) {

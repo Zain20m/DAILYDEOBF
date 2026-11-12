@@ -1,6 +1,8 @@
 name: Inspect UnvielR v3.2 archive
 on:
-  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/inspect-unvielr.yml'
 jobs:
   inspect:
     runs-on: ubuntu-latest

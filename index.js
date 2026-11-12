@@ -601,6 +601,32 @@ function looksLikeViewerPageOrJavaScript(source, contentType = '') {
     htmlish && /\b(?:document|window|script)\b/i.test(text);
 }
 
+function detectEngineSuggestion(source) {
+  const text = String(source || '');
+  const banner = text.match(/(?:This file was protected using|Protected by|Luraph(?:\\s+Obfuscator)?)\\s*[:\\-]?\\s*Luraph?\\s*v?(\\d+(?:\\.\\d+)?)/i) ||
+    text.match(/Luraph(?:\\s+Obfuscator)?\\s+v?(\\d+(?:\\.\\d+)?)/i);
+
+  if (banner) {
+    const version = banner[1];
+    if (version === '15' || version === '15.0') {
+      return { engine: 'luraph-v15', label: 'Luraph v15', confidence: 'high', reason: 'The source contains an explicit Luraph v15 version banner.' };
+    }
+    if (version === '15.1') {
+      return { engine: 'luraph-151', label: 'Luraph 15.1', confidence: 'high', reason: 'The source contains an explicit Luraph 15.1 version banner.' };
+    }
+  }
+
+  if (/\\b(?:LPH_ATTRIBUTES|LPH_PRECHECK|LPH_ASSUME|LPH_ENCBUF)\\b/.test(text)) {
+    return { engine: 'luraph-151', label: 'Luraph 15.1', confidence: 'medium', reason: 'The source contains Luraph 15.1 macro markers.' };
+  }
+
+  if (/\\bThis file was protected using Luraph\\b|\\bLuraph Obfuscator\\b/i.test(text)) {
+    return { engine: null, label: 'Luraph', confidence: 'medium', reason: 'A Luraph marker was found, but the exact version could not be identified.' };
+  }
+
+  return null;
+}
+
 function isClearlyPlainLuau(source) {
   const text = String(source || '').replace(/^\uFEFF/, '').trim();
   if (!text) return false;
@@ -3914,6 +3940,7 @@ async function startWorkflow(message, inlineText = null) {
     return;
   }
 
+  const engineSuggestion = detectEngineSuggestion(input.source);
   const chooseRows = [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -3922,12 +3949,12 @@ async function startWorkflow(message, inlineText = null) {
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(`deobf-luraph-v15:${message.author.id}`)
-        .setLabel('Luraph v15')
-        .setStyle(ButtonStyle.Secondary),
+        .setLabel(engineSuggestion && engineSuggestion.engine === 'luraph-v15' ? 'Recommended: Luraph v15' : 'Luraph v15')
+        .setStyle(engineSuggestion && engineSuggestion.engine === 'luraph-v15' ? ButtonStyle.Success : ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(`deobf-151:${message.author.id}`)
-        .setLabel('Luraph 15.1')
-        .setStyle(ButtonStyle.Secondary),
+        .setLabel(engineSuggestion && engineSuggestion.engine === 'luraph-151' ? 'Recommended: Luraph 15.1' : 'Luraph 15.1')
+        .setStyle(engineSuggestion && engineSuggestion.engine === 'luraph-151' ? ButtonStyle.Success : ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(`deobf-centurion:${message.author.id}`)
         .setLabel('Centurion')
@@ -3973,6 +4000,11 @@ async function startWorkflow(message, inlineText = null) {
     input.pendingUrlFailure
       ? 'The original URL could not be downloaded automatically. Choose an engine, then attach the Lua/Luau file or paste its source.'
       : 'Select a deobfuscator below to analyze the supplied Lua/Luau source.',
+    engineSuggestion
+      ? '**Detector suggestion:** Dvx thinks this file is ' + engineSuggestion.label +
+        (engineSuggestion.engine ? '. Would you like to choose ' + engineSuggestion.label + '?' : ', but could not identify the exact version.') +
+        '\\n' + engineSuggestion.reason + ' This is a suggestion, not an automatic engine selection.'
+      : null,
     '',
     input.pendingUrlFailure ? '**Input ready**' : '**Payload scan complete**',
     input.selectedTarget

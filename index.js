@@ -3325,7 +3325,7 @@ async function handlePureLuauPrefixCommand(message, pastedSource = null) {
   await handlePureLuauCommand(adapter);
 }
 
-const ROBLOX_ENVIRONMENT_LOGGER = String.raw\`-- DAILYDEOBF Roblox Environment Logger
+const ROBLOX_ENVIRONMENT_LOGGER = String.raw`-- DAILYDEOBF Roblox Environment Logger
 -- Read-only diagnostics for a Roblox experience you own or are authorized to test.
 -- This script prints locally to the Roblox Studio Output window. It makes no network
 -- requests, does not inspect executor globals, and does not collect credentials.

@@ -1690,6 +1690,13 @@ function convertToPureLuau(source) {
       renameMap.set(parameterName, descriptiveName);
     }
   }
+  for (const [parameterName, descriptiveName] of fallbackSemanticRenames) {
+    const entries = declarations.get(parameterName) || [];
+    if (entries.length === 1 && entries[0].kind === 'parameter' &&
+        !renameMap.has(parameterName) && !occupied.has(descriptiveName) && !KEYWORDS.has(descriptiveName)) {
+      renameMap.set(parameterName, descriptiveName);
+    }
+  }
 
   const initialItems = significant(tokens);
   for (let position = 0; position < initialItems.length; position++) {

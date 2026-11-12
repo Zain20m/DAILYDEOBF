@@ -88,6 +88,16 @@ const engines = [
       'obfuscators/luraph_v14_7/devirt.py',
       'obfuscators/luraph_v14_7/vmmap.py',
       'obfuscators/luraph_v14_7/optrace.py',
+      'obfuscators/luraph_v14_8/__init__.py',
+      'obfuscators/luraph_v14_8/driver.py',
+      'obfuscators/luraph_v14_8/devirt.py',
+      'obfuscators/luraph_v14_8/vmmap.py',
+      'obfuscators/luraph_v14_8/optrace.py',
+      'obfuscators/luraph_v14_9/__init__.py',
+      'obfuscators/luraph_v14_9/driver.py',
+      'obfuscators/luraph_v14_9/devirt.py',
+      'obfuscators/luraph_v14_9/vmmap.py',
+      'obfuscators/luraph_v14_9/optrace.py',
       'bin/luau',
       'bin/luau-ast',
     ],
@@ -223,4 +233,4 @@ if (!fs.existsSync(path.join(root, 'ib2deobf', ib2Runtime))) {
   throw new Error('IronBrew 2 is missing its platform runtime: ' + ib2Runtime);
 }
 
-console.log('Validated Luraph v14.7, Luraph v14.3 static analyzer, v15, 15.1, IronBrew 1, IronBrew 2 and Centurion engines.');
+console.log('Validated Luraph v14.7, v14.8, v14.9, v14.3 static analyzer, v15, 15.1, IronBrew 1, IronBrew 2 and Centurion engines.');

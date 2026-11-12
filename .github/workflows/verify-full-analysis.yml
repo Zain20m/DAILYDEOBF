@@ -57,6 +57,7 @@ jobs:
               print(f"PYTHON_SYNTAX_OK: {engine} ({len(files)} source files)")
           PY
           python3 -m unittest discover -s luraph-v15-engine -p 'test_detection.py' -v
+          python3 scripts/test-v15-readable-output.py
           python3 - <<'PY'
           from pathlib import Path
           compat = Path("luraph-v15.1-engine/core/obfuscators/luraph_v14")

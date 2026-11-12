@@ -1645,9 +1645,14 @@ class ProtoLifter:
         if name in S.CONCRETE:
             vals = a.items
             if a.tail is not None or any(is_sym(x) or isinstance(x, (SymList, Multi)) for x in vals):
-                if name.startswith("bit32.") and a.tail is None and all(is_sym(x) or isinstance(x, int) for x in vals):
-                    # a handler for the script's own bit32 call (`x = bit32.bxor(y, K)`
-                    # compiled into a dedicated opcode): the real call
+                if name.startswith("bit32.") and a.tail is None and not any(
+                        isinstance(x, (SymList, Multi)) for x in vals):
+                    # Keep the real builtin call in the lifted IR whenever its
+                    # arguments are scalar values/expressions.  In particular,
+                    # a concrete nil beside a symbolic register must not make
+                    # us discard the whole instruction: emitting Const(nil)
+                    # preserves Luau's actual runtime behavior instead of
+                    # inventing a numeric value or aborting the entire proto.
                     t = self.new_temp()
                     self.emit(CallStmt(t, Global(name), Multi([self.value_of(x) for x in vals])))
                     return Multi([], TempTail(t))

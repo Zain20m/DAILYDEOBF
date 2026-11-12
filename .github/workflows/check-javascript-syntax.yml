@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'index.js'
+      - 'fulcrum-engine/**'
       - 'pureluau.js'
       - 'scripts/automatic-pureluau.js'
       - 'scripts/test-automatic-pureluau.js'
@@ -28,3 +29,8 @@ jobs:
           node --check scripts/automatic-pureluau.js
           node --check scripts/test-automatic-pureluau.js
           node --check luraph-v15.1-engine/src/parallel.js
+
+      - name: Check Fulcrum Python engine
+        run: |
+          python3 -m py_compile fulcrum-engine/*.py
+          python3 fulcrum-engine/fulcrum_deobf.py --help

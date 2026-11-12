@@ -28,6 +28,8 @@ jobs:
       - run: node scripts/setup-engines.js
       - name: Test automatic syntax repair
         run: node scripts/test-ironveil-auto-repair.js
+      - name: Test Luau parser and obfuscation
+        run: node scripts/test-ironveil-luau.js
       - name: Smoke test CLI
         run: |
           cat > /tmp/ironveil-input.lua <<'LUA'

@@ -1544,6 +1544,116 @@ function applySafeSemanticSimplifications(source, tokens) {
   return { simplifiedBooleanChains, simplifiedBit32Expressions };
 }
 
+function inferFallbackSemanticNames(source, tokens, declarations) {
+  const items = significant(tokens);
+  const mappings = new Map();
+  const occupied = new Set(declarations.keys());
+  const usedTargets = new Set();
+  const uniqueName = (base) => {
+    let candidate = base;
+    let suffix = 2;
+    while (occupied.has(candidate) || usedTargets.has(candidate) || KEYWORDS.has(candidate)) {
+      candidate = base + suffix++;
+    }
+    usedTargets.add(candidate);
+    return candidate;
+  };
+  const isObfuscated = (name) =>
+    /^(?:fn\d+|arg\d*|v\d+|n\d+|tbl\d+|table\d+|flag\d*|_[A-Za-z0-9_]+)$/i.test(name);
+
+  const functionRanges = [];
+  for (let index = 0; index < items.length; index++) {
+    if (items[index].token.value !== 'function') continue;
+    let open = index + 1;
+    while (open < items.length && items[open].token.value !== '(') open++;
+    if (!items[open]) continue;
+    let depth = 1;
+    let close = open + 1;
+    for (; close < items.length && depth > 0; close++) {
+      if (items[close].token.value === '(') depth++;
+      else if (items[close].token.value === ')') depth--;
+    }
+    if (depth !== 0) continue;
+    const endIndex = findWhileEnd(tokens, items[index].index);
+    if (endIndex < 0) continue;
+    const params = [];
+    for (let p = open + 1; p < close - 1; p++) {
+      const token = items[p].token;
+      if (token.type === 'identifier' &&
+          (items[p - 1]?.token.value === '(' || items[p - 1]?.token.value === ',')) params.push(token);
+    }
+    functionRanges.push({
+      start: items[index].token.start,
+      bodyStart: items[close - 1].token.end,
+      end: tokens[endIndex].start,
+      nameToken: items[index - 1]?.token.value === 'function' ? null : items[index - 1]?.token,
+      params,
+      body: source.slice(items[close - 1].token.end, tokens[endIndex].start)
+    });
+  }
+
+  for (const [name, entries] of declarations) {
+    if (!isObfuscated(name) || entries.length !== 1) continue;
+    const entry = entries[0];
+    let inferred = null;
+
+    if (entry.kind === 'local-function') {
+      const range = functionRanges.find(item => item.start > entry.token.start - 80 && item.start < entry.token.end + 80);
+      const body = range?.body || getFunctionBodyText(source, entry.token, tokens, items,
+        new Map(items.map((item, index) => [item.token.start, index])));
+      if (/Heartbeat\s*:\s*Connect|Heartbeat\s*\.\s*Connect/.test(body)) inferred = 'connectHeartbeatListener';
+      else if (/RenderStepped\s*:\s*Connect/.test(body)) inferred = 'connectRenderStepListener';
+      else if (/InputBegan\s*:\s*Connect/.test(body)) inferred = 'connectInputListener';
+      else if (/InputEnded\s*:\s*Connect/.test(body)) inferred = 'connectInputEndListener';
+      else if (/CharacterAdded\s*:\s*Connect/.test(body)) inferred = 'connectCharacterAddedListener';
+      else if (/\.Touched\s*:\s*Connect/.test(body)) inferred = 'connectTouchListener';
+      else if (/\bif\b[\s\S]*?\bthen\b[\s\S]*?\b[A-Za-z_]\w*\s*\([^)]*\)[\s\S]*?\belse\b[\s\S]*?\b[A-Za-z_]\w*\s*\(/.test(body)) inferred = 'dispatchTarget';
+      else if (/GetService|WaitForChild|FindFirstChild/.test(body)) inferred = 'resolveInstance';
+      else if (/return\s+/.test(body)) inferred = 'getValue';
+      else inferred = 'handleEvent';
+    } else if (entry.kind === 'local') {
+      const lineStart = source.lastIndexOf('\n', entry.token.start) + 1;
+      const lineEnd = source.indexOf('\n', entry.token.end);
+      const declarationLine = source.slice(lineStart, lineEnd < 0 ? source.length : lineEnd);
+      const tail = source.slice(entry.token.end, Math.min(source.length, entry.token.end + 2600));
+      if (/=\s*\{[\s\S]*?["']v\d+["'][\s\S]*?["']v\d+["']/.test(declarationLine)) inferred = 'supportedVersions';
+      else if (/=\s*\{\s*\}/.test(declarationLine) && /\.Connect\s*\(/.test(tail)) inferred = 'eventConnections';
+      else if (/=\s*\{\s*\}/.test(declarationLine)) inferred = 'stateTable';
+      else if (/=\s*(?:true|false)\b/.test(declarationLine)) inferred = /Enabled|Auto|Toggle/i.test(tail) ? 'isEnabled' : 'isActive';
+      else if (/=\s*\d+(?:\.\d+)?\s*$/.test(declarationLine) && new RegExp('\\b' + name + '\\s*==\\s*\\d+').test(tail)) inferred = 'modeIndex';
+      else if (/=\s*(?:fn\d+|[A-Za-z_]\w*)\s*\(/.test(declarationLine) &&
+               new RegExp('\\b[A-Za-z_]\\w*\\s*\\(\\s*' + name + '\\s*\\)').test(tail)) inferred = 'target';
+      else if (/=\s*(?:fn\d+|[A-Za-z_]\w*)\s*\(/.test(declarationLine)) inferred = 'result';
+      else if (/=\s*\{/.test(declarationLine)) inferred = 'dataTable';
+      else if (/=\s*RunService\b/.test(declarationLine)) inferred = 'runService';
+      else if (/=\s*game\s*:\s*GetService/.test(declarationLine)) inferred = 'service';
+      else if (/=\s*nil\b/.test(declarationLine) && /Connect|connection/i.test(tail)) inferred = 'connection';
+      else if (/=\s*nil\b/.test(declarationLine)) inferred = 'currentValue';
+      else if (/=\s*["']/.test(declarationLine)) inferred = 'textValue';
+      else if (/=\s*(?:Vector[23]|UDim2|Color3|CFrame)\./.test(declarationLine)) inferred = 'positionValue';
+      else inferred = 'localValue';
+    } else if (entry.kind === 'parameter') {
+      const range = functionRanges
+        .filter(item => entry.token.start > item.bodyStart - 300 && entry.token.start < item.end)
+        .sort((a, b) => (a.end - a.start) - (b.end - b.start))[0];
+      const body = range?.body || '';
+      if (/\.UserInputType|\.Position|\.KeyCode/.test(body) && new RegExp('\\b' + name + '\\.').test(body)) inferred = 'input';
+      else if (new RegExp('\\b' + name + '\\s*:\\s*IsA\\s*\\(').test(body)) inferred = 'instance';
+      else if (new RegExp('\\b' + name + '\\s*:\\s*(?:GetDescendants|FindFirstChild|WaitForChild)\\s*\\(').test(body)) inferred = 'character';
+      else if (new RegExp('\\b[A-Za-z_]\\w*\\s*\\[\\s*' + name + '\\s*\\]').test(body)) inferred = 'key';
+      else if (new RegExp('\\b' + name + '\\s*==\\s*localPlayer|\\blocalPlayer\\s*==\\s*' + name).test(body)) inferred = 'player';
+      else if (new RegExp('\\b' + name + '\\s*:\\s*Connect\\s*\\(').test(body)) inferred = 'event';
+      else if (new RegExp('\\b' + name + '\\s*\\[', 'g').test(body)) inferred = 'index';
+      else inferred = 'argument';
+    }
+
+    if (!inferred) continue;
+    mappings.set(name, uniqueName(inferred));
+  }
+
+  return mappings;
+}
+
 function convertToPureLuau(source) {
   if (typeof source !== 'string' || !source.trim()) throw new Error('The source file is empty.');
   const originalLineCount = source.split(/\r\n|\r|\n/).length;
@@ -1561,6 +1671,7 @@ function convertToPureLuau(source) {
   const commonSemanticNames = inferCommonSemanticNames(source, declarations);
   const scopedSemanticRenames = inferScopedSemanticRenames(source, tokens, declarations);
   const readabilitySemanticRenames = inferReadableSemanticRenames(source, tokens, declarations);
+  const fallbackSemanticRenames = inferFallbackSemanticNames(source, tokens, declarations);
   const renameMap = new Map();
   const occupied = new Set(declarations.keys());
 
@@ -1568,7 +1679,7 @@ function convertToPureLuau(source) {
     if (entries.length !== 1) continue;
     const entry = entries[0];
     if (entry.kind === 'loop' || entry.kind === 'parameter') continue;
-    const inferred = parallelNames.get(oldName) || callbackNames.get(oldName) || commonSemanticNames.get(oldName) || inferIdentifierName(source, entry.token, entry.isFunction, tokens, semanticItems, semanticIndexByStart);
+    const inferred = parallelNames.get(oldName) || callbackNames.get(oldName) || commonSemanticNames.get(oldName) || inferIdentifierName(source, entry.token, entry.isFunction, tokens, semanticItems, semanticIndexByStart) || fallbackSemanticRenames.get(oldName);
     if (!inferred || inferred === oldName || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(inferred)) continue;
     if (occupied.has(inferred) || KEYWORDS.has(inferred)) continue;
     renameMap.set(oldName, inferred);

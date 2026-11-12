@@ -16,7 +16,6 @@
     "discord.js": "^14.22.1",
     "fengari": "^0.1.5",
     "luaparse": "^0.3.1",
-    "@johnnymorganz/stylua-bin": "2.6.0",
-    "typescript": "^5.8.3"
+    "@johnnymorganz/stylua-bin": "2.6.0"
   }
 }

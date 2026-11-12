@@ -14,7 +14,7 @@ const EXECUTOR_APIS = new Set([
   'newcclosure', 'hookfunction', 'hookmetamethod', 'gethui', 'gethiddenproperty',
   'sethiddenproperty', 'getnamecallmethod', 'checkcaller', 'getcallingscript',
   'queue_on_teleport', 'setclipboard', 'getclipboard', 'loadstring', 'firesignal',
-  'fireclickdetector', 'isnetworkowner', 'setfarg\d*|v\d+|n\d*|flag', 'getfarg\d*|v\d+|n\d*|flag', 'getgc',
+  'fireclickdetector', 'isnetworkowner', 'setfflag', 'getfflag', 'getgc',
   'getinstances', 'getnilinstances', 'getloadedmodules', 'getfenv', 'setfenv'
 ]);
 
@@ -226,7 +226,7 @@ function inferIdentifierName(source, token, isFunction, tokens, items, itemIndex
         /\bv5\s*=\s*tbl2?\b/.test(tail) && /\bv5\s*=\s*tbl3\b/.test(tail)) {
       return 'selectConfigTable';
     }
-    if (/\barg\d*|v\d+|n\d*|flag\w*\s*=\s*arg\s+and\s+true\s+or\s+false/.test(tail) &&
+    if (/\bflag\w*\s*=\s*arg\s+and\s+true\s+or\s+false/.test(tail) &&
         /toggleBtn\.Text/.test(tail) && /["']ON["']/.test(tail) && /["']OFF["']/.test(tail)) {
       return 'setEnabled';
     }
@@ -1300,7 +1300,7 @@ function inferCommonSemanticNames(source, declarations) {
         /StealRadius\s*=/.test(nearby)) {
       add(name, 'stealRadius');
     } else if (new RegExp('\\b' + escaped + '\\s*=\\s*fn\\d+\\s*\\(').test(nearby) &&
-        /arg\d*|v\d+|n\d*|flag\w*\s*=\s*[^;\n]+==\s*nil/.test(nearby)) {
+        /flag\w*\s*=\s*[^;\n]+==\s*nil/.test(nearby)) {
       add(name, 'savedEnabledState');
     }
   }
@@ -1414,7 +1414,7 @@ function inspectPartialRecovery(source) {
   const runtimeStubMatches = source.match(/error\s*\(\s*["']Luraph runtime function, not devirtualized["']\s*\)/g) || [];
   const symbolicFailureMatches = source.match(/devirt:\s*symbolic value store into proto array/gi) || [];
   const payloadFunctionMatches = source.match(/\bfunction\s+payload_fn_\d+\s*\(/g) || [];
-  const placeholderReferenceMatches = source.match(/\buparg\d*|v\d+|n\d*|flagb/g) || [];
+  const placeholderReferenceMatches = source.match(/\bupv\d+\b/g) || [];
   const nilConditionBranches = source.match(/\bif\s+nil\s+then\b/g) || [];
   const isLuraphPartial = runtimeStubMatches.length > 0 ||
     /Luraph runtime function.*not lifted|devirt:\s*symbolic value store into proto array|\bpayload_fn_\d+\b/i.test(source);
@@ -1474,7 +1474,7 @@ function simplifyBooleanGatingChains(source, tokens, declarations) {
         values[31] !== 'or' || values[32] !== values[7] ||
         values[33] !== 'and' || values[34] !== values[18]) continue;
 
-    const arg\d*|v\d+|n\d*|flag = values[1];
+    const flag = values[1];
     const inverseFlag = values[7];
     const resultFlag = values[12];
     const alternateFlag = values[18];
@@ -1483,13 +1483,13 @@ function simplifyBooleanGatingChains(source, tokens, declarations) {
         items[index + 7].token.type !== 'identifier' ||
         items[index + 12].token.type !== 'identifier' ||
         items[index + 18].token.type !== 'identifier') continue;
-    if (values[10] !== arg\d*|v\d+|n\d*|flag || !isSimpleComparison(items, index + 3) ||
+    if (values[10] !== flag || !isSimpleComparison(items, index + 3) ||
         !isSimpleComparison(items, index + 14) ||
         !isSimpleComparison(items, index + 20)) continue;
     if (items[index + 14].token.value !== items[index + 20].token.value ||
         items[index + 16].token.value !== items[index + 22].token.value) continue;
 
-    if (!isSingleLocalDeclaration(declarations, arg\d*|v\d+|n\d*|flag) ||
+    if (!isSingleLocalDeclaration(declarations, flag) ||
         !isSingleLocalDeclaration(declarations, inverseFlag) ||
         !isSingleLocalDeclaration(declarations, resultFlag) ||
         !isSingleLocalDeclaration(declarations, alternateFlag)) continue;
@@ -1499,7 +1499,7 @@ function simplifyBooleanGatingChains(source, tokens, declarations) {
 
     // Keep both comparisons eager. Only combine the two assignments.
     items[index + 30].token.value =
-      arg\d*|v\d+|n\d*|flag + ' and ' + resultFlag + ' or not ' + arg\d*|v\d+|n\d*|flag + ' and ' + alternateFlag;
+      flag + ' and ' + resultFlag + ' or not ' + flag + ' and ' + alternateFlag;
     for (const position of [6, 7, 8, 9, 10, 23, 24, 25, 26, 27, 31, 32, 33, 34]) {
       items[index + position].token.value = '';
     }
@@ -1559,7 +1559,7 @@ function inferFallbackSemanticNames(source, tokens, declarations) {
     return candidate;
   };
   const isObfuscated = (name) =>
-    /^(?:fn\d+|arg\d*|v\d+|n\d+|tbl\d+|table\d+|arg\d*|v\d+|n\d*|flag\d*|_[A-Za-z0-9_]+)$/i.test(name);
+    /^(?:fn\d+|arg\d*|v\d+|n\d*|tbl\d+|table\d+|flag\d*|_[A-Za-z0-9_]+)$/i.test(name);
   // Avoid renaming ordinary hand-written variables such as a lone "arg".
   // The broad fallback is enabled only when the file has a clear obfuscation cluster.
   const obfuscatedNames = [...new Set(items
@@ -1568,7 +1568,7 @@ function inferFallbackSemanticNames(source, tokens, declarations) {
   const obfuscatedNameCount = obfuscatedNames.length;
   const hasGeneratedFunctions = obfuscatedNames.some(name => /^fn\d+$/i.test(name));
   const hasGeneratedTables = obfuscatedNames.some(name => /^(?:tbl|table)\d+$/i.test(name));
-  const hasGeneratedValues = obfuscatedNames.some(name => /^(?:arg\d*|v\d+|n\d+|arg\d*|v\d+|n\d*|flag\d*)$/i.test(name));
+  const hasGeneratedValues = obfuscatedNames.some(name => /^(?:arg\d*|v\d+|n\d*|flag\d*)$/i.test(name));
   if (obfuscatedNameCount < 9 || !hasGeneratedFunctions || !hasGeneratedTables || !hasGeneratedValues) return mappings;
 
   const functionRanges = [];

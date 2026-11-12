@@ -3335,6 +3335,89 @@ async function ensureIronVeilBuilt() {
   }
 }
 
+async function ensurePrivateObfuscationLogChannel(guild) {
+  if (!guild) return null;
+  await guild.roles.fetch().catch(() => {});
+  const everyone = guild.roles.everyone;
+  const privilegedRoles = guild.roles.cache.filter((role) =>
+    role.permissions.has(PermissionFlagsBits.Administrator) ||
+    role.permissions.has(PermissionFlagsBits.ManageGuild)
+  );
+  const overwrites = [
+    { id: everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+    {
+      id: client.user.id,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.EmbedLinks,
+        PermissionFlagsBits.AttachFiles,
+        PermissionFlagsBits.ReadMessageHistory,
+      ],
+    },
+    {
+      id: guild.ownerId,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+      ],
+    },
+    ...privilegedRoles.map((role) => ({
+      id: role.id,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+      ],
+    })),
+  ];
+  const configuredId = process.env.OBFUSCATION_LOG_CHANNEL_ID;
+  let channel = configuredId
+    ? await guild.channels.fetch(configuredId).catch(() => null)
+    : guild.channels.cache.find((entry) =>
+        entry.type === ChannelType.GuildText && entry.name === 'obfuscation-logs'
+      );
+  if (channel && channel.type !== ChannelType.GuildText) channel = null;
+  if (!channel) {
+    channel = await guild.channels.create({
+      name: 'obfuscation-logs',
+      type: ChannelType.GuildText,
+      topic: 'Private audit log for DAILY DEOBF obfuscation jobs.',
+      permissionOverwrites: overwrites,
+    });
+  } else {
+    await channel.permissionOverwrites.set(overwrites);
+  }
+  return channel;
+}
+
+async function writeObfuscationLog(interaction, details) {
+  if (!interaction.guild) return;
+  try {
+    const channel = await ensurePrivateObfuscationLogChannel(interaction.guild);
+    if (!channel) return;
+    await channel.send({
+      embeds: [dailyEmbed(
+        details.success ? 'Obfuscation completed' : 'Obfuscation failed',
+        [
+          '**User:** ' + interaction.user.tag + ' (' + interaction.user.id + ')',
+          '**Engine:** ' + details.engine,
+          '**File:** ' + String(details.filename || 'unknown').slice(0, 180),
+          '**Result:** ' + (details.success ? 'Success' : 'Failed'),
+          '**Duration:** ' + Math.max(0, Math.round(details.durationMs / 1000)) + 's',
+          details.error ? '**Error:** ' + String(details.error).slice(0, 700) : '',
+          '**Time:** <t:' + Math.floor(Date.now() / 1000) + ':F>',
+        ].filter(Boolean).join('\n'),
+        details.success ? DAILY_COLORS.success : DAILY_COLORS.danger
+      )],
+      allowedMentions: { parse: [] },
+    });
+  } catch (error) {
+    console.error('Could not write private obfuscation log:', error);
+  }
+}
+
 async function handleObfuscatorCommand(interaction) {
   const engine = interaction.options.getString('obfuscator');
   const attachment = interaction.options.getAttachment('file');
@@ -3348,10 +3431,15 @@ async function handleObfuscatorCommand(interaction) {
   }
 
   await interaction.deferReply({ ephemeral: true });
+  const startedAt = Date.now();
+  const originalName = path.basename(String(attachment.name || 'script.lua').replace(/\\/g, '/'));
   let workDir = null;
+  let completed = false;
+  let failure = '';
   try {
+    await interaction.editReply('**[1/5]** Preparing IronVeil engine...');
     await ensureIronVeilBuilt();
-    const originalName = path.basename(String(attachment.name || 'script.lua').replace(/\\/g, '/'));
+
     const extension = path.extname(originalName).toLowerCase();
     if (!['.lua', '.luau', '.txt'].includes(extension)) {
       throw new Error('IronVeil accepts .lua, .luau and .txt source files.');
@@ -3359,6 +3447,8 @@ async function handleObfuscatorCommand(interaction) {
     if (Number.isFinite(attachment.size) && attachment.size > MAX_INPUT_BYTES) {
       throw new Error('The uploaded file exceeds the 18 MB input limit.');
     }
+
+    await interaction.editReply('**[2/5]** Downloading your source file...');
     const response = await fetch(attachment.url, {
       redirect: 'error',
       signal: AbortSignal.timeout(20_000),
@@ -3366,13 +3456,15 @@ async function handleObfuscatorCommand(interaction) {
     });
     if (!response.ok) throw new Error('Discord file download returned HTTP ' + response.status + '.');
     const inputBuffer = await readResponse(response, MAX_INPUT_BYTES);
-    const source = decodeSource(inputBuffer);
 
+    await interaction.editReply('**[3/5]** Reading and validating source (' + formatBytes(inputBuffer.length) + ')...');
+    const source = decodeSource(inputBuffer);
     workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dailydeobf-ironveil-'));
     const inputPath = path.join(workDir, 'input.lua');
     const outputPath = path.join(workDir, 'output.lua');
     await fs.writeFile(inputPath, source, { encoding: 'utf8', mode: 0o600 });
 
+    await interaction.editReply('**[4/5]** Running IronVeil obfuscation. Large files may take a while...');
     await runCommand(process.execPath, [ENGINE_IRONVEIL_CLI, inputPath, outputPath],
       ENGINE_IRONVEIL_DIR, 5 * 60_000);
 
@@ -3388,22 +3480,30 @@ async function handleObfuscatorCommand(interaction) {
     const baseName = path.basename(originalName, extension)
       .replace(/[^A-Za-z0-9._-]/g, '_') || 'script';
     const outputName = 'ironveil-' + baseName + '.lua';
+    await interaction.editReply('**[5/5]** Obfuscation complete. Uploading the result...');
     await interaction.editReply({
-      content: 'IronVeil finished. Your original upload was not modified. This engine targets Lua 5.3-compatible syntax; Luau-only syntax and type annotations may be rejected.',
+      content: 'IronVeil finished. Your original upload was not modified. This engine currently targets Lua 5.3 syntax; some Luau-only syntax and type annotations are not supported.',
       files: [new AttachmentBuilder(outputBuffer, { name: outputName })],
     });
+    completed = true;
   } catch (error) {
+    failure = String(error && error.message || error);
     console.error('IronVeil obfuscation failed:', error);
     await interaction.editReply(
-      'IronVeil could not process that file: ' +
-      String(error && error.message || error).slice(0, 700) +
+      'IronVeil could not process that file: ' + failure.slice(0, 700) +
       '. Your original file was left unchanged.'
     ).catch(() => {});
   } finally {
+    await writeObfuscationLog(interaction, {
+      engine: 'IronVeil',
+      filename: originalName,
+      success: completed,
+      error: failure,
+      durationMs: Date.now() - startedAt,
+    });
     if (workDir) await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
   }
 }
-
 async function handlePureLuauCommand(interaction) {
   const attachment = interaction.options.getAttachment('file');
   const pastedSource = interaction.options.getString('source');

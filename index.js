@@ -2693,8 +2693,21 @@ async function startGetWorkflow(message, inlineSource = null) {
         maxTime: rootOptions.maxTime,
         connectTimeout: rootOptions.connectTimeout,
       });
+      const fetchedSource = decodeSource(fetched.bytes);
+      const nestedLuaProtectUrl = extractLuaProtectRunnerUrl(fetchedSource);
+      if (nestedLuaProtectUrl) {
+        const runnerSource = await fetchLuaProtectLoaderSource(nestedLuaProtectUrl);
+        if (runnerSource !== null) {
+          return {
+            source: runnerSource,
+            finalUrl: nestedLuaProtectUrl,
+            contentType: 'application/lua',
+            status: 200,
+          };
+        }
+      }
       return {
-        source: decodeSource(fetched.bytes),
+        source: fetchedSource,
         finalUrl: fetched.finalUrl || rawUrl,
         contentType: fetched.contentType || 'unknown',
         status: fetched.status || null,

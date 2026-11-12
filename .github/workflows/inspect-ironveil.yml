@@ -1,0 +1,26 @@
+name: Inspect IronVeil archive
+on:
+  push:
+    paths:
+      - 'upload/ironveil-main 2.zip'
+      - '.github/workflows/inspect-ironveil.yml'
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: List archive and preview text sources
+        run: |
+          python - <<'PY'
+          import zipfile
+          p = 'upload/ironveil-main 2.zip'
+          with zipfile.ZipFile(p) as z:
+              for info in z.infolist():
+                  print(f'FILE {info.filename} SIZE {info.file_size} COMPRESSED {info.compress_size}')
+                  if info.file_size <= 12000 and info.filename.lower().endswith(('.md','.txt','.js','.py','.json','.cs','.yml','.yaml','.sh')):
+                      try:
+                          data = z.read(info)
+                          print(data[:6000].decode('utf-8', 'replace'))
+                      except Exception as e:
+                          print('READ_ERROR', repr(e))
+          PY

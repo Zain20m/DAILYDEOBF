@@ -83,7 +83,8 @@ function legacyFunctionNode(
   func: any,
   identifier: any = null,
   isLocal = false,
-  isMethod = false,
+  isMethod: boolean,
+  context: ConversionContext,
 ): any {
   return {
     type: "FunctionDeclaration",
@@ -91,7 +92,7 @@ function legacyFunctionNode(
     isLocal,
     isMethod,
     parameters: functionParameters(func),
-    body: convertLuauBlock(func && func.body, { source: "", nextTemporary: 0 }),
+    body: convertLuauBlock(func && func.body, context),
   };
 }
 
@@ -209,7 +210,7 @@ function convertLuauStatement(node: any, context: ConversionContext): any[] {
       }];
 
     case "LocalFunctionStatement":
-      return [legacyFunctionNode(node.func, typedIdentifier(node.name), true, false)];
+      return [legacyFunctionNode(node.func, typedIdentifier(node.name), true, false, context)];
 
     case "FunctionDeclarationStatement": {
       const target = node.target;
@@ -236,7 +237,7 @@ function convertLuauStatement(node: any, context: ConversionContext): any[] {
           computed: false,
         };
       }
-      return [legacyFunctionNode(node.func, identifier, false, isMethod)];
+      return [legacyFunctionNode(node.func, identifier, false, isMethod, context)];
     }
 
     case "AssignmentStatement":
@@ -443,7 +444,7 @@ function convertLuauExpression(node: any, context: ConversionContext): any {
       };
 
     case "FunctionExpression":
-      return legacyFunctionNode(node.func, null, false, false);
+      return legacyFunctionNode(node.func, null, false, false, context);
 
     case "InterpolatedStringExpression": {
       const parts = (node.parts || []).map((part: any) => {

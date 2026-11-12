@@ -496,11 +496,11 @@ test('renames mixed Luraph-style generated locals, parameters, tables, and helpe
     '    if v3 then fn9(v3) end',
     '  end)',
     'end'
-  ].join('\\n');
+  ].join('\n');
   const result = convertToPureLuau(source);
   assert.match(result.output, /supportedVersions/);
   assert.match(result.output, /modeIndex/);
   assert.match(result.output, /dispatchTarget/);
   assert.match(result.output, /connectHeartbeatListener/);
-  assert.doesNotMatch(result.output, /\\b(?:fn5|fn7|fn8|fn9|fn10|tbl4|arg|v3|n)\\b/);
+  assert.doesNotMatch(result.output, /\b(?:fn5|fn7|fn8|fn9|fn10|tbl4|arg|v3|n)\b/);
 });

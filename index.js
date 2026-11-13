@@ -1442,8 +1442,8 @@ async function startFulcrumWorkflow(message, inlineSource = null) {
           '**2. Run the analysis**',
           'Fulcrum statically analyzes the source it receives. It does not execute the protected program.',
           '',
-          '**Loader key support**',
-          'The URL-and-key input is accepted now. The Polsec API exchange is not connected yet, so a protected loader URL currently analyzes the loader stub, not the server-delivered `response.d`. Do not post real private keys until that API integration is added.',
+          '**Captured Polsec response**',
+          'For an authorized session, attach the JSON response captured from your supported client integration. Fulcrum accepts `d: 200` with a string at `e.d`; error responses are reported without analysis. The bot does not create sessions or emulate the private loader handshake.',
           '',
           '**4. Get your results**',
           'The bot returns the recovered Luau candidate and a Markdown analysis report. Static reconstruction may not preserve every runtime behavior.'
@@ -1454,9 +1454,9 @@ async function startFulcrumWorkflow(message, inlineSource = null) {
     });
     return;
   }
-  if (attachment && !/\.(?:lua|luau|txt)$/i.test(String(attachment.name || ''))) {
+  if (attachment && !/\.(?:lua|luau|txt|json)$/i.test(String(attachment.name || ''))) {
     await message.reply({
-      content: 'Fulcrum accepts .lua, .luau and .txt source files only.',
+      content: 'Fulcrum accepts .lua, .luau, .txt source files or a captured .json response.',
       allowedMentions: { repliedUser: false },
     });
     return;
@@ -1466,7 +1466,7 @@ async function startFulcrumWorkflow(message, inlineSource = null) {
     embeds: [dailyEmbed(
       'Fulcrum · Processing',
       inlineSource
-        ? 'Downloading the supplied loader URL and running static Fulcrum analysis. The protected program is not executed.'
+        ? 'Downloading the supplied static source URL and running static Fulcrum analysis. The protected program is not executed.'
         : 'Running static Fulcrum analysis on the attached Luau source. The protected program is not executed.',
       DAILY_COLORS.primary
     )],
@@ -1489,6 +1489,34 @@ async function startFulcrumWorkflow(message, inlineSource = null) {
       if (!input.source.trim()) throw new Error('The loader URL returned an empty response.');
     } else {
       input = await inputFromAttachment(attachment);
+      if (/\.json$/i.test(String(attachment.name || ''))) {
+        let captured;
+        try {
+          captured = JSON.parse(input.source);
+        } catch {
+          throw new Error('The attached JSON is not valid JSON.');
+        }
+        if (captured === 1003 || String(captured).trim() === '1003') {
+          throw new Error('Polsec session expired (1003). Start a new authorized session and capture a fresh response.');
+        }
+        if (!captured || typeof captured !== 'object' || Array.isArray(captured)) {
+          throw new Error('Expected a Polsec response object.');
+        }
+        if (Number(captured.d) !== 200) {
+          const code = captured.d === undefined ? 'unknown' : String(captured.d);
+          const detail = typeof captured.e === 'string'
+            ? captured.e
+            : (captured.e && typeof captured.e.message === 'string' ? captured.e.message : '');
+          throw new Error('Polsec returned ' + code + (detail ? ': ' + detail : ''));
+        }
+        if (!captured.e || typeof captured.e.d !== 'string' || !captured.e.d.trim()) {
+          throw new Error('Polsec reported success (d=200), but e.d was missing or empty.');
+        }
+        input = {
+          source: captured.e.d,
+          filename: path.basename(String(attachment.name || 'polsec-response.json')).replace(/\.json$/i, '') + '.lua',
+        };
+      }
     }
     workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-fulcrum-'));
     const inputPath = path.join(workDir, 'input.lua');

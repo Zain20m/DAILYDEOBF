@@ -1429,7 +1429,26 @@ async function startFulcrumWorkflow(message) {
   const attachment = message.attachments.first() || null;
   if (!attachment) {
     await message.reply({
-      content: 'Usage: attach one Lua/Luau source file and send .fulcrum.',
+      embeds: [dailyEmbed(
+        'Fulcrum · How to use',
+        [
+          '**1. Get your source file**',
+          'Fulcrum in DAILY DEOBF currently analyzes a Lua/Luau file that you already have permission to access.',
+          '',
+          '**2. Upload it to Discord**',
+          'Attach the `.lua`, `.luau` or `.txt` file to a message.',
+          '',
+          '**3. Run the command**',
+          'Send `.fulcrum` in the same message as the attachment.',
+          '',
+          '**About loader links and script keys**',
+          'This built-in Fulcrum engine is a local static analyzer. It does not accept a protected-loader URL or script key, and it does not call a third-party key-validation API. Do not post private keys in chat.',
+          '',
+          '**4. Get your results**',
+          'The bot returns the recovered Luau candidate and a Markdown analysis report. Static reconstruction may not preserve every runtime behavior.'
+        ].join('\\n'),
+        DAILY_COLORS.primary
+      )],
       allowedMentions: { repliedUser: false },
     });
     return;

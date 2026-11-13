@@ -634,8 +634,10 @@ function detectEngineSuggestion(source) {
   const ironbrewSuggestion = detectIronBrewSuggestion(text);
   if (ironbrewSuggestion) return ironbrewSuggestion;
 
-  const banner = text.match(/(?:This file was protected using|Protected by)\s*[:\-]?\s*Luraph(?:\s+Obfuscator)?\s+v?(\d+(?:\.\d+)?)/i) ||
-    text.match(/\bLuraph(?:\s+Obfuscator)?\s+v?(\d+(?:\.\d+)?)/i);
+  const normalizedText = text.replace(/^\uFEFF/, '');
+  const banner = normalizedText.match(/This\s+file\s+was\s+protected\s+(?:by|using)\s+Luraph(?:\s+Obfuscator)?\s*(?:version\s*)?v?\s*(\d+(?:\.\d+)?)/i) ||
+    normalizedText.match(/(?:Protected\s+by|Protected\s+using)\s*[:\-]?\s*Luraph(?:\s+Obfuscator)?\s*(?:version\s*)?v?\s*(\d+(?:\.\d+)?)/i) ||
+    normalizedText.match(/\bLuraph(?:\s+Obfuscator)?\s*(?:version\s*)?v?\s*(\d+(?:\.\d+)?)/i);
 
   if (banner) {
     const version = banner[1];
@@ -4710,6 +4712,7 @@ async function startWorkflow(message, inlineText = null) {
   }
 
   const engineSuggestion = detectEngineSuggestion(input.source);
+  const isLuraphSuggestion = Boolean(engineSuggestion && /^luraph/i.test(engineSuggestion.label));
   const chooseRows = [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -4717,19 +4720,13 @@ async function startWorkflow(message, inlineText = null) {
         .setLabel('FlowAuth')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
-        .setCustomId(`deobf-luraph-v15:${message.author.id}`)
-        .setLabel(engineSuggestion && engineSuggestion.engine === 'luraph-v15' ? 'Recommended: Luraph v15' : 'Luraph v15')
-        .setStyle(engineSuggestion && engineSuggestion.engine === 'luraph-v15' ? ButtonStyle.Success : ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`deobf-151:${message.author.id}`)
-        .setLabel(engineSuggestion && engineSuggestion.engine === 'luraph-151' ? 'Recommended: Luraph 15.1' : 'Luraph 15.1')
-        .setStyle(engineSuggestion && engineSuggestion.engine === 'luraph-151' ? ButtonStyle.Success : ButtonStyle.Secondary),
+        .setCustomId(`deobf-luraph-menu:${message.author.id}`)
+        .setLabel(isLuraphSuggestion ? 'Recommended: Luraph' : 'Luraph')
+        .setStyle(isLuraphSuggestion ? ButtonStyle.Success : ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(`deobf-centurion:${message.author.id}`)
         .setLabel('Centurion')
         .setStyle(ButtonStyle.Secondary),
-    ),
-    new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`deobf-ironbrew1:${message.author.id}`)
         .setLabel(engineSuggestion && engineSuggestion.engine === 'ironbrew1' ? 'Recommended: IronBrew 1' : 'IronBrew 1')
@@ -4738,6 +4735,8 @@ async function startWorkflow(message, inlineText = null) {
         .setCustomId(`deobf-ironbrew2:${message.author.id}`)
         .setLabel(engineSuggestion && engineSuggestion.engine === 'ironbrew2' ? 'Recommended: IronBrew 2' : 'IronBrew 2')
         .setStyle(engineSuggestion && engineSuggestion.engine === 'ironbrew2' ? ButtonStyle.Success : ButtonStyle.Secondary),
+    ),
+    new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`deobf-vantarmor:${message.author.id}`)
         .setLabel('Vantarmor / Universal')
@@ -4750,27 +4749,37 @@ async function startWorkflow(message, inlineText = null) {
         .setCustomId(`deobf-jnkie:${message.author.id}`)
         .setLabel('JNKIE Fetcher')
         .setStyle(ButtonStyle.Secondary),
-    ),
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`deobf-luraph-v147:${message.author.id}`)
-        .setLabel(engineSuggestion && engineSuggestion.engine === 'luraph-v147' ? 'Recommended: Luraph 14.7' : 'Luraph 14.7 (VIP)')
-        .setStyle(engineSuggestion && engineSuggestion.engine === 'luraph-v147' ? ButtonStyle.Success : ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`deobf-luraph-v148:${message.author.id}`)
-        .setLabel(engineSuggestion && engineSuggestion.engine === 'luraph-v148' ? 'Recommended: Luraph 14.8' : 'Luraph 14.8')
-        .setStyle(engineSuggestion && engineSuggestion.engine === 'luraph-v148' ? ButtonStyle.Success : ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`deobf-luraph-v149:${message.author.id}`)
-        .setLabel(engineSuggestion && engineSuggestion.engine === 'luraph-v149' ? 'Recommended: Luraph 14.9' : 'Luraph 14.9')
-        .setStyle(engineSuggestion && engineSuggestion.engine === 'luraph-v149' ? ButtonStyle.Success : ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`deobf-luraph-v143:${message.author.id}`)
-        .setLabel(engineSuggestion && engineSuggestion.engine === 'luraph-v143' ? 'Recommended: Luraph 14.3' : 'Luraph 14.3 (Static)')
-        .setStyle(engineSuggestion && engineSuggestion.engine === 'luraph-v143' ? ButtonStyle.Success : ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(`deobf-cancel:${message.author.id}`)
         .setLabel('Cancel')
+        .setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+  const luraphVersionRows = [
+    new ActionRowBuilder().addComponents(
+      ...[
+        ['14.3', 'luraph-v143', 'Luraph 14.3 (Static)'],
+        ['14.7', 'luraph-v147', 'Luraph 14.7 (VIP)'],
+        ['14.8', 'luraph-v148', 'Luraph 14.8'],
+      ].map(([version, engine, label]) => new ButtonBuilder()
+        .setCustomId(`deobf-luraph-version:${version}:${message.author.id}`)
+        .setLabel(engineSuggestion && engineSuggestion.engine === engine ? 'Recommended: ' + label : label)
+        .setStyle(engineSuggestion && engineSuggestion.engine === engine ? ButtonStyle.Success : ButtonStyle.Secondary))
+    ),
+    new ActionRowBuilder().addComponents(
+      ...[
+        ['14.9', 'luraph-v149', 'Luraph 14.9'],
+        ['15', 'luraph-v15', 'Luraph 15'],
+        ['15.1', 'luraph-151', 'Luraph 15.1'],
+      ].map(([version, engine, label]) => new ButtonBuilder()
+        .setCustomId(`deobf-luraph-version:${version}:${message.author.id}`)
+        .setLabel(engineSuggestion && engineSuggestion.engine === engine ? 'Recommended: ' + label : label)
+        .setStyle(engineSuggestion && engineSuggestion.engine === engine ? ButtonStyle.Success : ButtonStyle.Secondary))
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`deobf-luraph-back:${message.author.id}`)
+        .setLabel('Back')
         .setStyle(ButtonStyle.Secondary),
     ),
   ];
@@ -4865,6 +4874,279 @@ async function startWorkflow(message, inlineText = null) {
     filter: (interaction) => interaction.user.id === message.author.id,
   });
   componentCollector.on('collect', async (interaction) => {
+    if (interaction.customId === `deobf-luraph-menu:${message.author.id}`) {
+      const detectedVersion = engineSuggestion && engineSuggestion.label || 'No exact version detected';
+      await interaction.update({
+        embeds: [dailyEmbed(
+          'Choose a Luraph version',
+          'Select the version to run. ' + (isLuraphSuggestion ? 'Detector: **' + detectedVersion + '**.' : 'No exact Luraph version was detected; choose the version manually.'),
+          DAILY_COLORS.info
+        )],
+        components: luraphVersionRows,
+      });
+      return;
+    }
+    if (interaction.customId === `deobf-luraph-back:${message.author.id}`) {
+      await interaction.update({ embeds: [pickerEmbed], components: chooseRows });
+      return;
+    }
+    const luraphVersionMatch = interaction.customId.match(new RegExp('^deobf-luraph-version:(14\\.3|14\\.7|14\\.8|14\\.9|15|15\\.1):' + message.author.id + '
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        await processVantarmorFetcher(message, prompt, await getWorkflowInput());
+      } catch (error) {
+        await showDeobfFailure(message, prompt, 'Universal Loader Fetcher failed', error);
+      }
+      return;
+    }
+    if (interaction.customId === 'deobf-luaprotect:' + message.author.id) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        await processLuaProtectFetcher(message, prompt, await getWorkflowInput());
+      } catch (error) {
+        await showDeobfFailure(message, prompt, 'LuaProtect Fetcher failed', error);
+      }
+      return;
+    }
+    if (interaction.customId === `deobf-jnkie:${message.author.id}`) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        await processJnkIeFetcher(message, prompt, await getWorkflowInput());
+      } catch (error) {
+        await showDeobfFailure(message, prompt, 'JNKIE Fetcher failed', error);
+      }
+      return;
+    }
+    if (interaction.customId === `deobf-cancel:${message.author.id}`) {
+      await interaction.update({ content: 'Cancelled.', components: [] });
+      componentCollector.stop('cancelled');
+      return;
+    }
+    if (interaction.customId === `deobf-flowauth:${message.author.id}`) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        await processFlowAuth(message, prompt, await getWorkflowInput());
+      } catch (error) {
+        await showDeobfFailure(message, prompt, 'FlowAuth analysis failed', error);
+      }
+      return;
+    }
+    if (interaction.customId === `deobf-ironbrew1:${message.author.id}`) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        await processIronbrew1(message, prompt, await getWorkflowInput());
+      } catch (error) {
+        await showDeobfFailure(message, prompt, 'IronBrew 1 failed', error);
+      }
+      return;
+    }
+    if (interaction.customId === `deobf-ironbrew2:${message.author.id}`) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        await processIronbrew2(message, prompt, await getWorkflowInput());
+      } catch (error) {
+        await showDeobfFailure(message, prompt, 'IronBrew 2 failed', error);
+      }
+      return;
+    }
+    if (interaction.customId === `deobf-centurion:${message.author.id}`) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        await processCenturion(message, prompt, await getWorkflowInput());
+      } catch (error) {
+        await showDeobfFailure(message, prompt, 'Centurion failed', error);
+      }
+      return;
+    }
+  });
+  componentCollector.on('end', (_collected, reason) => {
+    if (reason === 'time') {
+      prompt.edit({ content: 'Selection expired. Type `.deobf` to start again.', components: [] }).catch(() => {});
+    }
+  });
+}
+
+client.once(Events.ClientReady, async (readyClient) => {
+  console.log(`DAILY DEOBF is online as ${readyClient.user.tag}`);
+  console.log('Prefix commands: .deobf, .get, .help');
+  const rest = new REST({ version: '10' }).setToken(TOKEN);
+  try {
+    const route = commandGuildId
+      ? Routes.applicationGuildCommands(readyClient.user.id, commandGuildId)
+      : Routes.applicationCommands(readyClient.user.id);
+    await rest.put(route, { body: slashCommands });
+    console.log('Registered /purelua and /obf slash commands.');
+  } catch (error) {
+    console.error('Slash-command registration failed:', error.message);
+  }
+});
+
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  if (interaction.commandName === 'purelua') {
+    await handlePureLuauCommand(interaction);
+    return;
+  }
+  if (interaction.commandName === 'obf') {
+    if (activeUsers.has(interaction.user.id)) {
+      await interaction.reply({ content: 'You already have an active job. Finish it or wait for it to expire.', ephemeral: true });
+      return;
+    }
+    activeUsers.add(interaction.user.id);
+    try {
+      await handleObfuscatorCommand(interaction);
+    } finally {
+      activeUsers.delete(interaction.user.id);
+    }
+  }
+});
+
+client.on(Events.MessageCreate, async (message) => {
+  if (message.author.bot) return;
+  const content = message.content.trim();
+  if (!content) return;
+  const parts = content.split(/\s+/);
+  const command = parts[0].toLowerCase();
+  const subcommand = (parts[1] || '').toLowerCase();
+
+
+  if (command === '.fulcrum') {
+    if (!message.guild || !message.guild.ownerId) {
+      await message.reply({
+        content: '.fulcrum is available only inside a Discord server.',
+        allowedMentions: { repliedUser: false },
+      });
+      return;
+    }
+    if (message.author.id !== message.guild.ownerId) {
+      await message.reply({
+        content: 'Only this Discord server owner can use .fulcrum.',
+        allowedMentions: { repliedUser: false },
+      });
+      return;
+    }
+    if (parts.length !== 1) {
+      await message.reply({
+        content: 'Usage: attach one Lua/Luau source file and send .fulcrum.',
+        allowedMentions: { repliedUser: false },
+      });
+      return;
+    }
+    if (activeUsers.has(message.author.id)) {
+      await message.reply('You already have an active job. Finish it or wait for it to expire.');
+      return;
+    }
+    activeUsers.add(message.author.id);
+    try {
+      await startFulcrumWorkflow(message);
+    } finally {
+      activeUsers.delete(message.author.id);
+    }
+    return;
+  }
+
+  if (command === '.l') {
+    if (parts.length > 1) {
+      await message.reply('Usage: .l');
+      return;
+    }
+    try {
+      await sendRobloxEnvironmentLogger(message);
+    } catch (error) {
+      await message.reply('Roblox environment logger failed: ' + String(error && error.message || error).slice(0, 500))
+        .catch(() => {});
+    }
+    return;
+  }
+
+  if (command === '.help') {
+    if (parts.length > 1) {
+      await message.reply('Use .help by itself.');
+      return;
+    }
+    await message.reply({ embeds: [dailyEmbed('Command list', helpText(), DAILY_COLORS.primary)], allowedMentions: { repliedUser: false } });
+    return;
+  }
+
+  if (command === '.purelua' || command === '.pureluau') {
+    if (activeUsers.has(message.author.id)) {
+      await message.reply('You already have an active job. Finish it or wait for it to expire.');
+      return;
+    }
+    activeUsers.add(message.author.id);
+    try {
+      const pastedSource = content.slice(command.length).trim() || null;
+      await handlePureLuauPrefixCommand(message, pastedSource);
+    } catch (error) {
+      await message.reply('PureLuau failed: ' + String(error.message || error).slice(0, 1200)).catch(() => {});
+    } finally {
+      activeUsers.delete(message.author.id);
+    }
+    return;
+  }
+
+  if (command === '.get') {
+    const inlineSource = content.slice(command.length).trim();
+    if (activeUsers.has(message.author.id)) {
+      await message.reply('You already have an active .deobf or .get job. Finish it or wait for it to expire.');
+      return;
+    }
+    activeUsers.add(message.author.id);
+    try {
+      await startGetWorkflow(message, inlineSource || null);
+    } catch (error) {
+      await message.reply('❌ ' + String(error.message || error).slice(0, 1500)).catch(() => {});
+    } finally {
+      activeUsers.delete(message.author.id);
+    }
+    return;
+  }
+
+  if (command !== PREFIX) return;
+  const inlineInput = content.slice(command.length).trim();
+  if (activeUsers.has(message.author.id)) {
+    await message.reply('You already have an active .deobf or .get job. Finish it or wait for it to expire.');
+    return;
+  }
+  activeUsers.add(message.author.id);
+  try {
+    await startWorkflow(message, inlineInput || null);
+  } catch (error) {
+    await message.reply(`❌ ${String(error.message || error).slice(0, 1500)}`).catch(() => {});
+  } finally {
+    activeUsers.delete(message.author.id);
+  }
+});
+
+client.login(TOKEN);
+));
+    if (luraphVersionMatch) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      const version = luraphVersionMatch[1];
+      try {
+        const selectedInput = await getWorkflowInput();
+        if (version === '14.3') await processLuraph143(message, prompt, selectedInput);
+        else if (version === '14.7') await processLuraph147(message, prompt, selectedInput);
+        else if (version === '14.8') await processLuraph148(message, prompt, selectedInput);
+        else if (version === '14.9') await processLuraph149(message, prompt, selectedInput);
+        else if (version === '15') await processLuraphV15(message, prompt, selectedInput);
+        else {
+          const gameId = await collectLuraphGameId(message, prompt, 'Luraph 15.1');
+          await processLuraph151(message, prompt, selectedInput, gameId);
+        }
+      } catch (error) {
+        await showDeobfFailure(message, prompt, 'Luraph v' + version + ' failed', error);
+      }
+      return;
+    }
     if (interaction.customId === `deobf-vantarmor:${message.author.id}`) {
       await interaction.deferUpdate();
       componentCollector.stop('selected');

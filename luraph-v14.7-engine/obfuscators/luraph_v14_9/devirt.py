@@ -3391,6 +3391,11 @@ class FunctionLifter:
         self.prog.requests |= lf.requests
 
         bad = unresolved_nodes(order)
+        # Track graph coverage separately from backend lowering errors. A large
+        # output file is not evidence of recovery when every walked VM state
+        # already carries an interpreter error.
+        self.stats["walked_states"] += len(order)
+        self.stats["unresolved_states"] += len(bad)
         allow_partial = not bool(os.environ.get("DEVIRT_STRICT"))
         if bad and not allow_partial:
             details = "; ".join(

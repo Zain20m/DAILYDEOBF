@@ -1,4 +1,4 @@
-name: Import separate Luraph 15.1 engine
+name: Replace Luraph 15.1 engine from newest upload
 
 on:
   push:
@@ -18,7 +18,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Unwrap ZIP, install engine, and run compatibility test
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Unwrap ZIP and import the replacement engine
         shell: bash
         run: |
           set -euo pipefail
@@ -33,7 +38,6 @@ jobs:
           import shutil
           import subprocess
           import tempfile
-          import json
 
           root = Path.cwd()
           wrapper = root / "upload/Luraph_v15_1_Deobfuscator_Newest.zip"
@@ -113,6 +117,9 @@ jobs:
                   "src/devirt_bridge.py",
                   "core/obfuscators/luraph_v15/__init__.py",
                   "runtime/envlog.luau",
+                  "runtime/roblox_api.luau",
+                  "runtime/datatypes.luau",
+                  "runtime/unicode_data.luau",
                   "bin/luau",
                   "bin/luau-ast",
               ]
@@ -139,7 +146,8 @@ jobs:
                       check=True, capture_output=True, text=True
                   )
               for py in destination.rglob("*.py"):
-                  compile(py.read_text(encoding="utf-8"), str(py), "exec")
+                  if "__pycache__" not in py.parts:
+                      compile(py.read_text(encoding="utf-8"), str(py), "exec")
 
               sample = source / "samples_v15.1_deobfuscated/2153b779fa7a87f2_obfuscated.lua"
               if not sample.is_file():
@@ -156,7 +164,7 @@ jobs:
               print("15.1 SAMPLE DETECTION:")
               print(detection.stdout.strip())
               if "luraph_v15" not in detection.stdout:
-                  raise SystemExit("The engine did not recognize its bundled Luraph 15.1 sample.")
+                  raise SystemExit("The new engine did not recognize its bundled Luraph 15.1 sample.")
 
               output = temp_root / "deobfuscated-sample.luau"
               result = subprocess.run(
@@ -177,154 +185,49 @@ jobs:
                   print(result.stdout[-6000:])
                   print("ENGINE STDERR:")
                   print(result.stderr[-12000:])
-                  raise SystemExit("The bundled 15.1 sample deobfuscation test failed.")
+                  raise SystemExit("The new engine failed its bundled Luraph 15.1 sample.")
               print(f"15.1 SAMPLE TEST PASSED: {output.stat().st_size} output bytes")
 
-          # Wire the existing 15.1 Discord button to the new standalone CLI.
-          index_path = root / "index.js"
-          app = index_path.read_text(encoding="utf-8")
-          old_cli = "const ENGINE_151_CLI = path.join(ENGINE_151_DIR, 'bin', 'luraph-deobf.js');"
-          new_cli = "const ENGINE_151_CLI = path.join(ENGINE_151_DIR, 'deob.js');"
-          if old_cli not in app:
-              raise SystemExit("Could not find the current 15.1 CLI path.")
-          app = app.replace(old_cli, new_cli, 1)
-
-          old_signature = "function runEngine(engineDir, engineCli, inputPath, outputPath, timeoutMs, legacy = false) {"
-          new_signature = "function runEngine(engineDir, engineCli, inputPath, outputPath, timeoutMs, legacy = false, extraArgs = []) {"
-          if old_signature not in app:
-              raise SystemExit("Could not find the expected runEngine signature.")
-          app = app.replace(old_signature, new_signature, 1)
-
-          old_args = "      ...(legacy ? ['--steps', '180000'] : ['--timeout', '120']),"
-          if old_args not in app:
-              raise SystemExit("Could not find the expected runEngine argument list.")
-          app = app.replace(old_args, old_args + "\n      ...extraArgs,", 1)
-
-          start = app.index("async function processLuraph151(message, prompt, input) {")
-          end = app.index("\nasync function startWorkflow", start)
-          replacement = r'''async function processLuraph151(message, prompt, input) {
-            const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-151-'));
-            const inputPath = path.join(tempRoot, 'input.lua');
-            const outDir = path.join(tempRoot, 'output');
-            const outputPath = path.join(outDir, 'deobfuscated.luau');
-            await fs.mkdir(outDir, { recursive: true });
-            await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
-
-            try {
-              await prompt.edit({ content: 'Running Luraph 15.1 with the replacement engine...', components: [] });
-              await runEngine(
-                ENGINE_151_DIR,
-                ENGINE_151_CLI,
-                inputPath,
-                outputPath,
-                ENGINE_TIMEOUT_MS,
-                false,
-                ['--plugin', 'luraph_v15', '--budget', '30'],
-              );
-
-              const data = await fs.readFile(outputPath);
-              if (!data.length) throw new Error('The engine returned an empty output file.');
-              if (data.length > MAX_OUTPUT_BYTES) {
-                throw new Error('The deobfuscated output is larger than the Discord attachment limit.');
-              }
-
-              const safeName = String(input.filename || 'script.lua').replaceAll(String.fromCharCode(96), '');
-              await message.reply({
-                content: '**DAILY DEOBF - Luraph 15.1 (new engine)**\nProcessed: ' + safeName +
-                  '\n\nThe engine reconstructs code paths it can analyze. Some protected paths may remain incomplete.',
-                files: [new AttachmentBuilder(data, { name: 'deobfuscated.luau' })],
-                allowedMentions: { repliedUser: false },
-              });
-              await prompt.edit({ content: 'Luraph 15.1 finished. The deobfuscated Luau file is attached above.', components: [] });
-            } finally {
-              await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
-            }
-          }'''
-          app = app[:start] + replacement + app[end:]
-          index_path.write_text(app, encoding="utf-8")
-
-          # Replace the old 15.1 base64 unpacker with a non-destructive validator.
-          setup = r"""'use strict';
-
-          const fs = require('node:fs');
-          const path = require('node:path');
-
-          const root = path.resolve(__dirname, '..');
-          const engines = [
-            { label: 'Luraph v15', directory: 'luraph-v15-engine' },
-            { label: 'Luraph 15.1', directory: 'luraph-v15.1-engine' },
-          ];
-
-          for (const engine of engines) {
-            const base = path.join(root, engine.directory);
-            const required = [
-              'deob.js',
-              'src/detect.js',
-              'src/driver.js',
-              'src/harness.js',
-              'core/obfuscators/luraph_v15/__init__.py',
-              'runtime/envlog.luau',
-              'bin/luau',
-              'bin/luau-ast',
-            ];
-            for (const relative of required) {
-              const fullPath = path.join(base, relative);
-              if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
-                throw new Error(engine.label + ' engine is missing ' + relative);
-              }
-            }
-            if (process.platform !== 'win32') {
-              fs.chmodSync(path.join(base, 'bin/luau'), 0o755);
-              fs.chmodSync(path.join(base, 'bin/luau-ast'), 0o755);
-            }
-          }
-
-          console.log('Validated independent Luraph v15 and 15.1 engines.');"""
-          (root / "scripts/setup-engines.js").write_text(setup, encoding="utf-8")
-
-          package_path = root / "package.json"
-          package = json.loads(package_path.read_text(encoding="utf-8"))
-          package.setdefault("scripts", {})["check"] = (
-              "node --check index.js && "
-              "node --check luraph-v15-engine/deob.js && "
-              "node --check luraph-v15.1-engine/deob.js && "
-              "node --check scripts/setup-engines.js"
-          )
-          package.get("dependencies", {}).pop("adm-zip", None)
-          package_path.write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
-
-          for name in (
-              "upload/INSPECT_LURAPH151_TRIGGER.txt",
-              "upload/INSPECT_NESTED_RAR_TRIGGER.txt",
-              "upload/INSPECT_SOURCE_TRIGGER.txt",
-              "upload/IMPORT_151_TRIGGER.txt",
-              ".github/workflows/inspect-luraph151.yml",
-          ):
-              path = root / name
-              if path.is_file():
-                  path.unlink()
-
-          vendor = root / "vendor"
-          if vendor.exists():
-              shutil.rmtree(vendor)
+          print("IMPORTED_REPLACEMENT_ENGINE_OK")
           PY
 
-      - name: Verify both engines and application
-        run: |
-          set -euo pipefail
-          node --check index.js
-          node --check luraph-v15-engine/deob.js
-          node --check luraph-v15.1-engine/deob.js
-          node --check scripts/setup-engines.js
-          node scripts/setup-engines.js
-          npm run check
-
-      - name: Commit integrated 15.1 engine
+      - name: Verify current Discord integration was preserved
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Install separate Luraph 15.1 engine"
+          node --check index.js
+          node --check luraph-v15.1-engine/deob.js
+          node --check luraph-v15.1-engine/src/detect.js
+          node --check luraph-v15.1-engine/src/driver.js
+          node --check luraph-v15.1-engine/src/harness.js
+          python3 - <<'PY'
+          from pathlib import Path
+          app = Path("index.js").read_text(encoding="utf-8")
+          setup = Path("scripts/setup-engines.js").read_text(encoding="utf-8")
+          required_app = (
+              "const ENGINE_151_CLI = path.join(ENGINE_151_DIR, 'deob.js');",
+              "async function processLuraph151(",
+              "ENGINE_151_CLI,",
+              "'--plugin', 'luraph_v15'",
+          )
+          missing = [item for item in required_app if item not in app]
+          if missing:
+              raise SystemExit("Current Discord integration is missing: " + ", ".join(missing))
+          if "'luraph-v15.1-engine'" not in setup or "'deob.js'" not in setup:
+              raise SystemExit("Engine setup validation no longer includes the v15.1 engine.")
+          print("CURRENT_151_DISCORD_INTEGRATION_OK")
+          PY
+
+      - name: Commit only the replacement engine files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A -- luraph-v15.1-engine
+          if git diff --cached --quiet; then
+            echo 'Imported engine is identical; no replacement changes to commit.'
+            exit 0
+          fi
+          git commit -m 'Replace Luraph 15.1 engine with newest archive'
           git push

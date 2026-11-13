@@ -4875,11 +4875,21 @@ async function resolveDeobfTargetSource(input) {
 
   const candidates = (resolution.captures || [])
     .filter((capture) => capture && typeof capture.source === 'string' && capture.source.trim())
+    // Some loader endpoints return short control/status bodies (for example
+    // "STOP") with HTTP 200. Never mistake those for the actual script.
+    .filter((capture) => {
+      const body = String(capture.source || '').trim();
+      const bytes = Buffer.byteLength(body, 'utf8');
+      if (bytes < 32) return false;
+      if (/^(?:STOP|WAIT|PENDING|DENIED|ERROR|NOT[_ -]?FOUND|UNAUTHORIZED|FORBIDDEN)$/i.test(body)) return false;
+      if (/^(?:LDR-DENIED:|ACCESS_DENIED$|SCRIPT_NOT_FOUND$)/i.test(body)) return false;
+      return true;
+    })
     .filter((capture) => !looksLikeViewerPageOrJavaScript(capture.source, capture.contentType))
     .map((capture) => {
       const bytes = Buffer.byteLength(capture.source, 'utf8');
       const protectedSource = !isClearlyPlainLuau(capture.source);
-      const hasProtectionMarkers = /Luraph|LPH_|IronBrew|MoonSec|Centurion|Prometheus|bit32\.(?:bxor|band|bor)|loadstring\s*\(/i.test(capture.source);
+      const hasProtectionMarkers = /Luraph|LPH_|IronBrew|MoonSec|Centurion|Prometheus|bit32\\.(?:bxor|band|bor)|loadstring\\s*\\(/i.test(capture.source);
       return { ...capture, bytes, protectedSource, hasProtectionMarkers };
     })
     .sort((left, right) =>

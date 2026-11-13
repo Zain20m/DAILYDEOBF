@@ -135,10 +135,10 @@ def install_python_wrappers():
     interpreter = shlex.quote(sys.executable)
     vendor = shlex.quote(str(VENDOR.resolve()))
     wrapper = (
-        "#!/bin/sh\\n"
-        + "PYTHONPATH=" + vendor + '${PYTHONPATH:+":$PYTHONPATH"}\\n'
-        + "export PYTHONPATH\\n"
-        + "exec " + interpreter + ' "$@"\\n'
+        "#!/bin/sh\n"
+        + "PYTHONPATH=" + vendor + '${PYTHONPATH:+":$PYTHONPATH"}\n'
+        + "export PYTHONPATH\n"
+        + "exec " + interpreter + ' "$@"\n'
     )
     for command in ("python", "python3"):
         target = DEST / command

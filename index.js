@@ -1454,7 +1454,7 @@ async function startFulcrumWorkflow(message, inlineSource = null) {
     });
     return;
   }
-  if (!/\.(?:lua|luau|txt)$/i.test(String(attachment.name || ''))) {
+  if (attachment && !/\.(?:lua|luau|txt)$/i.test(String(attachment.name || ''))) {
     await message.reply({
       content: 'Fulcrum accepts .lua, .luau and .txt source files only.',
       allowedMentions: { repliedUser: false },
@@ -1465,7 +1465,9 @@ async function startFulcrumWorkflow(message, inlineSource = null) {
   const prompt = await message.reply({
     embeds: [dailyEmbed(
       'Fulcrum · Processing',
-      'Running static Fulcrum analysis on the attached Luau source. The protected program is not executed.',
+      inlineSource
+        ? 'Downloading the supplied loader URL and running static Fulcrum analysis. The protected program is not executed.'
+        : 'Running static Fulcrum analysis on the attached Luau source. The protected program is not executed.',
       DAILY_COLORS.primary
     )],
     allowedMentions: { repliedUser: false },

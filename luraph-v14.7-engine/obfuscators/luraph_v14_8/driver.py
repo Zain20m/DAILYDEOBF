@@ -33,7 +33,7 @@ def patch_spin(src):
 def patch_chunk(src, tmpdir):
     """Instrument a loadstring'd VM chunk like the main script."""
     path = os.path.join(tmpdir, "_chunk_%s.luau" % harness.chunk_key(src))
-    with open(path, "w", encoding="latin-1", newline="") as f:
+    with open(path, "w", encoding="utf-8", newline="") as f:
         f.write(src)
     try:
         return patch_entries(src, path)
@@ -358,7 +358,7 @@ def run(job):
                 "-- source: %s | chunk: %s | bytes: %d\n\n"
                 % (job.input, key, len(src.encode("latin-1", errors="replace")))
             )
-            job.write(rpath, banner + src, encoding="latin-1")
+            job.write(rpath, banner + src, encoding="utf-8")
             print(
                 "[*] using intercepted loadstring payload as recovery output "
                 "(%d bytes, chunk %s)" % (len(src.encode("latin-1", errors="replace")), key),
@@ -382,7 +382,7 @@ def run(job):
             job.write(ppath, protos_json)
             if devirt_on:
                 # the lifter needs the original source of every VM chunk
-                chunk_paths = [job.write(job.path(".chunk_%s.luau" % key), src, encoding="latin-1")
+                chunk_paths = [job.write(job.path(".chunk_%s.luau" % key), src, encoding="utf-8")
                                for key, src in raw_chunks.items()]
                 lift(job, runner, patched, cfg, chunks, run_text, ppath, dpath, chunk_paths)
     runner.finish()

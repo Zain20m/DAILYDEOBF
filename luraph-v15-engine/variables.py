@@ -1030,3 +1030,31 @@ def uses_varargs(stmts):
                 blk(st.body)
     blk(stmts)
     return found[0]
+
+
+def merge_local_assign(stmts):
+    """`local x` directly followed by `x = <expr not reading x>` -> `local x = <expr>`.
+    The declaration hoisting in limit_locals/wrap_segments leaves such pairs
+    behind when the segment it hoisted for is not wrapped after all."""
+    out = []
+    for st in stmts:
+        if isinstance(st, ST.SIf):
+            st.then[:] = merge_local_assign(st.then)
+            st.els[:] = merge_local_assign(st.els)
+        elif isinstance(st, (ST.SLoop, DoBlock)):
+            st.body[:] = merge_local_assign(st.body)
+        prev = out[-1] if out else None
+        if (isinstance(st, CG.AssignS) and not getattr(st, "is_local", False)
+                and isinstance(prev, CG.LocalS) and prev.values is None
+                and st.targets and all(isinstance(t, CG.LocalName) for t in st.targets)):
+            tn = [t.name for t in st.targets]
+            if (len(set(tn)) == len(tn) and set(tn) <= set(prev.names)
+                    and not set(tn) & set(stmt_names_values(st))):
+                rest = [n for n in prev.names if n not in tn]
+                if rest:
+                    prev.names = rest
+                else:
+                    out.pop()
+                st.is_local = True
+        out.append(st)
+    return out

@@ -356,7 +356,7 @@ def emit_region(st, head, stop, loop):
         term = b.term
         if term[0] in ('ret', 'dead'):
             if term[0] == 'ret':
-                out.append(['return', term[1]])
+                out.append(['return', [convert_expr(st, x) for x in term[1]]])
             b = None
         elif term[0] == 'goto':
             nb = term[1]
@@ -434,7 +434,7 @@ def emit_dispatch(st):
         stmts = list(convert_stmts(st, b))
         term = b.term
         if term[0] == 'ret':
-            stmts.append(['return', term[1]])
+            stmts.append(['return', [convert_expr(st, x) for x in term[1]]])
         elif term[0] == 'dead':
             stmts.append(['return', []])
         elif term[0] == 'goto':
@@ -470,6 +470,10 @@ def _conv_stmt(st, s):
 def convert_expr(st, e):
     t = e[0]
     if t == 'ssa':
+        # the incoming value of a parameter keeps the parameter's name
+        p = getattr(getattr(st.unit, 'ssa', None), 'params', {}).get(e[1])
+        if p is not None:
+            return ['name', p]
         return ['name', 'v%d' % e[1]]
     if t == 'ssa_tmp':
         return ['name', 't%d' % e[1]]

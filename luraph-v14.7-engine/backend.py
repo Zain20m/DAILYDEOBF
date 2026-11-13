@@ -75,6 +75,7 @@ def lower(entry_key, order, D, link, prefix, upnames, closure):
         body = IDI.fold_single_use(body)    # (literals no longer stand between a temp and its use)
     body = VR.declare(body, (), own)
     body = VR.limit_locals(body)
+    body = VR.merge_local_assign(body)
     params = VR.extract_params(body)
     rend = CG.Renderer(names)
     return rend.block(body, ""), params, nerr, sr.fallbacks

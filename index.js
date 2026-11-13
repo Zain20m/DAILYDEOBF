@@ -176,6 +176,8 @@ async function requestPinnedAddress(url, address, options = {}) {
       host.endsWith('.luaprotect.dev') ||
       host === 'jnkie.com' ||
       host.endsWith('.jnkie.com') ||
+      host === 'api.polsec.net' ||
+      host.endsWith('.polsec.net') ||
       host.includes('luarmor') ||
       host.includes('vantarmor') ||
       host.includes('luavify');
@@ -1425,6 +1427,135 @@ function runPythonEngine(engineDir, engineCli, inputPath, outputPath, timeoutMs,
   return runCommand(python, [engineCli, inputPath, '-o', outputPath, ...extraArgs], engineDir, timeoutMs, options);
 }
 
+
+function parsePolsecLoaderPaste(text) {
+  const src = String(text || '');
+  const urlMatch = src.match(/https?:\/\/api\.polsec\.net\/loader\/([a-f0-9]+)\/([a-f0-9]+)/i);
+  if (!urlMatch) return null;
+  const keyMatch = src.match(/(?:getgenv\(\)\.)?script_key\s*=\s*["']([^"']+)["']/i)
+    || src.match(/SCRIPT_KEY\s*=\s*["']([^"']+)["']/i);
+  return {
+    loaderUrl: urlMatch[0],
+    id1: urlMatch[1],
+    id2: urlMatch[2],
+    scriptKey: keyMatch ? keyMatch[1].trim() : null,
+  };
+}
+
+async function polsecRequestJson(url, options = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  const body = options.body !== undefined && options.body !== null
+    ? (Buffer.isBuffer(options.body) ? options.body : Buffer.from(String(options.body), 'utf8'))
+    : undefined;
+  const headers = {
+    'user-agent': 'Roblox/WinInet',
+    accept: '*/*',
+    ...(options.headers || {}),
+  };
+  if (body && !headers['content-type'] && !headers['Content-Type']) {
+    headers['content-type'] = 'application/json';
+  }
+  const parsed = new URL(url);
+  const addresses = await assertPublicUrl(parsed);
+  let response = null;
+  const errors = [];
+  for (const address of addresses) {
+    try {
+      response = await requestPinnedAddress(parsed, address, {
+        method,
+        headers,
+        body,
+        compressed: false,
+        maxTime: options.maxTime || 20,
+        connectTimeout: options.connectTimeout || 10,
+      });
+      break;
+    } catch (error) {
+      errors.push(String(error && error.message || error));
+    }
+  }
+  if (!response) {
+    throw new Error('Polsec request failed: ' + (errors.join(' | ') || 'no response'));
+  }
+  const bytes = await readResponse(response, 8 * 1024 * 1024);
+  const text = bytes.toString('utf8');
+  return {
+    status: response.status,
+    ok: response.ok,
+    text,
+    json: (() => {
+      try { return JSON.parse(text); } catch { return null; }
+    })(),
+  };
+}
+
+/**
+ * Authorized Polsec flow for a known script_key:
+ * 1) GET /loader/session/id1/id2?socket=1
+ * 2) POST /runtime/socket/http type-2 auth
+ * 3) On d===200, return e.d payload string
+ */
+async function fetchPolsecPayloadWithKey(id1, id2, scriptKey) {
+  if (!scriptKey || String(scriptKey).length < 8) {
+    throw new Error('SCRIPT_KEY is required for the Polsec session/socket flow.');
+  }
+  const sessionUrl = 'https://api.polsec.net/loader/session/' + id1 + '/' + id2 + '?socket=1';
+  const session = await polsecRequestJson(sessionUrl, { method: 'GET' });
+  if (!session.ok || !session.json || session.json.a === undefined || !session.json.b) {
+    const detail = session.text ? session.text.slice(0, 200) : ('HTTP ' + session.status);
+    throw new Error('Polsec session failed (' + session.status + '): ' + detail);
+  }
+  const sessionId = String(session.json.a);
+  const token = String(session.json.b);
+
+  const bodyObj = {
+    a: sessionId,
+    b: token,
+    c: [2],
+    d: {
+      a: 0,
+      c: 1,
+      b: 3,
+      d: 2,
+      e: {
+        a: ['Unknown', '0'],
+        b: ['5', '1', '5342'],
+        d: String(scriptKey),
+        f: sessionId,
+      },
+    },
+  };
+  const socket = await polsecRequestJson('https://api.polsec.net/runtime/socket/http', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(bodyObj),
+  });
+
+  if (socket.text && socket.text.trim() === '1003') {
+    throw new Error('Polsec session rejected (1003). Session expired or invalid for this client.');
+  }
+  const payload = socket.json;
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Polsec socket returned non-JSON: ' + String(socket.text || '').slice(0, 200));
+  }
+  if (Number(payload.d) !== 200) {
+    const code = payload.d === undefined ? 'unknown' : String(payload.d);
+    const detail = typeof payload.e === 'string'
+      ? payload.e
+      : (payload.e && typeof payload.e === 'object' ? JSON.stringify(payload.e).slice(0, 200) : '');
+    throw new Error('Polsec socket auth failed (' + code + ')' + (detail ? ': ' + detail : ''));
+  }
+  if (!payload.e || typeof payload.e.d !== 'string' || !payload.e.d.trim()) {
+    throw new Error('Polsec returned d=200 but e.d was missing or empty.');
+  }
+  return {
+    source: payload.e.d,
+    sessionId,
+    rawResponse: payload,
+  };
+}
+
+
 async function startFulcrumWorkflow(message, inlineSource = null) {
   const attachment = message.attachments.first() || null;
   if (inlineSource && attachment) {
@@ -1442,8 +1573,11 @@ async function startFulcrumWorkflow(message, inlineSource = null) {
           '**2. Run the analysis**',
           'Fulcrum statically analyzes the source it receives. It does not execute the protected program.',
           '',
-          '**Captured Polsec response**',
-          'For an authorized session, attach the JSON response captured from your supported client integration. Fulcrum accepts `d: 200` with a string at `e.d`; error responses are reported without analysis. The bot does not create sessions or emulate the private loader handshake.',
+          '**Polsec loader + key**',
+          '`.fulcrum script_key="KEY" https://api.polsec.net/loader/ID1/ID2`',
+          'Runs session (`?socket=1`) then socket type-2 auth and analyzes `e.d` when `d=200`.',
+          '',
+          '**Or** attach a captured Polsec JSON (`d:200`, string at `e.d`), or a Fulcrum `.lua` file.',
           '',
           '**4. Get your results**',
           'The bot returns the recovered Luau candidate and a Markdown analysis report. Static reconstruction may not preserve every runtime behavior.'
@@ -1476,17 +1610,32 @@ async function startFulcrumWorkflow(message, inlineSource = null) {
   try {
     let input;
     if (inlineSource) {
-      const match = inlineSource.match(/https?:\/\/[^\s"'<>]+/i);
-      if (!match) throw new Error('Provide a valid HTTP/HTTPS loader URL. Example: .fulcrum https://example.com/loader.lua SCRIPT_KEY="REDACTED"');
-      const rawUrl = match[0].replace(/[)\]},.;]+$/g, '');
-      const parsed = new URL(rawUrl);
-      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Only HTTP/HTTPS loader URLs are supported.');
-      const fetched = await fetchPublicText(parsed.toString());
-      input = {
-        source: decodeSource(fetched.bytes),
-        filename: path.basename(parsed.pathname) || 'remote-loader.lua',
-      };
-      if (!input.source.trim()) throw new Error('The loader URL returned an empty response.');
+      const polsec = parsePolsecLoaderPaste(inlineSource);
+      if (polsec && polsec.scriptKey) {
+        // Full authorized flow: session -> socket type-2 -> e.d payload
+        const got = await fetchPolsecPayloadWithKey(polsec.id1, polsec.id2, polsec.scriptKey);
+        input = {
+          source: got.source,
+          filename: 'polsec-payload-' + polsec.id1.slice(0, 8) + '.lua',
+          polsecMeta: { sessionId: got.sessionId, id1: polsec.id1, id2: polsec.id2 },
+        };
+      } else {
+        const match = inlineSource.match(/https?:\/\/[^\s"'<>]+/i);
+        if (!match) throw new Error('Provide a valid HTTP/HTTPS loader URL. Example: .fulcrum https://api.polsec.net/loader/ID1/ID2 script_key=\"YOUR_KEY\"');
+        const rawUrl = match[0].replace(/[)\]},.;]+$/g, '');
+        const parsed = new URL(rawUrl);
+        if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Only HTTP/HTTPS loader URLs are supported.');
+        const fetched = await fetchPublicText(parsed.toString());
+        input = {
+          source: decodeSource(fetched.bytes),
+          filename: path.basename(parsed.pathname) || 'remote-loader.lua',
+        };
+        if (!input.source.trim()) throw new Error('The loader URL returned an empty response.');
+        if (polsec && !polsec.scriptKey) {
+          // Polsec loader without key: analyze the public Fulcrum client only
+          input.filename = 'polsec-loader-client.lua';
+        }
+      }
     } else {
       input = await inputFromAttachment(attachment);
       if (/\.json$/i.test(String(attachment.name || ''))) {
@@ -4815,6 +4964,10 @@ async function startWorkflow(message, inlineText = null) {
         .setLabel('JNKIE Fetcher')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
+        .setCustomId(`deobf-fulcrum:${message.author.id}`)
+        .setLabel('Fulcrum / Polsec')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
         .setCustomId(`deobf-cancel:${message.author.id}`)
         .setLabel('Cancel')
         .setStyle(ButtonStyle.Secondary),
@@ -5005,6 +5158,58 @@ async function startWorkflow(message, inlineText = null) {
         await processJnkIeFetcher(message, prompt, await getWorkflowInput());
       } catch (error) {
         await showDeobfFailure(message, prompt, 'JNKIE Fetcher failed', error);
+      }
+      return;
+    }
+    if (interaction.customId === `deobf-fulcrum:${message.author.id}`) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        const selected = await getWorkflowInput();
+        // Prefer pasted polsec loader+key from original message content when present
+        const fromMsg = parsePolsecLoaderPaste(message.content || '');
+        const blob = [selected && selected.source, message.content].filter(Boolean).join('\n');
+        const polsec = parsePolsecLoaderPaste(blob) || fromMsg;
+        if (polsec && polsec.scriptKey) {
+          const got = await fetchPolsecPayloadWithKey(polsec.id1, polsec.id2, polsec.scriptKey);
+          selected.source = got.source;
+          selected.filename = 'polsec-payload.lua';
+        }
+        // Run through .fulcrum path by writing temp and calling workflow pieces
+        const fakeInline = polsec && polsec.scriptKey
+          ? ('script_key = "' + polsec.scriptKey + '"\n' + polsec.loaderUrl)
+          : null;
+        if (fakeInline) {
+          await startFulcrumWorkflow(message, fakeInline);
+        } else {
+          // Analyze provided source as Fulcrum input via attachment-like path
+          await startFulcrumWorkflow(message, null);
+          // If no attachment, use selected source through a synthetic reply path:
+          // fall back: write source and run engine inline
+          if (!(message.attachments && message.attachments.size)) {
+            const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-fulcrum-btn-'));
+            try {
+              const inputPath = path.join(workDir, 'input.lua');
+              const outputDir = path.join(workDir, 'out');
+              await fs.writeFile(inputPath, String(selected.source || ''), 'utf8');
+              await runPythonEngine(ENGINE_FULCRUM_DIR, ENGINE_FULCRUM_CLI, inputPath, outputDir, 5 * 60_000);
+              const recovered = await fs.readFile(path.join(outputDir, 'recovered.lua'));
+              const report = await fs.readFile(path.join(outputDir, 'REPORT.md'));
+              await prompt.edit({
+                embeds: [dailyEmbed('Fulcrum · Recovery complete', 'Recovered source attached.', DAILY_COLORS.success)],
+                files: [
+                  new AttachmentBuilder(recovered, { name: 'fulcrum-recovered.lua' }),
+                  new AttachmentBuilder(report, { name: 'fulcrum-report.md' }),
+                ],
+                components: [],
+              });
+            } finally {
+              await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
+            }
+          }
+        }
+      } catch (error) {
+        await showDeobfFailure(message, prompt, 'Fulcrum / Polsec failed', error);
       }
       return;
     }

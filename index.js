@@ -57,6 +57,9 @@ const ENGINE_IB2_DIR = path.join(__dirname, 'ib2deobf');
 const ENGINE_IB2_DLL = path.join(ENGINE_IB2_DIR, 'LuaAnalysis.Ironbrew2.dll');
 const ENGINE_IRONVEIL_DIR = path.join(__dirname, 'ironveil-engine');
 const ENGINE_IRONVEIL_CLI = path.join(ENGINE_IRONVEIL_DIR, 'dist', 'cli.js');
+const ENGINE_2HBJ_DIR = path.join(__dirname, '2hbj-engine');
+const ENGINE_2HBJ_TOOLS = path.join(ENGINE_2HBJ_DIR, 'tools');
+const ENGINE_2HBJ_RUN = path.join(ENGINE_2HBJ_TOOLS, 'run.sh');
 const activeUsers = new Set();
 const commandGuildId = process.env.GUILD_ID || '';
 
@@ -2576,6 +2579,98 @@ async function processIronbrew2(message, prompt, input) {
   }
 }
 
+async function process2HBJ(message, prompt, input) {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-2hbj-'));
+  const inputPath = path.join(tempRoot, 'input.lua');
+  const outputDir = path.join(tempRoot, 'output');
+  const outputPath = path.join(outputDir, 'out.lua');
+  const python = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+  const progress = createAnalysisProgress(
+    prompt, input.filename, Buffer.byteLength(input.source || '', 'utf8'), '2HBJ (Experimental)'
+  );
+
+  try {
+    if (!String(input.source || '').trim()) throw new Error('The 2HBJ engine needs a Lua/Luau source file.');
+    if (!await fs.stat(ENGINE_2HBJ_RUN).then((value) => value.isFile()).catch(() => false)) {
+      throw new Error('The 2HBJ tools are missing. Restart the bot so scripts/setup-engines.js can extract upload/2hbj-deobf-tools.zip.');
+    }
+    await fs.mkdir(outputDir, { recursive: true });
+    await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
+    await progress.start();
+    await progress.setPhase(
+      'Checking the 2HBJ LuaJIT dependency',
+      'Verifying the bundled LuaJIT bridge before starting the imported decompiler.'
+    );
+    try {
+      await runCommand(python, ['-c', 'import lupa.luajit21'], ENGINE_2HBJ_DIR, 30_000);
+    } catch (error) {
+      throw new Error('2HBJ requires the Python package Lupa with its LuaJIT 2.1 module. Restart the bot after the setup step, or install it with: python -m pip install lupa==2.8. ' + String(error.message || error).slice(0, 400));
+    }
+
+    await progress.setPhase(
+      'Running the 2HBJ VM analysis pipeline',
+      'Preparing the wrapper, dumping VM prototypes, mapping handlers and rebuilding Lua control flow.'
+    );
+    const result = await runCommand(
+      'bash', [ENGINE_2HBJ_RUN, inputPath, outputDir], ENGINE_2HBJ_DIR, ENGINE_TIMEOUT_MS,
+      { env: { PYTHON_BIN: python }, onProgress: progress.onLine }
+    );
+    const stat = await fs.stat(outputPath).catch(() => null);
+    if (!stat || !stat.isFile() || !stat.size) {
+      throw new Error('2HBJ finished without producing out.lua. ' + String(result.stderr || result.stdout || '').slice(-1400));
+    }
+    if (stat.size > MAX_OUTPUT_BYTES) throw new Error('2HBJ output exceeds the 18 MB attachment limit.');
+    await prependDailyDeobfHeader(outputPath);
+
+    const reportPath = path.join(outputDir, '2hbj-report.txt');
+    const report = [
+      'DAILY DEOBF · 2HBJ (experimental)',
+      'Input: ' + input.filename,
+      'Result: imported 2HBJ VM decompilation pipeline',
+      'Output bytes: ' + stat.size,
+      '',
+      'The included tool bundle says the protected script itself is not executed by its dump stage; it inspects the VM loader and reconstructs source from dumped prototypes.',
+      'Important limitation: the supplied bundle is tuned to its included 2HBJ sample. Its instructions say stage2.js string/alphabet mappings, instr.py instrumentation patterns and the disasm.py opcode table may need manual changes for other builds. Treat this output as experimental, not guaranteed complete source.',
+      'The included README notes that anti-tamper code may remain above the recovered script in out.lua.',
+      '',
+      'Engine diagnostics:',
+      String(result.stdout || result.stderr || '').slice(-7000) || '(No diagnostics emitted.)',
+    ].join('\n');
+    await fs.writeFile(reportPath, report, 'utf8');
+
+    const files = [
+      new AttachmentBuilder(outputPath, { name: '2HBJ_deobfuscated.luau' }),
+      new AttachmentBuilder(reportPath, { name: '2HBJ_report.txt' }),
+    ];
+    for (const [filename, attachmentName] of [
+      ['stage2.lua', '2HBJ_vm_wrapper.lua'],
+      ['disasm.txt', '2HBJ_vm_disassembly.txt'],
+      ['handlers_used.txt', '2HBJ_handlers_used.txt'],
+    ]) {
+      const filePath = path.join(outputDir, filename);
+      const size = await fs.stat(filePath).then((value) => value.size).catch(() => 0);
+      if (size > 0 && size <= 7 * 1024 * 1024) files.push(new AttachmentBuilder(filePath, { name: attachmentName }));
+    }
+
+    await message.reply({
+      content: '✅ **DAILY DEOBF · 2HBJ (Experimental)**\nThe imported 2HBJ pipeline finished.\nOutput size: ' + formatBytes(stat.size) + '\nAttached: reconstructed Luau, VM wrapper, disassembly and limitations report.\n\nThis tool bundle is sample-tuned; other 2HBJ builds may need manual mapping updates.',
+      files,
+      allowedMentions: { repliedUser: false },
+    });
+    await progress.complete('The 2HBJ reconstruction and supporting analysis files were attached.');
+    await prompt.edit({
+      content: '✅ 2HBJ analysis finished. Review the report for the sample-specific limitations.',
+      components: [],
+    }).catch(() => {});
+  } catch (error) {
+    await progress.fail(error);
+    throw error;
+  } finally {
+    progress.stop();
+    await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 async function processCenturion(message, prompt, input) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-centurion-'));
   const inputPath = path.join(tempRoot, 'input.lua');
@@ -4972,6 +5067,12 @@ async function startWorkflow(message, inlineText = null) {
         .setLabel('Cancel')
         .setStyle(ButtonStyle.Secondary),
     ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`deobf-2hbj:${message.author.id}`)
+        .setLabel('2HBJ (Experimental)')
+        .setStyle(ButtonStyle.Secondary),
+    ),
   ];
   const luraphVersionRows = [
     new ActionRowBuilder().addComponents(
@@ -5023,6 +5124,7 @@ async function startWorkflow(message, inlineText = null) {
         (engineSuggestion.engine ? '. Would you like to choose ' + engineSuggestion.label + '?' : ', but could not identify the exact version.') +
         '\\n' + engineSuggestion.reason + ' This is a suggestion, not an automatic engine selection.'
       : null,
+    '**2HBJ option:** Experimental imported VM decompiler. The bundled mappings are tuned to the supplied sample and may not match every 2HBJ build.',
     '',
     input.pendingUrlFailure ? '**Input ready**' : '**Payload scan complete**',
     input.selectedTarget
@@ -5285,6 +5387,16 @@ async function startWorkflow(message, inlineText = null) {
         await processIronbrew2(message, prompt, await getWorkflowInput());
       } catch (error) {
         await showDeobfFailure(message, prompt, 'IronBrew 2 failed', error);
+      }
+      return;
+    }
+    if (interaction.customId === `deobf-2hbj:${message.author.id}`) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      try {
+        await process2HBJ(message, prompt, await getWorkflowInput());
+      } catch (error) {
+        await showDeobfFailure(message, prompt, '2HBJ (Experimental) failed', error);
       }
       return;
     }

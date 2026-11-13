@@ -3297,7 +3297,8 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
         where = tag.decode("latin-1")
         if tag != payload and not loaders:
             if os.environ.get("DEVIRT_DEBUG"):
-                out.append("-- yeahhhh this was ran at the shitty devirtualizer v1 expect it to be shit")
+                out.append("-- (Luraph loader VM %s, %d protos: not part of the script, not lifted)"
+                           % (where, len(lst)))
             continue
         try:
             vm = prog.vm_of(cap)
@@ -3309,7 +3310,7 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
         vmobj = vm.vmobj_of(cap)
         role = "the script" if tag == payload else "Luraph loader, not called"
         if loaders or os.environ.get("DEVIRT_DEBUG"):
-            out.append("-- yeah idk what it does let me ask sol")
+            out.append("-- VM %s: root proto #%s (%d protos captured; %s)" % (where, pid, len(lst), role))
         if tag == payload:
             payload_pid = pid
         lines = fl.lift(vm, vmobj, proto, UpList(), {}, 0)
@@ -3329,10 +3330,10 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
     # Luraph runtime functions the script calls (SharedFn): stubs up front
     shared = []
     for n in sorted(prog.dump.shared.values()):
-        shared += ["-- devirtualizer failed so fuck off.",
-                   "-- yeah ts code has encrypted shit so uhm idk",
-                   "local function THISWASRANATRUNTIMEEXPECTITTOBESHIT%d(...)" % n,
-                   "\terror(\"lph run time be shit pls \")",
+        shared += ["-- Luraph runtime function (from the VM object, not part of the script: not lifted).",
+                   "-- LPH_ENCFUNC decrypts a function this way: (key, encrypted buffer, ...) -> function.",
+                   "local function luraph_runtime%d(...)" % n,
+                   "\terror(\"Luraph runtime function, not devirtualized\")",
                    "end", ""]
     if shared:
         at = next((i for i, l in enumerate(out) if l and not l.startswith("--")), len(out))

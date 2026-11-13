@@ -204,7 +204,7 @@ def preamble_plan(lines):
         if re.search(r"\b%s\b" % m.group(1), rest):
             kept.append(lines[a])
     removed = sum(b - a for a, b in drop) - len(kept)
-    note = ["removed at so its gonna be shit osrry!"]
+    note = ["-- [deobf] removed %d lines of the obfuscator's environment/anti-tamper probes" % removed]
     comments = [lines[i] for a, b in drop for i in range(a, b) if lines[i].startswith("-- ")
                 and not lines[i].startswith("-- [envlog]")]
     return head, end, comments + note + kept
@@ -441,7 +441,8 @@ def tidy(text, preamble=True, fold_code=True):
     stats = {}
     body = fold.fold(body, stats) if fold_code else fold.strip_markers(body)
     if stats.get("helpers") or stats.get("loops"):
-        body = ("-- yeah this is gonna be shit ig")
+        body = ("-- [deobf] folded %(calls)d repeated calls into %(helpers)d helper functions "
+                "and %(loops)d unrolled runs into loops\n" % stats) + body
     body = unwrap_parens(body)
     body = hoist_repeats(body)
     body = trim_params(body)

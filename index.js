@@ -2159,6 +2159,10 @@ async function processLuraph14x(message, prompt, input, version) {
       [
         '--engine', version,
         '--strings',
+        // When the VM lift is incomplete, return the behaviour trace instead of
+        // failing, and keep the work files so the other result can be attached.
+        '--trace-fallback',
+        '--keep-work',
         '--max-runs', '16',
         '--devirt-rounds', '200',
         '--budget', '60',
@@ -2187,12 +2191,37 @@ async function processLuraph14x(message, prompt, input, version) {
       throw new Error('Luraph v' + version + ' output exceeds the 18 MB Discord attachment limit.');
     }
 
+    const outputHead = (await fs.readFile(outputPath, 'utf8').catch(() => '')).slice(0, 400);
+    const isTrace = /^\s*--\s*Deobfuscated by deobf \(dynamic trace\)/.test(outputHead);
+    // The other result of the run (partial VM lift / behaviour trace), attached
+    // as well: one of them often holds source the other does not.
+    const extraFiles = [];
+    for (const entry of await fs.readdir(tempRoot, { withFileTypes: true }).catch(() => [])) {
+      if (!entry.isDirectory() || !entry.name.endsWith('_work')) continue;
+      const workDir = path.join(tempRoot, entry.name);
+      for (const name of await fs.readdir(workDir).catch(() => [])) {
+        let label = null;
+        if (name.endsWith('.devirt.partial.luau') || (isTrace && name.endsWith('.devirt.luau'))) {
+          label = 'Luraph' + versionTag + '_partial_vm_lift.luau';
+        } else if (!isTrace && name.endsWith('.trace.luau')) {
+          label = 'Luraph' + versionTag + '_behaviour_trace.luau';
+        }
+        if (!label || extraFiles.some((f) => f.name === label)) continue;
+        const full = path.join(workDir, name);
+        const st = await fs.stat(full).catch(() => null);
+        if (st && st.isFile() && st.size > 0 && st.size <= MAX_OUTPUT_BYTES) extraFiles.push({ path: full, name: label });
+      }
+    }
+
     await prependDailyDeobfHeader(outputPath);
     const diagnostic = String(result.stderr || result.stdout || '').slice(-10000);
     const report = [
       'DAILY DEOBF · Luraph v' + version,
       'Input: ' + input.filename,
-      'Result: dedicated v' + version + ' VM devirtualization',
+      'Result: ' + (isTrace
+        ? 'behaviour trace (the v' + version + ' VM lift was incomplete; what the script did when run in the sandbox)'
+        : 'dedicated v' + version + ' VM devirtualization'),
+      ...extraFiles.map((f) => 'Also attached: ' + f.name),
       'Output bytes: ' + stat.size,
       '',
       'Engine diagnostics:',
@@ -2203,10 +2232,15 @@ async function processLuraph14x(message, prompt, input, version) {
     await fs.writeFile(reportPath, report, 'utf8');
 
     await message.reply({
-      content: '✅ **DAILY DEOBF · Luraph v' + version + '**\nDedicated v' + version + ' engine finished.\nOutput size: ' +
-        formatBytes(stat.size) + '\nAttached: Luraph' + versionTag + '_deobfuscated.luau and engine report.',
+      content: (isTrace ? '⚠️' : '✅') + ' **DAILY DEOBF · Luraph v' + version + '**\n' +
+        (isTrace
+          ? 'The VM lift was incomplete, so the main file is a behaviour trace (what the script did in the sandbox).'
+          : 'Dedicated v' + version + ' engine finished.') +
+        '\nOutput size: ' + formatBytes(stat.size) + '\nAttached: Luraph' + versionTag + '_deobfuscated.luau' +
+        extraFiles.map((f) => ', ' + f.name).join('') + ' and engine report.',
       files: [
         new AttachmentBuilder(outputPath, { name: 'Luraph' + versionTag + '_deobfuscated.luau' }),
+        ...extraFiles.map((f) => new AttachmentBuilder(f.path, { name: f.name })),
         new AttachmentBuilder(reportPath, { name: 'Luraph' + versionTag + '_report.txt' }),
       ],
       allowedMentions: { repliedUser: false },

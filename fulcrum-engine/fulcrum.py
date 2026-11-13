@@ -191,6 +191,7 @@ def recover(text, log=lambda *a: None):
     # pass above does not enter); names are unique after scope resolution
     _deep_const(funcs[ctx.units[0].id][3], const_str)
     _simplify_bool(funcs[ctx.units[0].id][3])
+    _tidy_flow(funcs[ctx.units[0].id][3], False)
     _apply_exprs(funcs[ctx.units[0].id][3], _make_resugar())
     r.program = funcs[ctx.units[0].id][3]
     r.funcs = funcs
@@ -367,6 +368,73 @@ def _simplify_bool(stmts):
             _simplify_bool(s[3])
         elif t in ('function', 'localfunction'):
             _simplify_bool(s[2][3])
+
+
+def _ends(b):
+    """block always leaves via break/continue/return"""
+    if not b:
+        return False
+    last = b[-1]
+    if last[0] in ('break', 'continue', 'return'):
+        return True
+    if last[0] == 'if' and last[2]:
+        return all(_ends(c[1]) for c in last[1]) and _ends(last[2])
+    return False
+
+
+def _tidy_flow(stmts, in_loop):
+    """drop unreachable statements and redundant continue / else.
+    in_loop: stmts is a loop body, so a continue at its very end is redundant"""
+    def sub(e):
+        if isinstance(e, list):
+            if e and e[0] == 'func' and len(e) == 4 and isinstance(e[3], list):
+                _tidy_flow(e[3], False)
+                return
+            for x in e:
+                sub(x)
+    i = 0
+    while i < len(stmts):
+        s = stmts[i]
+        t = s[0]
+        if t == 'if':
+            for c in s[1]:
+                sub(c[0])
+                _tidy_flow(c[1], False)
+            if s[2]:
+                _tidy_flow(s[2], False)
+            # if c then ...<leaves> else X end  ->  if c then ... end X
+            if len(s[1]) == 1 and s[2] and _ends(s[1][0][1]):
+                rest = s[2]
+                s[2] = None
+                stmts[i + 1:i + 1] = rest
+        elif t == 'while':
+            sub(s[1]); _tidy_flow(s[2], True)
+        elif t == 'repeat':
+            _tidy_flow(s[1], True); sub(s[2])
+        elif t == 'fornum':
+            sub(s[2:5]); _tidy_flow(s[5], True)
+        elif t == 'forin':
+            sub(s[2]); _tidy_flow(s[3], True)
+        elif t == 'do':
+            _tidy_flow(s[1], False)
+        else:
+            sub(s[1:])
+        if t in ('break', 'continue', 'return') or (t == 'if' and _ends([s])):
+            del stmts[i + 1:]
+            break
+        i += 1
+    if in_loop:
+        while stmts and stmts[-1] == ['continue']:
+            stmts.pop()
+            # an if that now ends a loop body may also end in a redundant continue
+        if stmts and stmts[-1][0] == 'if':
+            last = stmts[-1]
+            for c in last[1]:
+                while c[1] and c[1][-1] == ['continue']:
+                    c[1].pop()
+            if last[2]:
+                while last[2] and last[2][-1] == ['continue']:
+                    last[2].pop()
 
 
 def _make_resugar():

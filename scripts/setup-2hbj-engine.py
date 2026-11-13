@@ -144,7 +144,18 @@ def install_python_wrappers():
         target = DEST / command
         target.write_text(wrapper, encoding="utf-8")
         target.chmod(0o755)
-    print("Installed local python/python3 launchers with the Lupa vendor path.")
+        check = subprocess.run(
+            [str(target), "-c", "import lupa.luajit21"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        if check.returncode:
+            raise RuntimeError(
+                command + " launcher cannot import lupa.luajit21: " + check.stdout[-2500:]
+            )
+    print("Installed and verified local python/python3 launchers with the Lupa vendor path.")
 
 def main():
     if not ARCHIVE.is_file() or ARCHIVE.stat().st_size == 0:

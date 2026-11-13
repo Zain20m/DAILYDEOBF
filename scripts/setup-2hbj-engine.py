@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Prepare the imported 2HBJ decompiler tools from the repository archive."""
 from pathlib import Path
+import os
 import subprocess
 import sys
+import tempfile
 import urllib.request
 import zipfile
 
@@ -17,13 +19,86 @@ REQUIRED = {
 }
 
 def ensure_lupa():
+    VENDOR.mkdir(parents=True, exist_ok=True)
+    pip_vendor = VENDOR / "_pip_bootstrap"
+    if VENDOR.is_dir():
+        sys.path.insert(0, str(VENDOR))
+
     try:
         from lupa.luajit21 import LuaRuntime  # noqa: F401
-        print("2HBJ LuaJIT bridge is available.")
+        print("2HBJ LuaJIT bridge is already available.")
         return True
     except Exception:
-        print("Installing Lupa 2.8 for the 2HBJ LuaJIT dump stage...")
-    VENDOR.mkdir(parents=True, exist_ok=True)
+        print("Preparing pip and installing Lupa 2.8 for the 2HBJ LuaJIT dump stage...")
+
+    pip_env = os.environ.copy()
+    inherited_pythonpath = pip_env.get("PYTHONPATH", "")
+    pip_paths = [str(pip_vendor)]
+    if inherited_pythonpath:
+        pip_paths.append(inherited_pythonpath)
+    pip_env["PYTHONPATH"] = os.pathsep.join(pip_paths)
+
+    def pip_works():
+        check = subprocess.run(
+            [sys.executable, "-m", "pip", "--version"],
+            env=pip_env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        return check.returncode == 0
+
+    if not pip_works():
+        # Prefer Python's bundled ensurepip when the host provides it.
+        bootstrap = subprocess.run(
+            [sys.executable, "-m", "ensurepip", "--upgrade", "--default-pip"],
+            env=pip_env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        if bootstrap.returncode:
+            print("ensurepip unavailable; bootstrapping pip into the project directory.")
+            pip_vendor.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix="daily-deobf-get-pip-") as temp_dir:
+                get_pip = Path(temp_dir) / "get-pip.py"
+                request = urllib.request.Request(
+                    "https://bootstrap.pypa.io/get-pip.py",
+                    headers={"User-Agent": "DAILY-DEOBF-2HBJ-setup/1.0"},
+                )
+                with urllib.request.urlopen(request, timeout=45) as response:
+                    if response.status != 200:
+                        raise RuntimeError("Could not download pip bootstrap: HTTP " + str(response.status))
+                    payload = response.read(10 * 1024 * 1024 + 1)
+                if not payload or len(payload) > 10 * 1024 * 1024:
+                    raise RuntimeError("Pip bootstrap download is empty or exceeds 10 MB.")
+                get_pip.write_bytes(payload)
+                bootstrap = subprocess.run(
+                    [
+                        sys.executable, str(get_pip),
+                        "--disable-pip-version-check",
+                        "--no-warn-script-location",
+                        "--target", str(pip_vendor),
+                    ],
+                    env=pip_env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                )
+            if bootstrap.returncode:
+                raise RuntimeError(
+                    "Could not bootstrap pip for Python " + sys.version.split()[0] + ". Output:\n"
+                    + bootstrap.stdout[-4000:]
+                )
+        if not pip_works():
+            raise RuntimeError(
+                "Pip bootstrap completed but Python still cannot import pip. "
+                "Bootstrap output:\n" + bootstrap.stdout[-3000:]
+            )
+
     result = subprocess.run(
         [
             sys.executable, "-m", "pip", "install",
@@ -31,26 +106,28 @@ def ensure_lupa():
             "--only-binary=:all:", "--upgrade", "--target", str(VENDOR),
             "lupa==2.8",
         ],
+        env=pip_env,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         check=False,
     )
-    if result.returncode == 0:
-        sys.path.insert(0, str(VENDOR))
-        try:
-            from lupa.luajit21 import LuaRuntime  # noqa: F401
-            print("Installed Lupa 2.8 into the project-local vendor/python directory.")
-            return True
-        except Exception as error:
-            raise RuntimeError(
-                "Lupa 2.8 was downloaded but lupa.luajit21 still cannot load: " + str(error)
-                + "\n" + result.stdout[-3000:]
-            ) from error
-    raise RuntimeError(
-        "Could not install the prebuilt Lupa 2.8 wheel for Python "
-        + sys.version.split()[0] + ". pip output:\n" + result.stdout[-4000:]
-    )
+    if result.returncode:
+        raise RuntimeError(
+            "Could not install a prebuilt Lupa 2.8 wheel for Python "
+            + sys.version.split()[0] + ". pip output:\n" + result.stdout[-5000:]
+        )
+
+    sys.path.insert(0, str(VENDOR))
+    try:
+        from lupa.luajit21 import LuaRuntime  # noqa: F401
+    except Exception as error:
+        raise RuntimeError(
+            "Lupa 2.8 was installed but lupa.luajit21 could not load: " + str(error)
+            + "\n" + result.stdout[-3000:]
+        ) from error
+    print("Installed and verified Lupa 2.8 in the project-local vendor/python directory.")
+    return True
 
 def main():
     if not ARCHIVE.is_file() or ARCHIVE.stat().st_size == 0:

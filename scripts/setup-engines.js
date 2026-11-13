@@ -19,6 +19,17 @@ if (ib2Setup.error || ib2Setup.status !== 0) {
     (ib2Setup.error ? ib2Setup.error.message : 'setup script exited with code ' + ib2Setup.status));
 }
 
+const twohbjSetup = spawnSync(python, [path.join(__dirname, 'setup-2hbj-engine.py')], {
+  cwd: root,
+  encoding: 'utf8',
+  maxBuffer: 2 * 1024 * 1024,
+});
+if (twohbjSetup.stdout) process.stdout.write(twohbjSetup.stdout);
+if (twohbjSetup.stderr) process.stderr.write(twohbjSetup.stderr);
+if (twohbjSetup.error || twohbjSetup.status !== 0) {
+  throw new Error('2HBJ engine preparation failed: ' +
+    (twohbjSetup.error ? twohbjSetup.error.message : 'setup script exited with code ' + twohbjSetup.status));
+}
 const ironveilSetup = spawnSync(python, [path.join(__dirname, 'setup-ironveil.py')], {
   cwd: root,
   encoding: 'utf8',
@@ -233,4 +244,4 @@ if (!fs.existsSync(path.join(root, 'ib2deobf', ib2Runtime))) {
   throw new Error('IronBrew 2 is missing its platform runtime: ' + ib2Runtime);
 }
 
-console.log('Validated Luraph v14.7, v14.8, v14.9, v14.3 static analyzer, v15, 15.1, IronBrew 1, IronBrew 2 and Centurion engines.');
+console.log('Validated Luraph v14.7, v14.8, v14.9, v14.3 static analyzer, v15, 15.1, IronBrew 1, IronBrew 2, Centurion and prepared the experimental 2HBJ tools.');

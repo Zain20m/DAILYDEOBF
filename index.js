@@ -1446,7 +1446,7 @@ async function startFulcrumWorkflow(message) {
           '',
           '**4. Get your results**',
           'The bot returns the recovered Luau candidate and a Markdown analysis report. Static reconstruction may not preserve every runtime behavior.'
-        ].join('\\n'),
+        ].join('\n'),
         DAILY_COLORS.primary
       )],
       allowedMentions: { repliedUser: false },

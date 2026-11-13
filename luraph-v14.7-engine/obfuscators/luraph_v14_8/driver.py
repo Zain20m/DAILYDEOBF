@@ -172,6 +172,21 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
         print("[!] v14.x lifter captured no liftable VM functions; falling back to the behavior trace",
               file=sys.stderr)
         return False
+
+    # backend.lower() counts CFG blocks it had to leave as explicit errors.
+    # Such a file is useful for diagnosis, but it is not a complete recovery:
+    # publishing it as the normal .devirt.luau result hides missing VM logic.
+    unlifted = int((stats or {}).get("errors", 0))
+    if unlifted:
+        partial_path = job.path(".devirt.partial.luau")
+        header = job.credit_header()
+        note = ("-- INCOMPLETE PARTIAL LIFT: %d VM block(s) could not be lifted.\n"
+                "-- Do not treat this file as recovered source.\n\n" % unlifted)
+        job.write(partial_path, header + note + finished + "\n")
+        print("[!] refusing to publish incomplete Luraph output: %d unlifted VM block(s); "
+              "partial diagnostic saved to %s" % (unlifted, partial_path), file=sys.stderr)
+        return False
+
     header = job.credit_header()
     job.write(dpath, header + finished + "\n")
     return True

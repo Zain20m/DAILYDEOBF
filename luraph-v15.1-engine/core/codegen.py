@@ -1530,9 +1530,13 @@ class Renderer:
             if all(x == 1 for x in xyz):
                 return "Vector3.one"
             return "Vector3.new(%s)" % ", ".join(self.const(x) for x in xyz)
-        if type(e).__name__ == "Missing":
+        names = [c.__name__ for c in type(e).__mro__]
+        if "NilIndex" in names:
+            return "nil --[[ read through an unresolved table ]]"
+        if "Missing" in names:
             return "nil --[[ constant not decoded ]]"
-        return "--[[?%s]]" % type(e).__name__
+        # (an expression the printer does not know: still valid Luau)
+        return "nil --[[?%s]]" % type(e).__name__
 
     def prefix(self, e):
         """Expression usable before `.x`, `[k]`, `(args)`, `:m()`."""

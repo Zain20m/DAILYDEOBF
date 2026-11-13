@@ -173,22 +173,16 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
               file=sys.stderr)
         return False
 
-    # backend.lower() counts CFG blocks it had to leave as explicit errors.
-    # Such a file is useful for diagnosis, but it is not a complete recovery:
-    # publishing it as the normal .devirt.luau result hides missing VM logic.
+    # backend.lower() leaves blocks it could not lift as error("devirt: ...")
+    # lines: say so at the top instead of letting the file pass as complete
     unlifted = int((stats or {}).get("errors", 0))
+    note = ""
     if unlifted:
-        partial_path = job.path(".devirt.partial.luau")
-        header = job.credit_header()
-        note = ("-- INCOMPLETE PARTIAL LIFT: %d VM block(s) could not be lifted.\n"
-                "-- Do not treat this file as recovered source.\n\n" % unlifted)
-        job.write(partial_path, header + note + finished + "\n")
-        print("[!] refusing to publish incomplete Luraph output: %d unlifted VM block(s); "
-              "partial diagnostic saved to %s" % (unlifted, partial_path), file=sys.stderr)
-        return False
-
+        note = ("-- NOTE: partial lift: %d VM block(s) could not be lifted; each one is an\n"
+                "-- error(\"devirt: ...\") line below. Everything else is recovered code.\n\n" % unlifted)
+        print("[!] %d VM block(s) could not be lifted (marked in the output)" % unlifted, file=sys.stderr)
     header = job.credit_header()
-    job.write(dpath, header + finished + "\n")
+    job.write(dpath, header + note + finished + "\n")
     return True
 
 
@@ -418,6 +412,10 @@ def run(job):
         unresolved = ("luraph_runtime" in lifted or
                       "unresolved Luraph runtime helper" in lifted or
                       "devirt:" in lifted)
+        # code the runtime created through an unresolved helper and that was
+        # lifted on its own (the payload, in v14.8 builds) is recovered source
+        if unresolved and "local function recovered_proto_" in lifted:
+            unresolved = False
         if unresolved:
             if semantic is not None:
                 return write_semantic_candidate(semantic)

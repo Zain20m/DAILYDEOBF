@@ -2928,7 +2928,15 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
       ENGINE_151_CLI,
       target.inputPath,
       target.outputPath,
-      180_000,
+      // This is the OUTER kill timer for the whole node process, distinct
+      // from --timeout 180 below (an internal per-trace-run budget) and
+      // DEOB_CANDIDATE_TIMEOUT_MS (per racing candidate). A large script can
+      // legitimately need several trace runs and devirt rounds in sequence,
+      // each up to its own internal budget, so the outer timer must have
+      // much more headroom than any one of those -- 180_000 (3 min) here
+      // previously meant the whole run got SIGKILLed before even one slow
+      // internal step finished on anything but small files.
+      ENGINE_TIMEOUT_MS,
       false,
       [
         '--plugin', 'luraph_v15',

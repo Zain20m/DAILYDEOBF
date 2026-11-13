@@ -3762,6 +3762,7 @@ async function startGetWorkflow(message, inlineSource = null) {
         compressed: rootOptions.compressed,
         maxTime: rootOptions.maxTime,
         connectTimeout: rootOptions.connectTimeout,
+        forceRobloxUserAgent: true,
       });
       const fetchedSource = decodeSource(fetched.bytes);
       const nestedLuaProtectUrl = extractLuaProtectRunnerUrl(fetchedSource);

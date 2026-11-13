@@ -1425,24 +1425,25 @@ function runPythonEngine(engineDir, engineCli, inputPath, outputPath, timeoutMs,
   return runCommand(python, [engineCli, inputPath, '-o', outputPath, ...extraArgs], engineDir, timeoutMs, options);
 }
 
-async function startFulcrumWorkflow(message) {
+async function startFulcrumWorkflow(message, inlineSource = null) {
   const attachment = message.attachments.first() || null;
-  if (!attachment) {
+  if (inlineSource && attachment) {
+    await message.reply({ content: 'Use either a loader URL or a source-file attachment, not both.', allowedMentions: { repliedUser: false } });
+    return;
+  }
+  if (!attachment && !inlineSource) {
     await message.reply({
       embeds: [dailyEmbed(
         'Fulcrum · How to use',
         [
-          '**1. Get your source file**',
-          'Fulcrum in DAILY DEOBF currently analyzes a Lua/Luau file that you already have permission to access.',
+          '**1. Provide the loader or source**',
+          'Attach a `.lua`, `.luau` or `.txt` file, or send `.fulcrum <loader URL> SCRIPT_KEY="your-key"`.',
           '',
-          '**2. Upload it to Discord**',
-          'Attach the `.lua`, `.luau` or `.txt` file to a message.',
+          '**2. Run the analysis**',
+          'Fulcrum statically analyzes the source it receives. It does not execute the protected program.',
           '',
-          '**3. Run the command**',
-          'Send `.fulcrum` in the same message as the attachment.',
-          '',
-          '**About loader links and script keys**',
-          'This built-in Fulcrum engine is a local static analyzer. It does not accept a protected-loader URL or script key, and it does not call a third-party key-validation API. Do not post private keys in chat.',
+          '**Loader key support**',
+          'The URL-and-key input is accepted now. The Polsec API exchange is not connected yet, so a protected loader URL currently analyzes the loader stub, not the server-delivered `response.d`. Do not post real private keys until that API integration is added.',
           '',
           '**4. Get your results**',
           'The bot returns the recovered Luau candidate and a Markdown analysis report. Static reconstruction may not preserve every runtime behavior.'
@@ -1471,7 +1472,22 @@ async function startFulcrumWorkflow(message) {
   });
   let workDir = null;
   try {
-    const input = await inputFromAttachment(attachment);
+    let input;
+    if (inlineSource) {
+      const match = inlineSource.match(/https?:\/\/[^\s"'<>]+/i);
+      if (!match) throw new Error('Provide a valid HTTP/HTTPS loader URL. Example: .fulcrum https://example.com/loader.lua SCRIPT_KEY="REDACTED"');
+      const rawUrl = match[0].replace(/[)\]},.;]+$/g, '');
+      const parsed = new URL(rawUrl);
+      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Only HTTP/HTTPS loader URLs are supported.');
+      const fetched = await fetchPublicText(parsed.toString());
+      input = {
+        source: decodeSource(fetched.bytes),
+        filename: path.basename(parsed.pathname) || 'remote-loader.lua',
+      };
+      if (!input.source.trim()) throw new Error('The loader URL returned an empty response.');
+    } else {
+      input = await inputFromAttachment(attachment);
+    }
     workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-fulcrum-'));
     const inputPath = path.join(workDir, 'input.lua');
     const outputDir = path.join(workDir, 'out');
@@ -5135,20 +5151,14 @@ client.on(Events.MessageCreate, async (message) => {
       });
       return;
     }
-    if (parts.length !== 1) {
-      await message.reply({
-        content: 'Usage: attach one Lua/Luau source file and send .fulcrum.',
-        allowedMentions: { repliedUser: false },
-      });
-      return;
-    }
+    const inlineInput = content.slice(parts[0].length).trim() || null;
     if (activeUsers.has(message.author.id)) {
       await message.reply('You already have an active job. Finish it or wait for it to expire.');
       return;
     }
     activeUsers.add(message.author.id);
     try {
-      await startFulcrumWorkflow(message);
+      await startFulcrumWorkflow(message, inlineInput);
     } finally {
       activeUsers.delete(message.author.id);
     }

@@ -2585,6 +2585,9 @@ async function process2HBJ(message, prompt, input) {
   const outputDir = path.join(tempRoot, 'output');
   const outputPath = path.join(outputDir, 'out.lua');
   const python = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+  const vendorPython = path.join(__dirname, 'vendor', 'python');
+  const pythonPath = [vendorPython, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter);
+  const pythonEnv = { PYTHONPATH: pythonPath };
   const progress = createAnalysisProgress(
     prompt, input.filename, Buffer.byteLength(input.source || '', 'utf8'), '2HBJ (Experimental)'
   );
@@ -2611,7 +2614,7 @@ async function process2HBJ(message, prompt, input) {
       'Verifying the bundled LuaJIT bridge before starting the imported decompiler.'
     );
     try {
-      await runCommand(python, ['-c', 'import lupa.luajit21'], ENGINE_2HBJ_DIR, 30_000);
+      await runCommand(python, ['-c', 'import lupa.luajit21'], ENGINE_2HBJ_DIR, 30_000, { env: pythonEnv });
     } catch (error) {
       throw new Error('2HBJ requires the Python package Lupa with its LuaJIT 2.1 module. Restart the bot after the setup step, or install it with: python -m pip install lupa==2.8. ' + String(error.message || error).slice(0, 400));
     }
@@ -2622,7 +2625,7 @@ async function process2HBJ(message, prompt, input) {
     );
     const result = await runCommand(
       'bash', [ENGINE_2HBJ_RUN, inputPath, outputDir], ENGINE_2HBJ_DIR, ENGINE_TIMEOUT_MS,
-      { env: { PYTHON_BIN: python }, onProgress: progress.onLine }
+      { env: { PYTHON_BIN: python, ...pythonEnv }, onProgress: progress.onLine }
     );
     const stat = await fs.stat(outputPath).catch(() => null);
     if (!stat || !stat.isFile() || !stat.size) {

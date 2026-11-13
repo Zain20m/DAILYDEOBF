@@ -5544,7 +5544,7 @@ client.on(Events.MessageCreate, async (message) => {
 
     try {
       await recipient.send({
-        content: dmText + '\\n\\n— automated message',
+        content: dmText + '\n\n— automated message',
         allowedMentions: { parse: [] },
       });
       await message.reply({

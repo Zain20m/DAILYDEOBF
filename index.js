@@ -4889,7 +4889,7 @@ async function resolveDeobfTargetSource(input) {
     .map((capture) => {
       const bytes = Buffer.byteLength(capture.source, 'utf8');
       const protectedSource = !isClearlyPlainLuau(capture.source);
-      const hasProtectionMarkers = /Luraph|LPH_|IronBrew|MoonSec|Centurion|Prometheus|bit32\\.(?:bxor|band|bor)|loadstring\\s*\\(/i.test(capture.source);
+      const hasProtectionMarkers = /Luraph|LPH_|IronBrew|MoonSec|Centurion|Prometheus|bit32\.(?:bxor|band|bor)|loadstring\s*\(/i.test(capture.source);
       return { ...capture, bytes, protectedSource, hasProtectionMarkers };
     })
     .sort((left, right) =>

@@ -5010,6 +5010,31 @@ async function startWorkflow(message, inlineText = null) {
     }
   }
 
+  // Send the exact source received (for example get1.lua) before any
+  // payload scanning or engine selection. Keep the analysis input unchanged.
+  if (input.source && !input.pendingUrlFailure && input.url) {
+    const originalName = String(input.filename || 'original-input.lua')
+      .replace(/[\\/\\\\]/g, '_')
+      .replace(/[\\r\\n]/g, '')
+      .slice(0, 100) || 'original-input.lua';
+    try {
+      await message.reply({
+        content: '**Original file received:** \`' + originalName + '\`',
+        files: [{
+          attachment: Buffer.from(String(input.source), 'utf8'),
+          name: originalName,
+        }],
+        allowedMentions: { repliedUser: false },
+      });
+    } catch (error) {
+      await message.reply({
+        content: '⚠️ I downloaded the original file, but Discord would not accept the attachment: ' +
+          String(error && error.message || error).slice(0, 500),
+        allowedMentions: { repliedUser: false },
+      }).catch(() => {});
+    }
+  }
+
   // LuaProtect stubs are launchers, not the protected payload. Resolve the
   // embedded runner hash before plain-Lua detection or engine selection.
   if (input.source && !input.pendingUrlFailure) {

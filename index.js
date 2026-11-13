@@ -2594,12 +2594,34 @@ async function process2HBJ(message, prompt, input) {
 
   try {
     if (!String(input.source || '').trim()) throw new Error('The 2HBJ engine needs a Lua/Luau source file.');
-    if (!await fs.stat(ENGINE_2HBJ_RUN).then((value) => value.isFile()).catch(() => false) ||
-        !await fs.stat(vendorPython).then((value) => value.isDirectory()).catch(() => false)) {
+    // Do not use the vendor directory's existence as proof that Lupa installed:
+    // a failed earlier pip attempt can leave that directory empty.
+    const toolsReady = await fs.stat(ENGINE_2HBJ_RUN).then((value) => value.isFile()).catch(() => false);
+    let lupaReady = false;
+    try {
+      await runCommand(
+        python, ['-c', 'import lupa.luajit21'],
+        ENGINE_2HBJ_DIR, 30_000, { env: pythonEnv }
+      );
+      lupaReady = true;
+    } catch (error) {
+      console.warn('[2HBJ setup] LuaJIT import check failed; rerunning setup: ' +
+        String(error.message || error).slice(0, 500));
+    }
+
+    if (!toolsReady || !lupaReady) {
       // Some hosts start index.js directly and skip the npm start setup hook.
-      // Prepare the bundled engine lazily so the option works in either mode.
+      // Prepare the bundled engine whenever either the tools or actual import is missing.
       const setupPath = path.join(__dirname, 'scripts', 'setup-2hbj-engine.py');
-      const setup = await runCommand(python, [setupPath], __dirname, 120_000);
+      let setup;
+      try {
+        setup = await runCommand(
+          python, [setupPath], __dirname, 180_000, { env: pythonEnv }
+        );
+      } catch (error) {
+        throw new Error('2HBJ automatic setup failed: ' +
+          String(error.message || error).slice(0, 2200));
+      }
       if (setup.stdout) console.log('[2HBJ setup] ' + String(setup.stdout).trim());
       if (setup.stderr) console.warn('[2HBJ setup] ' + String(setup.stderr).trim());
       if (!await fs.stat(ENGINE_2HBJ_RUN).then((value) => value.isFile()).catch(() => false)) {

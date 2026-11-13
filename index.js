@@ -2597,6 +2597,9 @@ async function process2HBJ(message, prompt, input) {
     // Do not use the vendor directory's existence as proof that Lupa installed:
     // a failed earlier pip attempt can leave that directory empty.
     const toolsReady = await fs.stat(ENGINE_2HBJ_RUN).then((value) => value.isFile()).catch(() => false);
+    const pythonWrapperReady = await Promise.all(['python', 'python3'].map((name) =>
+      fs.stat(path.join(ENGINE_2HBJ_TOOLS, name)).then((value) => value.isFile()).catch(() => false)
+    )).then((values) => values.every(Boolean));
     let lupaReady = false;
     try {
       await runCommand(
@@ -2609,7 +2612,7 @@ async function process2HBJ(message, prompt, input) {
         String(error.message || error).slice(0, 500));
     }
 
-    if (!toolsReady || !lupaReady) {
+    if (!toolsReady || !pythonWrapperReady || !lupaReady) {
       // Some hosts start index.js directly and skip the npm start setup hook.
       // Prepare the bundled engine whenever either the tools or actual import is missing.
       const setupPath = path.join(__dirname, 'scripts', 'setup-2hbj-engine.py');
@@ -2648,7 +2651,7 @@ async function process2HBJ(message, prompt, input) {
     );
     const result = await runCommand(
       'bash', [ENGINE_2HBJ_RUN, inputPath, outputDir], ENGINE_2HBJ_DIR, ENGINE_TIMEOUT_MS,
-      { env: { PYTHON_BIN: python, ...pythonEnv }, onProgress: progress.onLine }
+      { env: { PYTHON_BIN: 'python3', PATH: [ENGINE_2HBJ_TOOLS, process.env.PATH || ''].filter(Boolean).join(path.delimiter), ...pythonEnv }, onProgress: progress.onLine }
     );
     const stat = await fs.stat(outputPath).catch(() => null);
     if (!stat || !stat.isFile() || !stat.size) {

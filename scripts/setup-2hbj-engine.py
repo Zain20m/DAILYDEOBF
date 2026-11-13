@@ -3,6 +3,7 @@
 from pathlib import Path
 import subprocess
 import sys
+import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,9 +42,21 @@ def ensure_lupa():
     return False
 
 def main():
-    if not ARCHIVE.is_file():
-        print("2HBJ archive is missing: " + str(ARCHIVE), file=sys.stderr)
-        return 0
+    if not ARCHIVE.is_file() or ARCHIVE.stat().st_size == 0:
+        ARCHIVE.parent.mkdir(parents=True, exist_ok=True)
+        url = "https://raw.githubusercontent.com/Zain20m/DAILYDEOBF/main/upload/2hbj-deobf-tools.zip"
+        print("2HBJ archive is absent from the deployment; fetching the committed repository copy...")
+        request = urllib.request.Request(url, headers={"User-Agent": "DAILY-DEOBF-engine-setup/1.0"})
+        with urllib.request.urlopen(request, timeout=45) as response:
+            if response.status != 200:
+                raise RuntimeError("Could not fetch the 2HBJ archive: HTTP " + str(response.status))
+            payload = response.read(20 * 1024 * 1024 + 1)
+        if not payload or len(payload) > 20 * 1024 * 1024:
+            raise RuntimeError("Downloaded 2HBJ archive is empty or exceeds 20 MB.")
+        ARCHIVE.write_bytes(payload)
+
+    if not zipfile.is_zipfile(ARCHIVE):
+        raise RuntimeError("2HBJ archive path exists but is not a valid ZIP: " + str(ARCHIVE))
 
     DEST.mkdir(parents=True, exist_ok=True)
     extracted = set()

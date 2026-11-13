@@ -9,6 +9,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parent.parent
 ARCHIVE = ROOT / "upload" / "2hbj-deobf-tools.zip"
 DEST = ROOT / "2hbj-engine" / "tools"
+VENDOR = ROOT / "vendor" / "python"
 REQUIRED = {
     "dump.py", "stage2.js", "run.sh", "beautify.js", "handlers.js",
     "shim.lua", "instr.py", "decomp.py", "disasm.py", "emit.py",
@@ -22,24 +23,34 @@ def ensure_lupa():
         return True
     except Exception:
         print("Installing Lupa 2.8 for the 2HBJ LuaJIT dump stage...")
+    VENDOR.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "lupa==2.8"],
+        [
+            sys.executable, "-m", "pip", "install",
+            "--disable-pip-version-check", "--no-input",
+            "--only-binary=:all:", "--upgrade", "--target", str(VENDOR),
+            "lupa==2.8",
+        ],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         check=False,
     )
     if result.returncode == 0:
+        sys.path.insert(0, str(VENDOR))
         try:
             from lupa.luajit21 import LuaRuntime  # noqa: F401
-            print("Installed Lupa 2.8.")
+            print("Installed Lupa 2.8 into the project-local vendor/python directory.")
             return True
         except Exception as error:
-            print("2HBJ warning: Lupa installed but LuaJIT import failed: " + str(error), file=sys.stderr)
-    else:
-        print("2HBJ warning: automatic Lupa install failed. The 2HBJ option will report the missing dependency.", file=sys.stderr)
-        print(result.stdout[-2000:], file=sys.stderr)
-    return False
+            raise RuntimeError(
+                "Lupa 2.8 was downloaded but lupa.luajit21 still cannot load: " + str(error)
+                + "\n" + result.stdout[-3000:]
+            ) from error
+    raise RuntimeError(
+        "Could not install the prebuilt Lupa 2.8 wheel for Python "
+        + sys.version.split()[0] + ". pip output:\n" + result.stdout[-4000:]
+    )
 
 def main():
     if not ARCHIVE.is_file() or ARCHIVE.stat().st_size == 0:
@@ -85,7 +96,7 @@ def main():
         raise RuntimeError("2HBJ archive is incomplete. Missing: " + ", ".join(missing))
 
     ensure_lupa()
-    print("Prepared 2HBJ tools from upload/2hbj-deobf-tools.zip.")
+    print("Prepared 2HBJ tools and verified the LuaJIT bridge.")
     return 0
 
 if __name__ == "__main__":

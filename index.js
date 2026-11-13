@@ -1437,7 +1437,7 @@ async function startFulcrumWorkflow(message, inlineSource = null) {
         'Fulcrum · How to use',
         [
           '**1. Provide the loader or source**',
-          'Attach a `.lua`, `.luau` or `.txt` file, or send `.fulcrum <loader URL> SCRIPT_KEY="your-key"`.',
+          'Attach `.lua`, `.luau` or `.txt` source, a `.json` file containing an authorized Polsec response, or provide a direct static source URL.',
           '',
           '**2. Run the analysis**',
           'Fulcrum statically analyzes the source it receives. It does not execute the protected program.',
@@ -1491,13 +1491,13 @@ async function startFulcrumWorkflow(message, inlineSource = null) {
       input = await inputFromAttachment(attachment);
       if (/\.json$/i.test(String(attachment.name || ''))) {
         let captured;
+        if (String(input.source).trim() === '1003') {
+          throw new Error('Polsec session expired (1003). Start a new authorized session and capture a fresh response.');
+        }
         try {
           captured = JSON.parse(input.source);
         } catch {
           throw new Error('The attached JSON is not valid JSON.');
-        }
-        if (captured === 1003 || String(captured).trim() === '1003') {
-          throw new Error('Polsec session expired (1003). Start a new authorized session and capture a fresh response.');
         }
         if (!captured || typeof captured !== 'object' || Array.isArray(captured)) {
           throw new Error('Expected a Polsec response object.');

@@ -264,7 +264,7 @@ def _communicate(cmd, timeout, stall):
 
 def run_once(luau, source, cfg, hpath, timeout, keep, chunks=None):
     cfg = dict(cfg, heartbeat=HEARTBEAT) if "heartbeat" not in cfg else cfg
-    with open(hpath, "w", encoding="latin-1", newline="\n") as f:
+    with open(hpath, "w", encoding="utf-8", newline="\n") as f:
         f.write(build_harness(source, cfg, chunks))
     try:
         out, errb = _communicate([luau, hpath], timeout, STALL if cfg.get("heartbeat") else None)
@@ -308,7 +308,7 @@ class HarnessServer:
     def __init__(self, luau, source, cfg, chunks):
         import tempfile
         self.dir = tempfile.mkdtemp(prefix="deobf_serve_")
-        with open(os.path.join(self.dir, "harness.luau"), "w", encoding="latin-1", newline="\n") as f:
+        with open(os.path.join(self.dir, "harness.luau"), "w", encoding="utf-8", newline="\n") as f:
             f.write(build_harness(source, dict(cfg, serve=True), chunks))
         self.proc = subprocess.Popen([luau], cwd=self.dir, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.STDOUT)
@@ -516,7 +516,7 @@ class StudioBridge:
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
     def run(self, harness, timeout):
-        self.jobs.put(harness.encode("latin-1"))
+        self.jobs.put(harness.encode("utf-8"))
         try:
             return self.results.get(timeout=timeout).decode("utf-8", "replace")
         except queue.Empty:

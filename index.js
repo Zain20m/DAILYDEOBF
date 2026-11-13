@@ -61,6 +61,7 @@ const ENGINE_2HBJ_DIR = path.join(__dirname, '2hbj-engine');
 const ENGINE_2HBJ_TOOLS = path.join(ENGINE_2HBJ_DIR, 'tools');
 const ENGINE_2HBJ_RUN = path.join(ENGINE_2HBJ_TOOLS, 'run.sh');
 const activeUsers = new Set();
+const pendingMsgReplies = new Map();
 const commandGuildId = process.env.GUILD_ID || '';
 
 const slashCommands = [
@@ -5514,6 +5515,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return;
+
+  // Forward replies from users who were contacted through .msg to the command author.
+  if (!message.guild && pendingMsgReplies.has(message.author.id)) {
+    const requesterId = pendingMsgReplies.get(message.author.id);
+    try {
+      const requester = await client.users.fetch(requesterId);
+      const attachmentLines = [...message.attachments.values()].map((file) => file.url);
+      const replyText = String(message.content || '').slice(0, 1500);
+      const body = [
+        '**Reply received from ' + message.author.username + ':**',
+        replyText || (attachmentLines.length ? '(attachment)' : '(empty message)'),
+        ...attachmentLines,
+      ].join('\\n');
+      await requester.send({
+        content: body.slice(0, 1900),
+        allowedMentions: { parse: [] },
+      });
+    } catch (error) {
+      console.error('Could not forward .msg reply:', error.message || error);
+    }
+    return;
+  }
   const content = message.content.trim();
   if (!content) return;
   const parts = content.split(/\s+/);
@@ -5547,6 +5570,7 @@ client.on(Events.MessageCreate, async (message) => {
         content: dmText + '\n\n— automated message',
         allowedMentions: { parse: [] },
       });
+      pendingMsgReplies.set(recipient.id, message.author.id);
       await message.reply({
         content: 'DM sent to **' + recipient.username + '**.',
         allowedMentions: { repliedUser: false },

@@ -175,7 +175,7 @@ async function requestPinnedAddress(url, address, options = {}) {
     };
 
     const host = String(url && url.hostname || '').toLowerCase();
-    const needsRobloxUA =
+    const needsRobloxUA = Boolean(options.forceRobloxUserAgent) ||
       host === 'cdn.luaprotect.dev' ||
       host === 'exec.luaprotect.dev' ||
       host.endsWith('.luaprotect.dev') ||
@@ -366,7 +366,7 @@ async function fetchPublicText(rawUrl, curlOptions = {}) {
 
     for (const address of addresses) {
       try {
-        response = await requestPinnedAddress(current, address, { method: curlOptions.method || 'GET', headers: requestHeaders, body: curlOptions.body, compressed: curlOptions.compressed, maxTime: curlOptions.maxTime, connectTimeout: curlOptions.connectTimeout });
+        response = await requestPinnedAddress(current, address, { method: curlOptions.method || 'GET', headers: requestHeaders, body: curlOptions.body, compressed: curlOptions.compressed, maxTime: curlOptions.maxTime, connectTimeout: curlOptions.connectTimeout, forceRobloxUserAgent: curlOptions.forceRobloxUserAgent });
         break;
       } catch (error) {
         const reason = error && (
@@ -486,7 +486,7 @@ async function probePublicHttpMethods(rawUrl, curlOptions = {}) {
     let lastError = null;
     for (const address of addresses) {
       try {
-        response = await requestPinnedAddress(url, address, { method, headers: { ...(curlOptions.headers || {}), ...headers }, body, compressed: curlOptions.compressed, maxTime: curlOptions.maxTime, connectTimeout: curlOptions.connectTimeout });
+        response = await requestPinnedAddress(url, address, { method, headers: { ...(curlOptions.headers || {}), ...headers }, body, compressed: curlOptions.compressed, maxTime: curlOptions.maxTime, connectTimeout: curlOptions.connectTimeout, forceRobloxUserAgent: curlOptions.forceRobloxUserAgent });
         break;
       } catch (error) {
         lastError = error;
@@ -571,7 +571,7 @@ async function inputFromAttachment(attachment) {
   return { source: decodeSource(bytes), filename };
 }
 
-async function inputFromUrlText(text) {
+async function inputFromUrlText(text, options = {}) {
   const match = String(text || '').match(/https?:\/\/[^\s"'<>]+/i);
   if (!match) {
     throw new Error('Send a direct script URL or a loadstring(game:HttpGet("URL"))() expression.');
@@ -588,7 +588,7 @@ async function inputFromUrlText(text) {
   }
   const curlOptions = parseCurlStyleOptions(text);
   if (curlOptions.queryData) for (const [key, value] of new URLSearchParams(curlOptions.queryData)) parsed.searchParams.append(key, value);
-  const result = await fetchPublicText(parsed.toString(), { headers: curlOptions.headers, compressed: curlOptions.compressed, maxTime: curlOptions.maxTime });
+  const result = await fetchPublicText(parsed.toString(), { headers: curlOptions.headers, compressed: curlOptions.compressed, maxTime: curlOptions.maxTime, forceRobloxUserAgent: Boolean(options.robloxUserAgent) });
   const filename = /\.(?:lua|luau|pureluau|txt)$/i.test(path.extname(result.filename))
     ? result.filename
     : 'downloaded-script.lua';
@@ -4881,7 +4881,7 @@ async function resolveDeobfTargetSource(input) {
           status: jnkieResult.complete ? 200 : 206,
         };
       }
-      const fetched = await fetchPublicText(rawUrl, {});
+      const fetched = await fetchPublicText(rawUrl, { forceRobloxUserAgent: true });
       return {
         source: decodeSource(fetched.bytes),
         finalUrl: fetched.finalUrl || rawUrl,
@@ -5024,11 +5024,11 @@ async function startWorkflow(message, inlineText = null) {
       input = await inputFromAttachment(repliedAttachment);
     } else if (repliedText && /https?:\/\//i.test(repliedText)) {
       // Parse the replied message itself, never the ".deobf" command text.
-      input = await inputFromUrlText(repliedText);
+      input = await inputFromUrlText(repliedText, { robloxUserAgent: true });
     } else if (repliedText) {
       input = { source: repliedText, filename: 'replied-script.lua', originalText: repliedText };
     } else {
-      input = inlineText ? await inputFromUrlText(inlineText) : await collectInput(message, prompt);
+      input = inlineText ? await inputFromUrlText(inlineText, { robloxUserAgent: true }) : await collectInput(message, prompt);
     }
   } catch (error) {
     const errorText = String(error && error.message || error);

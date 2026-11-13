@@ -61,7 +61,10 @@ def main():
                 raise RuntimeError("Refusing unexpectedly large tool file: " + name)
             target = DEST / relative
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(archive.read(info))
+            payload = archive.read(info)
+            if relative.as_posix() == 'run.sh':
+                payload = payload.replace(b'python3 ', b'\"${PYTHON_BIN:-python3}\" ')
+            target.write_bytes(payload)
             extracted.add(relative.as_posix())
 
     missing = sorted(REQUIRED - extracted)

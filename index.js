@@ -5521,6 +5521,45 @@ client.on(Events.MessageCreate, async (message) => {
   const subcommand = (parts[1] || '').toLowerCase();
 
 
+  if (command === '.msg') {
+    const recipient = message.mentions.users.first();
+    const mentionToken = parts[1] || '';
+    const dmText = content.slice(command.length + mentionToken.length + 1).trim();
+
+    if (!recipient || !/^<@!?\d+>$/.test(mentionToken) || !dmText) {
+      await message.reply({
+        content: 'Usage: .msg @user <message>',
+        allowedMentions: { repliedUser: false },
+      });
+      return;
+    }
+    if (recipient.id === client.user.id || recipient.bot) {
+      await message.reply('Choose a human user to receive the DM.');
+      return;
+    }
+    if (dmText.length > 1800) {
+      await message.reply('Message is too long. Keep it under 1800 characters.');
+      return;
+    }
+
+    try {
+      await recipient.send({
+        content: dmText + '\\n\\n— automated message',
+        allowedMentions: { parse: [] },
+      });
+      await message.reply({
+        content: 'DM sent to **' + recipient.username + '**.',
+        allowedMentions: { repliedUser: false },
+      });
+    } catch (error) {
+      await message.reply({
+        content: 'Could not DM that user. They may have DMs disabled or may not share a server with the bot.',
+        allowedMentions: { repliedUser: false },
+      });
+    }
+    return;
+  }
+
   if (command === '.fulcrum') {
     if (!message.guild || !message.guild.ownerId) {
       await message.reply({

@@ -775,10 +775,33 @@ class UnitLifter:
                         st.env[x[1]] = v
                         st.writes.add(x[1])
                 else:
-                    if any(x[0] == 'name' and x[1] in C for x in tg):
-                        raise Unsupported('mixed dispatcher/data assignment')
-                    cur.stmts.append(['assign', [self.rw_target(x, st) for x in tg],
-                                      [self.rw(e, st) for e in ex]])
+                    control_targets = [
+                        j for j, x in enumerate(tg)
+                        if x[0] == 'name' and x[1] in C
+                    ]
+                    if control_targets:
+                        # Mixed assignments are safe to split only when every
+                        # RHS is a single, independently foldable value. This
+                        # covers dispatcher idioms such as:
+                        #   state_table[1], dispatcher_state = nil, nil
+                        # Keep runtime/multi-return assignments unsupported.
+                        if len(ex) != len(tg):
+                            raise Unsupported('mixed dispatcher/data assignment with non-matching arity')
+                        values = [self.ev(e, st) for e in ex]
+                        if not all(known for known, _ in values):
+                            raise Unsupported('mixed dispatcher/data assignment with runtime value')
+                        data_targets = [j for j in range(len(tg)) if j not in control_targets]
+                        rewritten_targets = [self.rw_target(tg[j], st) for j in data_targets]
+                        rewritten_values = [lit(values[j][1]) for j in data_targets]
+                        if rewritten_targets:
+                            cur.stmts.append(['assign', rewritten_targets, rewritten_values])
+                        for j in control_targets:
+                            name = tg[j][1]
+                            st.env[name] = values[j][1]
+                            st.writes.add(name)
+                    else:
+                        cur.stmts.append(['assign', [self.rw_target(x, st) for x in tg],
+                                          [self.rw(e, st) for e in ex]])
                 i += 1
             elif t == 'local' and len(s[1]) == 1 and s[1][0] in self.selectors:
                 nm = s[1][0]

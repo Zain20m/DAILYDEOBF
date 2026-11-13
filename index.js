@@ -5049,16 +5049,6 @@ async function startWorkflow(message, inlineText = null) {
     }
   }
 
-  if (input.source && isClearlyPlainLuau(input.source) && !/\/files\/v1\/loaders\//i.test(input.source)) {
-    await sendOriginalLua(
-      message,
-      prompt,
-      input,
-      'The source looks like ordinary Lua/Luau rather than a protected VM payload. No deobfuscation pass was run.'
-    );
-    return;
-  }
-
   const engineSuggestion = detectEngineSuggestion(input.source);
   const isLuraphSuggestion = Boolean(engineSuggestion && /^luraph/i.test(engineSuggestion.label));
   const chooseRows = [

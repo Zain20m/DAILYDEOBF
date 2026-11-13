@@ -5015,11 +5015,11 @@ async function startWorkflow(message, inlineText = null) {
   if (input.source && !input.pendingUrlFailure && input.url) {
     const originalName = String(input.filename || 'original-input.lua')
       .replace(/[\\/\\\\]/g, '_')
-      .replace(/[\\r\\n]/g, '')
+      .replace(/[\r\n]/g, '')
       .slice(0, 100) || 'original-input.lua';
     try {
       await message.reply({
-        content: '**Original file received:** \`' + originalName + '\`',
+        content: '**Original file received:** ' + originalName,
         files: [{
           attachment: Buffer.from(String(input.source), 'utf8'),
           name: originalName,

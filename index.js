@@ -2592,7 +2592,16 @@ async function process2HBJ(message, prompt, input) {
   try {
     if (!String(input.source || '').trim()) throw new Error('The 2HBJ engine needs a Lua/Luau source file.');
     if (!await fs.stat(ENGINE_2HBJ_RUN).then((value) => value.isFile()).catch(() => false)) {
-      throw new Error('The 2HBJ tools are missing. Restart the bot so scripts/setup-engines.js can extract upload/2hbj-deobf-tools.zip.');
+      // Some hosts start index.js directly and skip the npm start setup hook.
+      // Prepare the bundled engine lazily so the option works in either mode.
+      const setupPath = path.join(__dirname, 'scripts', 'setup-2hbj-engine.py');
+      const setup = await runCommand(python, [setupPath], __dirname, 120_000);
+      if (setup.stdout) console.log('[2HBJ setup] ' + String(setup.stdout).trim());
+      if (setup.stderr) console.warn('[2HBJ setup] ' + String(setup.stderr).trim());
+      if (!await fs.stat(ENGINE_2HBJ_RUN).then((value) => value.isFile()).catch(() => false)) {
+        throw new Error('2HBJ setup ran but tools/run.sh is still missing. Setup output: ' +
+          String(setup.stderr || setup.stdout || '(no output)').slice(-1800));
+      }
     }
     await fs.mkdir(outputDir, { recursive: true });
     await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });

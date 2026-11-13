@@ -203,11 +203,12 @@ def build_harness(source, cfg, chunks=None):
 
 
 def chunk_key(src):
-    """Same key as srcKey() in envlog.luau."""
+    """Same byte-based key as srcKey() in envlog.luau (Lua strings are UTF-8 bytes)."""
+    raw = src.encode("utf-8")
     h = 0
-    for b in src.encode("latin-1"):
+    for b in raw:
         h = (h * 31 + b) % 2147483648
-    return "%d_%d" % (len(src), h)
+    return "%d_%d" % (len(raw), h)
 
 
 def take_chunks(body):
@@ -216,7 +217,7 @@ def take_chunks(body):
     the original (a plugin instruments them like the main script)."""
     found = re.findall(r"\x00CHUNK (\S+)\n([0-9a-f]*)\n", body)
     body = re.sub(r"\x00CHUNK \S+\n[0-9a-f]*\n", "", body)
-    return [(k, bytes.fromhex(hx).decode("latin-1")) for k, hx in found], body
+    return [(k, bytes.fromhex(hx).decode("utf-8", "replace")) for k, hx in found], body
 
 
 LAST_RAW = [""]     # complete runtime output of the last run (--raw)

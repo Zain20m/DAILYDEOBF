@@ -151,21 +151,290 @@ def recover(text, log=lambda *a: None):
 
     # assemble: hoist locals, splice child closures by value
     funcs = {}
+    declared = {}
+    spilled = {}
     for u in ctx.units:
         acc = set()
         EM.collect_names(u._body, acc)
-        params = set(u.params)
+        # parameters and variables inherited from the enclosing function
+        # (upvalues) must not be redeclared: a new local would shadow them
+        params = set(u.params) | set(u.upvals)
         locals_ = [n for n in sorted(acc)
                    if n not in params and n.isidentifier() and not n.startswith('__')]
-        head = [['local', locals_, []]] if locals_ else []
+        declared[u.id] = set(locals_) | set(u.params)
+        head = []
+        if len(locals_) > _MAX_LOCALS:
+            # Luau allows 200 locals / 255 registers per function: keep the
+            # most used variables as locals, the rest become fields of one table
+            loopv = set()
+            _loop_vars(u._body, loopv)
+            uses = {}
+            _count_names(u._body, uses)
+            order = sorted((n for n in locals_ if n not in loopv), key=lambda n: (-uses.get(n, 0), n))
+            keep_n = _MAX_LOCALS - 1 - len([n for n in locals_ if n in loopv])
+            spill = set(order[max(keep_n, 0):])
+            tname = '__vars%d' % u.id
+            spilled[u.id] = (spill, tname)
+            locals_ = [n for n in locals_ if n not in spill]
+            head.append(['local', [tname], [['table', []]]])
+        for i in range(0, len(locals_), 50):
+            head.insert(i // 50, ['local', locals_[i:i + 50], []])
         funcs[u.id] = ['func', list(u.params), u.vararg, head + u._body]
+    for u in ctx.units:
+        if u.id in spilled:
+            spill, tname = spilled[u.id]
+            _spill_rename(u, spill, tname, funcs, declared)
     for u in ctx.units:
         EM.substitute_closures(funcs[u.id][3], lambda c: funcs[c.id])
 
+    # decoded cache strings inside plain nested functions (which the per-unit
+    # pass above does not enter); names are unique after scope resolution
+    _deep_const(funcs[ctx.units[0].id][3], const_str)
+    _simplify_bool(funcs[ctx.units[0].id][3])
+    _tidy_flow(funcs[ctx.units[0].id][3], False)
     _apply_exprs(funcs[ctx.units[0].id][3], _make_resugar())
     r.program = funcs[ctx.units[0].id][3]
     r.funcs = funcs
     return r
+
+
+_MAX_LOCALS = 150
+
+
+def _loop_vars(stmts, out):
+    for s in stmts:
+        if s[0] == 'fornum':
+            out.add(s[1]); _loop_vars(s[5], out)
+        elif s[0] == 'forin':
+            out.update(s[1]); _loop_vars(s[3], out)
+        elif s[0] == 'if':
+            for c in s[1]:
+                _loop_vars(c[1], out)
+            if s[2]:
+                _loop_vars(s[2], out)
+        elif s[0] == 'while':
+            _loop_vars(s[2], out)
+        elif s[0] in ('repeat', 'do'):
+            _loop_vars(s[1], out)
+
+
+def _count_names(node, acc):
+    if isinstance(node, list):
+        if node and node[0] == '__closure':
+            return
+        if len(node) == 2 and node[0] == 'name' and isinstance(node[1], str):
+            acc[node[1]] = acc.get(node[1], 0) + 1
+            return
+        for x in node:
+            _count_names(x, acc)
+
+
+def _rename_to_field(node, names, tname):
+    """['name', n] -> tname.n for n in names; stops at child-unit placeholders"""
+    if not isinstance(node, list) or not node:
+        return node
+    if node[0] == '__closure':
+        return node
+    if len(node) == 2 and node[0] == 'name' and node[1] in names:
+        return ['index', ['name', tname], ['str', node[1].encode()]]
+    if node[0] == 'local' and len(node) == 3 and isinstance(node[1], list):
+        # a declaration of a spilled name (never emitted for hoisted ones) stays as is
+        node[2] = [_rename_to_field(x, names, tname) for x in node[2]]
+        return node
+    for i, x in enumerate(node):
+        if isinstance(x, list):
+            node[i] = _rename_to_field(x, names, tname)
+    return node
+
+
+def _spill_rename(u, names, tname, funcs, declared):
+    _rename_to_field(funcs[u.id][3], names, tname)
+    # nested functions see the same variables (as upvalues) unless they declare their own
+    for c in u.children:
+        _spill_rename(c, names - declared[c.id], tname, funcs, declared)
+
+
+def _deep_const(node, const_str):
+    """Replace reads of constant cache variables everywhere, including inside
+    raw function expressions. Bare assignment targets are left alone."""
+    if not isinstance(node, list):
+        return node
+    if node and node[0] == 'name' and len(node) == 2 and isinstance(node[1], str):
+        v = const_str.get(node[1])
+        return ['str', v] if v is not None else node
+    if node and node[0] == 'assign' and len(node) == 3:
+        node[1] = [t if t[0] == 'name' else _deep_const(t, const_str) for t in node[1]]
+        node[2] = [_deep_const(x, const_str) for x in node[2]]
+        return node
+    for i, x in enumerate(node):
+        if isinstance(x, list):
+            node[i] = _deep_const(x, const_str)
+    return node
+
+
+_CMP = ('==', '~=', '<', '<=', '>', '>=')
+
+
+def _unparen(e):
+    while e[0] == 'paren':
+        e = e[1]
+    return e
+
+
+def _is_not(e):
+    return e[0] == 'un' and e[1] == 'not'
+
+
+def _bool_expr(e):
+    """simplify `not` chains; every rewrite holds for all Lua values"""
+    if not isinstance(e, list) or not e or not isinstance(e[0], str):
+        return e
+    e = [_bool_expr(x) if isinstance(x, list) and x and isinstance(x[0], str)
+         else ([_bool_expr(y) for y in x] if isinstance(x, list) else x) for x in e]
+    if _is_not(e):
+        a = _unparen(e[2])
+        if _is_not(a) and _is_not(_unparen(a[2])):
+            return _bool_expr(['un', 'not', _unparen(a[2])[2]])     # not not not x -> not x
+        if _is_not(a) and _unparen(a[2])[0] == 'bin' and _unparen(a[2])[1] in _CMP:
+            return a[2]                                             # not not (a < b) -> (a < b)
+        if a[0] == 'bin' and a[1] in ('==', '~='):
+            return ['paren', ['bin', '~=' if a[1] == '==' else '==', a[2], a[3]]]
+    return e
+
+
+def _cond(e):
+    """in a condition only truthiness matters: not not x -> x"""
+    e = _bool_expr(e)
+    while _is_not(e) and _is_not(_unparen(e[2])):
+        e = _unparen(e[2])[2]
+    u = _unparen(e)
+    return u if u[0] == 'bin' else e
+
+
+def _simplify_bool(stmts):
+    def E(e):
+        e = _bool_expr(e)
+        funcs(e)
+        return e
+
+    def funcs(e):
+        if isinstance(e, list) and e and isinstance(e[0], str):
+            if e[0] == 'func':
+                _simplify_bool(e[3])
+                return
+            for x in e[1:]:
+                if isinstance(x, list):
+                    if x and isinstance(x[0], str):
+                        funcs(x)
+                    else:
+                        for y in x:
+                            funcs(y)
+
+    for s in stmts:
+        t = s[0]
+        if t == 'assign':
+            s[1] = [E(x) for x in s[1]]
+            s[2] = [E(x) for x in s[2]]
+        elif t == 'local':
+            s[2] = [E(x) for x in s[2]]
+        elif t == 'callstat':
+            s[1] = E(s[1])
+        elif t == 'return':
+            s[1] = [E(x) for x in s[1]]
+        elif t == 'if':
+            for c in s[1]:
+                c[0] = _cond(c[0])
+                funcs(c[0])
+                _simplify_bool(c[1])
+            if s[2]:
+                _simplify_bool(s[2])
+        elif t == 'while':
+            s[1] = _cond(s[1])
+            funcs(s[1])
+            _simplify_bool(s[2])
+        elif t == 'repeat':
+            _simplify_bool(s[1])
+            s[2] = _cond(s[2])
+            funcs(s[2])
+        elif t == 'do':
+            _simplify_bool(s[1])
+        elif t == 'fornum':
+            s[2], s[3] = E(s[2]), E(s[3])
+            if s[4] is not None:
+                s[4] = E(s[4])
+            _simplify_bool(s[5])
+        elif t == 'forin':
+            s[2] = [E(x) for x in s[2]]
+            _simplify_bool(s[3])
+        elif t in ('function', 'localfunction'):
+            _simplify_bool(s[2][3])
+
+
+def _ends(b):
+    """block always leaves via break/continue/return"""
+    if not b:
+        return False
+    last = b[-1]
+    if last[0] in ('break', 'continue', 'return'):
+        return True
+    if last[0] == 'if' and last[2]:
+        return all(_ends(c[1]) for c in last[1]) and _ends(last[2])
+    return False
+
+
+def _tidy_flow(stmts, in_loop):
+    """drop unreachable statements and redundant continue / else.
+    in_loop: stmts is a loop body, so a continue at its very end is redundant"""
+    def sub(e):
+        if isinstance(e, list):
+            if e and e[0] == 'func' and len(e) == 4 and isinstance(e[3], list):
+                _tidy_flow(e[3], False)
+                return
+            for x in e:
+                sub(x)
+    i = 0
+    while i < len(stmts):
+        s = stmts[i]
+        t = s[0]
+        if t == 'if':
+            for c in s[1]:
+                sub(c[0])
+                _tidy_flow(c[1], False)
+            if s[2]:
+                _tidy_flow(s[2], False)
+            # if c then ...<leaves> else X end  ->  if c then ... end X
+            if len(s[1]) == 1 and s[2] and _ends(s[1][0][1]):
+                rest = s[2]
+                s[2] = None
+                stmts[i + 1:i + 1] = rest
+        elif t == 'while':
+            sub(s[1]); _tidy_flow(s[2], True)
+        elif t == 'repeat':
+            _tidy_flow(s[1], True); sub(s[2])
+        elif t == 'fornum':
+            sub(s[2:5]); _tidy_flow(s[5], True)
+        elif t == 'forin':
+            sub(s[2]); _tidy_flow(s[3], True)
+        elif t == 'do':
+            _tidy_flow(s[1], False)
+        else:
+            sub(s[1:])
+        if t in ('break', 'continue', 'return') or (t == 'if' and _ends([s])):
+            del stmts[i + 1:]
+            break
+        i += 1
+    if in_loop:
+        while stmts and stmts[-1] == ['continue']:
+            stmts.pop()
+            # an if that now ends a loop body may also end in a redundant continue
+        if stmts and stmts[-1][0] == 'if':
+            last = stmts[-1]
+            for c in last[1]:
+                while c[1] and c[1][-1] == ['continue']:
+                    c[1].pop()
+            if last[2]:
+                while last[2] and last[2][-1] == ['continue']:
+                    last[2].pop()
 
 
 def _make_resugar():

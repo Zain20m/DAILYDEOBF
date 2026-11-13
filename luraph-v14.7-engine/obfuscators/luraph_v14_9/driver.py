@@ -327,7 +327,7 @@ def run(job):
         bad = (
             "[envlog]", "loadstring() of", "repeat forever",
             "stopped in an endless loop", "script error:",
-            "removed at so its gonna be shit",
+            "[deobf] removed",
         )
         low = rendered.lower()
         if any(x.lower() in low for x in bad):

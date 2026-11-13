@@ -255,6 +255,65 @@ class TailCount(Expr):
 # --------------------------------------------------------------------------
 # special runtime objects of the VM closure
 
+def _has_call(node):
+    if isinstance(node, dict):
+        if node.get("type") in ("AstExprCall", "AstExprFunction"):
+            return True
+        return any(_has_call(v) for v in node.values())
+    if isinstance(node, list):
+        return any(_has_call(v) for v in node)
+    return False
+
+
+def _ungroup(e):
+    while e["type"] == "AstExprGroup":
+        e = e["expr"]
+    return e
+
+
+def _is_register_trim(st):
+    """A generic for over one local table whose body only assigns nil to
+    that table at the loop key (under call-free conditions)."""
+    if len(st["values"]) != 1 or len(st["vars"]) < 1:
+        return False
+    tbl = _ungroup(st["values"][0])
+    if tbl["type"] != "AstExprLocal":
+        return False
+    tloc = tbl["local"]["location"]
+    kloc = st["vars"][0]["location"]
+
+    def ok_target(v):
+        v = _ungroup(v)
+        if v["type"] != "AstExprIndexExpr":
+            return False
+        base, idx = _ungroup(v["expr"]), _ungroup(v["index"])
+        return (base["type"] == "AstExprLocal" and base["local"]["location"] == tloc
+                and idx["type"] == "AstExprLocal" and idx["local"]["location"] == kloc)
+
+    def body_ok(stmts):
+        for x in stmts:
+            t = x["type"]
+            if t == "AstStatIf":
+                if _has_call(x["condition"]) or not body_ok(x["thenbody"]["body"]):
+                    return False
+                e = x.get("elsebody")
+                if e is not None and not body_ok([e] if e["type"] == "AstStatIf" else e["body"]):
+                    return False
+            elif t == "AstStatBlock":
+                if not body_ok(x["body"]):
+                    return False
+            elif t == "AstStatAssign":
+                if len(x["vars"]) != len(x["values"]) or not all(ok_target(v) for v in x["vars"]):
+                    return False
+                if not all(_ungroup(v)["type"] == "AstExprConstantNil" for v in x["values"]):
+                    return False
+            else:
+                return False
+        return True
+
+    return body_ok(st["body"]["body"])
+
+
 class RegFile:
     """The VM register array: z[n] reads Reg(n), writes emit assignments."""
 
@@ -678,6 +737,11 @@ class Interp:
         elif t == "AstStatForIn":
             vals = self.eval_list(st["values"], scope, 3)
             f, s, ctl = vals
+            if isinstance(f, RegFile) and _is_register_trim(st):
+                # `for i in regs do if i > top then regs[i] = nil end end`: Luau
+                # generalized iteration that clears registers above the stack
+                # top. Those registers are dead; the loop has no other effect.
+                return
             n = 0
             while True:
                 n += 1
@@ -688,7 +752,7 @@ class Interp:
                 if r[0] is None:
                     break
                 if is_sym(r[0]):
-                    raise Unsupported("symbolic generic for")
+                    raise Unsupported("symbolic generic for (%s)" % type(f).__name__)
                 ctl = r[0]
                 inner = Scope(scope)
                 for v, x in zip(st["vars"], r):

@@ -130,9 +130,26 @@ def match_closure(e):
 
     A:  (function(p1..pn) return function(...) return (function(...) CHUNK end)(pa, pb, ..., ...) end end)(a1..an)
     B:  function(...) return (function(...) CHUNK end)(...) end
+    C:  function(...) local f = function(...) CHUNK end return f(pa, pb, ..., ...) end
     """
     def middle(m):
-        if m[0] != 'func' or m[1] or not m[2] or len(m[3]) != 1:
+        if m[0] != 'func' or m[1] or not m[2]:
+            return None
+        if len(m[3]) == 2:
+            # C:  function(...) local f = function(...) CHUNK end return f(pa, pb, ..., ...) end
+            d, r = m[3]
+            if d[0] != 'local' or len(d[1]) != 1 or len(d[2]) != 1 or d[2][0][0] != 'func':
+                return None
+            f = d[2][0]
+            if r[0] != 'return' or len(r[1]) != 1 or r[1][0][0] != 'call':
+                return None
+            c = r[1][0]
+            if c[1] != ['name', d[1][0]] or f[1] or not f[2] or not is_chunk_body(f[3]):
+                return None
+            if not c[2] or c[2][-1][0] != 'vararg':
+                return None
+            return f[3], c[2][:-1]
+        if len(m[3]) != 1:
             return None
         r = m[3][0]
         if r[0] != 'return' or len(r[1]) != 1 or r[1][0][0] != 'call':

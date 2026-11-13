@@ -324,7 +324,7 @@ def run(job):
         bad = (
             "[envlog]", "loadstring() of", "repeat forever",
             "stopped in an endless loop", "script error:",
-            "removed at so its gonna be shit",
+            "[deobf] removed",
         )
         low = rendered.lower()
         if any(x.lower() in low for x in bad):
@@ -424,7 +424,8 @@ def run(job):
             print("[!] Luraph lift is incomplete: unresolved runtime helpers or "
                   "unsupported VM operations remain", file=sys.stderr)
             if not job.debug:
-                os.remove(dpath)
+                # keep it for inspection (the bot attaches it), never as the result
+                os.replace(dpath, job.path(".devirt.partial.luau"))
             recovered = write_recovered_loadstring()
             if recovered is not None:
                 return recovered

@@ -538,12 +538,15 @@ class VMModel:
                 for var, val in zip(n["vars"], n["values"]):
                     loc = var["location"] if n["type"] == "AstStatLocal" else \
                         var["local"]["location"] if var["type"] == "AstExprLocal" else None
+                    val = vmmap.unwrap(val)
                     if loc and val["type"] == "AstExprLocal":
                         alias.setdefault(loc, set()).add(val["local"]["location"])
         for n in iter_nodes(self.inner):
             if n.get("type") != "AstStatAssign":
                 continue
             for var, val in zip(n["vars"], n["values"]):
+                # the push is often parenthesized: `A = ({[1]=y, [5]=Z, [2]=A})`
+                val = vmmap.unwrap(val)
                 if var["type"] != "AstExprLocal" or val["type"] != "AstExprTable":
                     continue
                 me = var["local"]["location"]
@@ -552,7 +555,7 @@ class VMModel:
                 link = None
                 saved = []
                 for it in val["items"]:
-                    v = it["value"]
+                    v = vmmap.unwrap(it["value"])
                     if v["type"] == "AstExprLocal" and it["kind"] == "general" and \
                             (v["local"]["location"] == me or alias.get(v["local"]["location"]) == {me}):
                         link = it["key"]["value"]

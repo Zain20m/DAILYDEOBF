@@ -30,10 +30,10 @@ def take_strings(body):
 
 
 def header(input_path, notes=()):
-    h = (
+    h = ("-- Deobfuscated by deobf (dynamic trace)\n"
          "-- source: %s\n"
-         "-- yeah this ran at runtime and its gonna be shit\n"
-         "-- not gonna be full \n"
+         "-- NOTE: reconstructed from observed behaviour; branches that were not taken\n"
+         "--       during the trace are missing and conditions are only noted in comments.\n"
          % os.path.basename(input_path))
     return h + "".join("-- %s\n" % n for n in notes)
 

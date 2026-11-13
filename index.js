@@ -2159,6 +2159,10 @@ async function processLuraph14x(message, prompt, input, version) {
       [
         '--engine', version,
         '--strings',
+        // When the VM lift is incomplete, return the behaviour trace instead of
+        // failing, and keep the work files so the other result can be attached.
+        '--trace-fallback',
+        '--keep-work',
         '--max-runs', '16',
         '--devirt-rounds', '200',
         '--budget', '60',
@@ -2187,12 +2191,37 @@ async function processLuraph14x(message, prompt, input, version) {
       throw new Error('Luraph v' + version + ' output exceeds the 18 MB Discord attachment limit.');
     }
 
+    const outputHead = (await fs.readFile(outputPath, 'utf8').catch(() => '')).slice(0, 400);
+    const isTrace = /^\s*--\s*Deobfuscated by deobf \(dynamic trace\)/.test(outputHead);
+    // The other result of the run (partial VM lift / behaviour trace), attached
+    // as well: one of them often holds source the other does not.
+    const extraFiles = [];
+    for (const entry of await fs.readdir(tempRoot, { withFileTypes: true }).catch(() => [])) {
+      if (!entry.isDirectory() || !entry.name.endsWith('_work')) continue;
+      const workDir = path.join(tempRoot, entry.name);
+      for (const name of await fs.readdir(workDir).catch(() => [])) {
+        let label = null;
+        if (name.endsWith('.devirt.partial.luau') || (isTrace && name.endsWith('.devirt.luau'))) {
+          label = 'Luraph' + versionTag + '_partial_vm_lift.luau';
+        } else if (!isTrace && name.endsWith('.trace.luau')) {
+          label = 'Luraph' + versionTag + '_behaviour_trace.luau';
+        }
+        if (!label || extraFiles.some((f) => f.name === label)) continue;
+        const full = path.join(workDir, name);
+        const st = await fs.stat(full).catch(() => null);
+        if (st && st.isFile() && st.size > 0 && st.size <= MAX_OUTPUT_BYTES) extraFiles.push({ path: full, name: label });
+      }
+    }
+
     await prependDailyDeobfHeader(outputPath);
     const diagnostic = String(result.stderr || result.stdout || '').slice(-10000);
     const report = [
       'DAILY DEOBF · Luraph v' + version,
       'Input: ' + input.filename,
-      'Result: dedicated v' + version + ' VM devirtualization',
+      'Result: ' + (isTrace
+        ? 'behaviour trace (the v' + version + ' VM lift was incomplete; what the script did when run in the sandbox)'
+        : 'dedicated v' + version + ' VM devirtualization'),
+      ...extraFiles.map((f) => 'Also attached: ' + f.name),
       'Output bytes: ' + stat.size,
       '',
       'Engine diagnostics:',
@@ -2203,10 +2232,15 @@ async function processLuraph14x(message, prompt, input, version) {
     await fs.writeFile(reportPath, report, 'utf8');
 
     await message.reply({
-      content: '✅ **DAILY DEOBF · Luraph v' + version + '**\nDedicated v' + version + ' engine finished.\nOutput size: ' +
-        formatBytes(stat.size) + '\nAttached: Luraph' + versionTag + '_deobfuscated.luau and engine report.',
+      content: (isTrace ? '⚠️' : '✅') + ' **DAILY DEOBF · Luraph v' + version + '**\n' +
+        (isTrace
+          ? 'The VM lift was incomplete, so the main file is a behaviour trace (what the script did in the sandbox).'
+          : 'Dedicated v' + version + ' engine finished.') +
+        '\nOutput size: ' + formatBytes(stat.size) + '\nAttached: Luraph' + versionTag + '_deobfuscated.luau' +
+        extraFiles.map((f) => ', ' + f.name).join('') + ' and engine report.',
       files: [
         new AttachmentBuilder(outputPath, { name: 'Luraph' + versionTag + '_deobfuscated.luau' }),
+        ...extraFiles.map((f) => new AttachmentBuilder(f.path, { name: f.name })),
         new AttachmentBuilder(reportPath, { name: 'Luraph' + versionTag + '_report.txt' }),
       ],
       allowedMentions: { repliedUser: false },
@@ -2886,6 +2920,48 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
     return false;
   }
 
+  // The dedicated v15.1 engine run (also used as the fallback when legacy v15
+  // does not finish the lift: it follows loadstring'd VM chunks, legacy does not).
+  function runLuraph151Engine(target) {
+    return runEngine(
+      ENGINE_151_DIR,
+      ENGINE_151_CLI,
+      target.inputPath,
+      target.outputPath,
+      180_000,
+      false,
+      [
+        '--plugin', 'luraph_v15',
+        '--debug',
+        '--strings',
+        '--max-runs', '16',
+        '--devirt-rounds', '200',
+        '--budget', '60',
+        '--timeout', '180',
+        ...(gameId ? ['--cfg-json', JSON.stringify({ __superz_game_id: Number(gameId) })] : []),
+      ],
+      {
+        env: {
+          // Keep the seed search enabled, but bound every parallel candidate.
+          DEOB_FAST: '',
+          DEOB_CANDIDATE_TIMEOUT_MS: '120000',
+          DEOB_CANDIDATE_IDLE_TIMEOUT_MS: '75000',
+          DEVIRT_LOADERS: '1',
+          DEVIRT_FULL_ROUNDS: '1',
+          DEVIRT_TIMING: '1',
+          DEVIRT_ERRS: '1',
+          DEVIRT_TB: '1',
+          DEVIRT_WALK_LIMIT: '750000',
+          DEVIRT_MERGE: '1',
+          DEVIRT_MERGE_BUDGET: '32',
+          DEVIRT_BISECT: '1',
+          DEVIRT_BISECT_BUDGET: '16',
+        },
+        onProgress: progress.onLine,
+      },
+    );
+  }
+
   const dedicated = await prepare('selected-v' + version);
   const selectedEngineDir = version === '15' ? ENGINE_V15_DIR : ENGINE_151_DIR;
   const inputBytes = Buffer.byteLength(input.source, 'utf8');
@@ -2949,43 +3025,7 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
           },
         );
       } else {
-        result = await runEngine(
-          selectedEngineDir,
-          ENGINE_151_CLI,
-          dedicated.inputPath,
-          dedicated.outputPath,
-          180_000,
-          false,
-          [
-            '--plugin', 'luraph_v15',
-            '--debug',
-            '--strings',
-            '--max-runs', '16',
-            '--devirt-rounds', '200',
-            '--budget', '60',
-            '--timeout', '180',
-            ...(gameId ? ['--cfg-json', JSON.stringify({ __superz_game_id: Number(gameId) })] : []),
-          ],
-          {
-            env: {
-              // Keep the seed search enabled, but bound every parallel candidate.
-              DEOB_FAST: '',
-              DEOB_CANDIDATE_TIMEOUT_MS: '120000',
-              DEOB_CANDIDATE_IDLE_TIMEOUT_MS: '75000',
-              DEVIRT_LOADERS: '1',
-              DEVIRT_FULL_ROUNDS: '1',
-              DEVIRT_TIMING: '1',
-              DEVIRT_ERRS: '1',
-              DEVIRT_TB: '1',
-              DEVIRT_WALK_LIMIT: '750000',
-              DEVIRT_MERGE: '1',
-              DEVIRT_MERGE_BUDGET: '32',
-              DEVIRT_BISECT: '1',
-              DEVIRT_BISECT_BUDGET: '16',
-            },
-            onProgress: progress.onLine,
-          },
-        );
+        result = await runLuraph151Engine(dedicated);
       }
       dedicatedLogs += result.stderr || '';
     } catch (error) {
@@ -3004,6 +3044,32 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
       dedicated.base + '.devirt.luau',
       selectedEngineDir
     );
+
+    if (version === '15' && !dedicatedValidation.complete) {
+      // Legacy v15 cannot follow scripts that loadstring a second VM chunk and
+      // gives up on several anti-tamper layouts. Give the v15.1 engine (which
+      // also handles v15) a chance before returning a failed lift.
+      await progress.setPhase(
+        'Legacy v15 lift incomplete: trying the v15.1 engine',
+        'Validation found: ' + (dedicatedValidation.issues || []).slice(0, 2).join('; ')
+      );
+      const fallback = await prepare('fallback-v15.1');
+      try {
+        const fbResult = await runLuraph151Engine(fallback);
+        dedicatedLogs += '\n[*] v15.1 engine fallback:\n' + (fbResult.stderr || '');
+      } catch (error) {
+        dedicatedLogs += '\n[!] v15.1 engine fallback: ' + String(error.message || error) + '\n';
+      }
+      await cleanLuraph151Candidate(fallback.base + '.devirt.luau', ENGINE_151_DIR);
+      const fbValidation = await inspectLiftFile(fallback.base + '.devirt.luau', ENGINE_151_DIR);
+      const legacyHasCandidate = Boolean(dedicatedValidation.candidate);
+      if (fbValidation.complete || (fbValidation.candidate && !legacyHasCandidate)) {
+        chosen = fallback;
+        chosenEngineDir = ENGINE_151_DIR;
+        dedicatedValidation = fbValidation;
+        dedicatedLogs += '\n[*] using the v15.1 engine result (legacy v15 lift was incomplete).\n';
+      }
+    }
 
     await progress.setPhase(
       dedicatedValidation.complete ? 'Selected candidate passed validation' : 'Selected candidate has unresolved output',
@@ -3079,7 +3145,9 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
         'deep_reconstruction_instructions.txt contains the requested behavior-preserving follow-up checklist.',
         version === '15.1'
           ? 'Only the dedicated v15.1 engine was run. To try legacy v15, select Luraph v15 from the engine picker; it is now an explicit separate run.'
-          : 'Only the legacy v15 engine was run, because Luraph v15 was selected explicitly.',
+          : (chosen === dedicated
+            ? 'The legacy v15 engine was run, because Luraph v15 was selected explicitly.'
+            : 'The legacy v15 engine did not complete the lift, so the v15.1 engine (which also supports v15) was run and its result is used.'),
         'The checklist is an instruction for a separate reconstruction pass, not proof that every item was automatically completed.',
         ...(gameId ? ['Target Universe/GameId supplied to the sandbox: ' + gameId + '.'] : ['No target Universe/GameId was supplied; game-locked builds may stop in their bootstrap layer.']),
         ...((/buffer access out of bounds|size out of range/i).test(dedicatedLogs)

@@ -2594,7 +2594,8 @@ async function process2HBJ(message, prompt, input) {
 
   try {
     if (!String(input.source || '').trim()) throw new Error('The 2HBJ engine needs a Lua/Luau source file.');
-    if (!await fs.stat(ENGINE_2HBJ_RUN).then((value) => value.isFile()).catch(() => false)) {
+    if (!await fs.stat(ENGINE_2HBJ_RUN).then((value) => value.isFile()).catch(() => false) ||
+        !await fs.stat(vendorPython).then((value) => value.isDirectory()).catch(() => false)) {
       // Some hosts start index.js directly and skip the npm start setup hook.
       // Prepare the bundled engine lazily so the option works in either mode.
       const setupPath = path.join(__dirname, 'scripts', 'setup-2hbj-engine.py');
@@ -2616,7 +2617,7 @@ async function process2HBJ(message, prompt, input) {
     try {
       await runCommand(python, ['-c', 'import lupa.luajit21'], ENGINE_2HBJ_DIR, 30_000, { env: pythonEnv });
     } catch (error) {
-      throw new Error('2HBJ requires the Python package Lupa with its LuaJIT 2.1 module. Restart the bot after the setup step, or install it with: python -m pip install lupa==2.8. ' + String(error.message || error).slice(0, 400));
+      throw new Error('2HBJ could not load the project-local Lupa LuaJIT 2.1 package. Check the deployment log for the setup installer output. ' + String(error.message || error).slice(0, 700));
     }
 
     await progress.setPhase(

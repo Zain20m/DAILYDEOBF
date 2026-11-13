@@ -2954,10 +2954,17 @@ function redactSpyUrl(raw) {
 
 async function fetchLuaProtectLoaderSource(rawUrl) {
   const loaderUrl = new URL(rawUrl);
-  const isLuaProtect = loaderUrl.protocol === 'https:' &&
-    loaderUrl.hostname.toLowerCase() === 'exec.luaprotect.dev' &&
+  const host = loaderUrl.hostname.toLowerCase();
+  const isRunnerBody = loaderUrl.protocol === 'https:' &&
+    host === 'exec.luaprotect.dev' &&
     /^\/api\/runner-body\/[A-Za-z0-9_-]+\/?$/i.test(loaderUrl.pathname);
-  if (!isLuaProtect) return null;
+  // LuaProtect also publishes user runner links on its CDN in the form
+  // /u/{public-id}/{runner-token}. Treat this as a separate public URL
+  // format; do not rewrite it into an exec runner-body endpoint.
+  const isCdnRunner = loaderUrl.protocol === 'https:' &&
+    host === 'cdn.luaprotect.dev' &&
+    /^\/u\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\/?$/i.test(loaderUrl.pathname);
+  if (!isRunnerBody && !isCdnRunner) return null;
 
   const fetched = await fetchPublicText(loaderUrl.toString(), {
     headers: {
@@ -2966,14 +2973,14 @@ async function fetchLuaProtectLoaderSource(rawUrl) {
     },
     maxTime: 25,
   });
-  const body = decodeSource(fetched.bytes).replace(/\r\n/g, '\n');
   if (fetched.status < 200 || fetched.status >= 300) {
     if (fetched.status === 401 || fetched.status === 403) {
-      throw new Error('LuaProtect denied the runner-body request (HTTP ' + fetched.status + '). The endpoint rejected the Roblox User-Agent request or requires authorization.');
+      throw new Error('LuaProtect denied the source request (HTTP ' + fetched.status + '). The link may require authorization or may no longer be valid.');
     }
     throw new Error('LuaProtect returned HTTP ' + fetched.status + '.');
   }
-  if (!body.trim()) throw new Error('LuaProtect returned an empty runner-body response.');
+  const body = decodeSource(fetched.bytes).replace(/\r\n/g, '\n');
+  if (!body.trim()) throw new Error('LuaProtect returned an empty source response.');
   if (/^(<!doctype html|<html|\s*<\?xml)/i.test(body)) {
     throw new Error('LuaProtect returned a webpage instead of Lua source.');
   }
@@ -4100,14 +4107,21 @@ async function sendLuaProtectRunnerBody(message, prompt, sourceText, directUrl =
   const detectedUrl = directUrl || extractLuaProtectRunnerUrl(sourceText);
   if (!detectedUrl) throw new Error('No LuaProtect runner hash or runner-body URL was found in the supplied source.');
   const loaderUrl = new URL(detectedUrl.replace(/[)\]},.;]+$/g, ''));
-  if (loaderUrl.protocol !== 'https:' ||
-      loaderUrl.hostname.toLowerCase() !== 'exec.luaprotect.dev' ||
-      !/^\/api\/runner-body\/[A-Za-z0-9_-]+\/?$/i.test(loaderUrl.pathname)) {
-    throw new Error('LuaProtect Fetcher accepts LuaProtect runner-body URLs only.');
+  const host = loaderUrl.hostname.toLowerCase();
+  const isRunnerBody = loaderUrl.protocol === 'https:' &&
+    host === 'exec.luaprotect.dev' &&
+    /^\/api\/runner-body\/[A-Za-z0-9_-]+\/?$/i.test(loaderUrl.pathname);
+  const isCdnRunner = loaderUrl.protocol === 'https:' &&
+    host === 'cdn.luaprotect.dev' &&
+    /^\/u\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\/?$/i.test(loaderUrl.pathname);
+  if (!isRunnerBody && !isCdnRunner) {
+    throw new Error('LuaProtect Fetcher accepts https://cdn.luaprotect.dev/u/{id}/{token} and https://exec.luaprotect.dev/api/runner-body/{hash} URLs.');
   }
 
   await prompt.edit({
-    content: '🔄 **LuaProtect Fetcher**\nExtracted the runner hash. Downloading the matching runner body with Roblox/WinInet...',
+    content: isCdnRunner
+      ? '🔄 **LuaProtect Fetcher**\\nDownloading the supplied LuaProtect CDN runner link with Roblox/WinInet...'
+      : '🔄 **LuaProtect Fetcher**\\nExtracted the runner hash. Downloading the matching runner body with Roblox/WinInet...',
     embeds: [],
     components: [],
   });
@@ -4121,15 +4135,15 @@ async function sendLuaProtectRunnerBody(message, prompt, sourceText, directUrl =
     await fs.writeFile(outputPath, data, { mode: 0o600 });
     await message.reply({
       embeds: [dailyEmbed(
-        'LuaProtect runner downloaded',
-        'Extracted runner hash **' + loaderUrl.pathname.split('/').pop() + '** and retrieved ' + formatBytes(data.length) + ' from its runner-body endpoint.',
+        'LuaProtect source downloaded',
+        (isCdnRunner ? 'Retrieved the supplied CDN runner link.' : 'Retrieved runner body **' + loaderUrl.pathname.split('/').pop() + '**.') + ' Downloaded ' + formatBytes(data.length) + ' of source.',
         DAILY_COLORS.success
       )],
       files: [new AttachmentBuilder(outputPath, { name: 'luaprotect_runner.lua' })],
       allowedMentions: { repliedUser: false },
     });
     await sendAutomaticPureLuau(message, recovered, 'luaprotect_runner.lua', 'LuaProtect runner fetch');
-    await prompt.edit({ content: '✅ LuaProtect runner body downloaded. The automatic PureLuau pass was also attempted.', components: [] }).catch(() => {});
+    await prompt.edit({ content: '✅ LuaProtect source downloaded. The automatic PureLuau pass was also attempted.', components: [] }).catch(() => {});
   } finally {
     await fs.rm(outputPath, { force: true }).catch(() => {});
   }

@@ -2,6 +2,7 @@
 """Prepare the imported 2HBJ decompiler tools from the repository archive."""
 from pathlib import Path
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -129,6 +130,22 @@ def ensure_lupa():
     print("Installed and verified Lupa 2.8 in the project-local vendor/python directory.")
     return True
 
+def install_python_wrappers():
+    # Make both command names load packages from the project-local vendor directory.
+    interpreter = shlex.quote(sys.executable)
+    vendor = shlex.quote(str(VENDOR.resolve()))
+    wrapper = (
+        "#!/bin/sh\\n"
+        + "PYTHONPATH=" + vendor + '${PYTHONPATH:+":$PYTHONPATH"}\\n'
+        + "export PYTHONPATH\\n"
+        + "exec " + interpreter + ' "$@"\\n'
+    )
+    for command in ("python", "python3"):
+        target = DEST / command
+        target.write_text(wrapper, encoding="utf-8")
+        target.chmod(0o755)
+    print("Installed local python/python3 launchers with the Lupa vendor path.")
+
 def main():
     if not ARCHIVE.is_file() or ARCHIVE.stat().st_size == 0:
         ARCHIVE.parent.mkdir(parents=True, exist_ok=True)
@@ -173,7 +190,8 @@ def main():
         raise RuntimeError("2HBJ archive is incomplete. Missing: " + ", ".join(missing))
 
     ensure_lupa()
-    print("Prepared 2HBJ tools and verified the LuaJIT bridge.")
+    install_python_wrappers()
+    print("Prepared 2HBJ tools, verified LuaJIT and installed Python launchers.")
     return 0
 
 if __name__ == "__main__":

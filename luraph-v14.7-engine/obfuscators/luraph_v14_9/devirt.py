@@ -3373,7 +3373,13 @@ class FunctionLifter:
 
     def __init__(self, prog):
         self.prog = prog
-        self.stats = {"functions": 0, "errors": 0, "fallbacks": 0}
+        self.stats = {
+            "functions": 0,
+            "errors": 0,
+            "fallbacks": 0,
+            "walked_states": 0,
+            "unresolved_states": 0,
+        }
         self.lifted = set()
 
     def lift(self, vm, vmobj, proto, upvals, upnames, depth=0):

@@ -16,6 +16,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const zlib = require('node:zlib');
+const crypto = require('node:crypto');
 const { inspectLiftText } = require('./scripts/lift-validation');
 const { convertToPureLuau } = require('./pureluau');
 const { createAutomaticPureLuauResult } = require('./scripts/automatic-pureluau');
@@ -891,8 +892,12 @@ function formatDuration(milliseconds) {
 
 function formatBytes(bytes) {
   if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
-  if (bytes >= 1024) return Math.round(bytes / 1024) + ' KB';
+  if (bytes >= 1024) return (bytes / 1024).toFixed(2) + ' KB';
   return bytes + ' bytes';
+}
+
+function sha256Hex(value) {
+  return crypto.createHash('sha256').update(value).digest('hex');
 }
 
 const DAILY_COLORS = {
@@ -3598,7 +3603,8 @@ function buildScriptFetchedEmbed(attachment, batchIndex, batchCount, totalFiles,
     DAILY_COLORS.success
   ).addFields(
     { name: 'File', value: codeMark + (filename || 'fetched.lua') + codeMark, inline: true },
-    { name: 'Size', value: formatBytes(attachment.data.length), inline: true },
+    { name: 'Exact size', value: attachment.data.length.toLocaleString('en-US') + ' bytes (' + formatBytes(attachment.data.length) + ')', inline: true },
+    { name: 'SHA-256', value: codeMark + sha256Hex(attachment.data).slice(0, 16) + codeMark, inline: true },
     { name: 'Fetch results', value: totalFiles + ' file(s) · ' + totalUrls + ' URL(s) · ' + failedUrls + ' failed', inline: true },
     ...(batchIndex > 0 ? [{ name: 'Batch', value: (batchIndex + 1) + ' / ' + batchCount, inline: true }] : [])
   );
@@ -3814,19 +3820,35 @@ async function startGetWorkflow(message, inlineSource = null) {
   const attachments = [];
   let totalBytes = 0;
   const omittedNames = [];
+  const contentHashes = new Map();
   for (const capture of resolution.captures) {
     const data = Buffer.from(capture.source, 'utf8');
+    const sha256 = sha256Hex(data);
+    const previous = contentHashes.get(sha256);
+    capture.sha256 = sha256;
+    capture.exactBytes = data.length;
+    capture.duplicateOf = previous ? previous.name : null;
+    if (!previous) contentHashes.set(sha256, { name: capture.name, url: capture.url || null });
     if (totalBytes + data.length > MAX_GET_OUTPUT_BYTES) {
       omittedNames.push(capture.name);
       continue;
     }
+    const extension = path.extname(capture.name) || '.lua';
+    const base = path.basename(capture.name, extension);
     attachments.push({
-      name: capture.name,
+      name: base + '_' + sha256.slice(0, 8) + extension,
       data,
       capture,
     });
     totalBytes += data.length;
   }
+  const duplicateGroups = [...contentHashes.entries()].filter(([, item]) => item && item.name)
+    .map(([hash, first]) => ({
+      hash,
+      first,
+      matches: resolution.captures.filter((capture) => capture.sha256 === hash),
+    }))
+    .filter((group) => group.matches.length > 1);
 
   const discoveryLines = (resolution.discoveries || []).map((item, index) => {
     const details = [
@@ -3846,7 +3868,10 @@ async function startGetWorkflow(message, inlineSource = null) {
   const captureLines = resolution.captures.map((capture) => [
     capture.name,
     'depth=' + capture.depth,
-    'bytes=' + Buffer.byteLength(capture.source, 'utf8'),
+    'exact-bytes=' + (capture.exactBytes ?? Buffer.byteLength(capture.source, 'utf8')),
+    'display-size=' + formatBytes(capture.exactBytes ?? Buffer.byteLength(capture.source, 'utf8')),
+    'sha256=' + (capture.sha256 || sha256Hex(Buffer.from(capture.source, 'utf8'))),
+    capture.duplicateOf ? 'identical-content-to=' + capture.duplicateOf : 'unique-content-in-this-run',
     'origin=' + reportUrl(capture.url || ''),
     'final=' + reportUrl(capture.finalUrl || capture.url || ''),
     'http=' + (capture.statusCode || 'n/a'),
@@ -3884,6 +3909,8 @@ async function startGetWorkflow(message, inlineSource = null) {
     'Fetch attempts: ' + resolution.attempts,
     'Visited URLs: ' + resolution.visited,
     'Downloaded source files: ' + resolution.captures.length,
+    'Distinct file contents: ' + contentHashes.size,
+    'Duplicate-content groups: ' + duplicateGroups.length,
     'Failed URLs: ' + resolution.failures.length,
     'Malformed URL candidates auto-corrected: ' + ((resolution.normalizations || []).length),
     'Remaining queued URLs: ' + (resolution.remaining || 0),
@@ -3908,6 +3935,15 @@ async function startGetWorkflow(message, inlineSource = null) {
     '',
     'DOWNLOADED FILE DETAILS',
     ...(captureLines.length ? captureLines : ['No source files were downloaded.']),
+    '',
+    'CONTENT IDENTITY CHECK',
+    ...(duplicateGroups.length
+      ? duplicateGroups.map((group) => 'Identical SHA-256 ' + group.hash + ': ' + group.matches.map((capture) => capture.name + ' (' + reportUrl(capture.url || '') + ')').join(' ; '))
+      : ['No duplicate file contents detected within this .get run.']),
+    'A matching SHA-256 means the downloaded bytes are identical; matching KB values alone do not.',
+    '',
+    'FLOWAUTH NOTE',
+    'FlowAuth/Luraph key-gated loaders may return the same public bootstrap until their authorized runtime handshake occurs. .get performs static HTTP GET discovery only; it does not execute Roblox code, replay protected runtime handshakes, or bypass authorization. If only the bootstrap is publicly downloadable, the protected runtime payload is not present in these files.',
     '',
     'FAILED FETCHES',
     ...(failureLines.length ? failureLines : ['None.']),

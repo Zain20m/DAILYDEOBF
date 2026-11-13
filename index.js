@@ -5074,7 +5074,7 @@ async function resolveDeobfTargetSource(input) {
 }
 
 async function startWorkflow(message, inlineText = null) {
-  const hasInlineUrl = Boolean(inlineText && /https?:\\/\\//i.test(inlineText));
+  const hasInlineUrl = Boolean(inlineText && /https?:\/\//i.test(inlineText));
   const hasInlineAttachment = Boolean(message.attachments.first());
   const initialDescription = hasInlineUrl
     ? 'Direct URL detected. Downloading the supplied script now...'
@@ -5100,7 +5100,7 @@ async function startWorkflow(message, inlineText = null) {
     ? repliedMessage.attachments.first()
     : null;
   const repliedText = repliedMessage ? String(repliedMessage.content || '').trim() : '';
-  if (!hasInlineUrl && (repliedAttachment || /https?:\\/\\//i.test(repliedText))) {
+  if (!hasInlineUrl && (repliedAttachment || /https?:\/\//i.test(repliedText))) {
     await prompt.edit({
       embeds: [dailyEmbed(
         repliedAttachment ? 'File received' : 'URL detected',

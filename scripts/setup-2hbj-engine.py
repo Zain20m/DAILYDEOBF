@@ -59,8 +59,8 @@ def ensure_lupa():
             stderr=subprocess.STDOUT,
             check=False,
         )
-        if bootstrap.returncode:
-            print("ensurepip unavailable; bootstrapping pip into the project directory.")
+        if bootstrap.returncode or not pip_works():
+            print("ensurepip did not provide a usable pip; bootstrapping pip into the project directory.")
             pip_vendor.mkdir(parents=True, exist_ok=True)
             with tempfile.TemporaryDirectory(prefix="daily-deobf-get-pip-") as temp_dir:
                 get_pip = Path(temp_dir) / "get-pip.py"

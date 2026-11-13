@@ -4968,11 +4968,32 @@ async function startWorkflow(message, inlineText = null) {
   // Accept an attachment, a URL / HttpGet expression on the command,
   // or a URL / HttpGet expression in the follow-up message.
   const firstAttachment = message.attachments.first();
+  let repliedMessage = null;
+  if (!firstAttachment && message.reference && message.reference.messageId) {
+    try {
+      repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
+    } catch {
+      throw new Error('I could not read the message you replied to. Make sure it is still available in this channel.');
+    }
+  }
+  const repliedAttachment = repliedMessage && repliedMessage.attachments
+    ? repliedMessage.attachments.first()
+    : null;
+  const repliedText = repliedMessage ? String(repliedMessage.content || '').trim() : '';
   let input;
   try {
-    input = firstAttachment
-      ? await inputFromAttachment(firstAttachment)
-      : (inlineText ? await inputFromUrlText(inlineText) : await collectInput(message, prompt));
+    if (firstAttachment) {
+      input = await inputFromAttachment(firstAttachment);
+    } else if (repliedAttachment) {
+      input = await inputFromAttachment(repliedAttachment);
+    } else if (repliedText && /https?:\/\//i.test(repliedText)) {
+      // Parse the replied message itself, never the ".deobf" command text.
+      input = await inputFromUrlText(repliedText);
+    } else if (repliedText) {
+      input = { source: repliedText, filename: 'replied-script.lua', originalText: repliedText };
+    } else {
+      input = inlineText ? await inputFromUrlText(inlineText) : await collectInput(message, prompt);
+    }
   } catch (error) {
     const errorText = String(error && error.message || error);
     // Keep the engine picker visible even when URL download fails. The selected

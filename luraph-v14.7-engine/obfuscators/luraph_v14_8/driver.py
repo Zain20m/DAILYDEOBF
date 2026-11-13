@@ -395,17 +395,37 @@ def run(job):
             lifted = f.read()
 
         # A one/few-statement payload must not turn into thousands of lines of
-        # Luraph bootstrap code.  Known unresolved runtime helpers are another
-        # strong sign that the static root followed the loader instead of the
-        # payload.  In that narrow case, the fully observed compact trace is a
-        # better semantic reconstruction.
+        # Luraph bootstrap code.  More importantly, a lift containing unresolved
+        # runtime stubs or interpreter error sentinels is not recovered source:
+        # those stubs return nil and the error sentinels stand in for VM states
+        # whose semantics were lost.  Never return such a file as a successful
+        # devirtualization merely because it contains fewer than 50 nil calls.
+        unresolved = ("luraph_runtime" in lifted or
+                      "unresolved Luraph runtime helper" in lifted or
+                      "devirt:" in lifted)
+        if unresolved:
+            if semantic is not None:
+                return write_semantic_candidate(semantic)
+            print("[!] Luraph lift is incomplete: unresolved runtime helpers or "
+                  "unsupported VM operations remain", file=sys.stderr)
+            if not job.debug:
+                os.remove(dpath)
+            recovered = write_recovered_loadstring()
+            if recovered is not None:
+                return recovered
+            if getattr(args, "trace_fallback", False):
+                if not os.path.exists(job.trace_path):
+                    write_trace()
+                return job.trace_path
+            raise RuntimeError(
+                "Luraph devirtualization was incomplete (unresolved runtime helper "
+                "or unsupported VM operation); no verified loadstring payload was captured"
+            )
+
         if semantic is not None:
             llines = max(1, lifted.count("\n"))
             slines = max(1, semantic.count("\n"))
-            unresolved = ("luraph_runtime" in lifted or
-                          "unresolved Luraph runtime helper" in lifted or
-                          "devirt:" in lifted)
-            if unresolved or (llines > 200 and llines > slines * 10):
+            if llines > 200 and llines > slines * 10:
                 return write_semantic_candidate(semantic)
 
         nil_calls = lifted.count("(nil)(")

@@ -4120,8 +4120,8 @@ async function sendLuaProtectRunnerBody(message, prompt, sourceText, directUrl =
 
   await prompt.edit({
     content: isCdnRunner
-      ? '🔄 **LuaProtect Fetcher**\\nDownloading the supplied LuaProtect CDN runner link with Roblox/WinInet...'
-      : '🔄 **LuaProtect Fetcher**\\nExtracted the runner hash. Downloading the matching runner body with Roblox/WinInet...',
+      ? '🔄 **LuaProtect Fetcher**\nDownloading the supplied LuaProtect CDN runner link with Roblox/WinInet...'
+      : '🔄 **LuaProtect Fetcher**\nExtracted the runner hash. Downloading the matching runner body with Roblox/WinInet...',
     embeds: [],
     components: [],
   });

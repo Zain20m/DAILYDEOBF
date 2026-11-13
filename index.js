@@ -5066,8 +5066,15 @@ async function resolveDeobfTargetSource(input) {
 }
 
 async function startWorkflow(message, inlineText = null) {
+  const hasInlineUrl = Boolean(inlineText && /https?:\\/\\//i.test(inlineText));
+  const hasInlineAttachment = Boolean(message.attachments.first());
+  const initialDescription = hasInlineUrl
+    ? 'Direct URL detected. Downloading the supplied script now...'
+    : hasInlineAttachment
+      ? 'File received. Reading and validating the uploaded script...'
+      : 'Upload a **.lua**, **.luau**, **.pureluau** or **.txt** file, paste source, or send a direct HTTP/HTTPS script URL.\\n\\n**Maximum input:** 18 MB';
   const prompt = await message.reply({
-    embeds: [dailyEmbed('New deobfuscation', 'Upload a **.lua**, **.luau**, **.pureluau** or **.txt** file, paste source, or send a direct HTTP/HTTPS script URL.\n\n**Maximum input:** 18 MB', DAILY_COLORS.primary)],
+    embeds: [dailyEmbed('New deobfuscation', initialDescription, DAILY_COLORS.primary)],
     allowedMentions: { repliedUser: false },
   });
   // Accept an attachment, a URL / HttpGet expression on the command,
@@ -5085,6 +5092,18 @@ async function startWorkflow(message, inlineText = null) {
     ? repliedMessage.attachments.first()
     : null;
   const repliedText = repliedMessage ? String(repliedMessage.content || '').trim() : '';
+  if (!hasInlineUrl && (repliedAttachment || /https?:\\/\\//i.test(repliedText))) {
+    await prompt.edit({
+      embeds: [dailyEmbed(
+        repliedAttachment ? 'File received' : 'URL detected',
+        repliedAttachment
+          ? 'Reading and validating the attached script...'
+          : 'Direct URL detected in the message you replied to. Downloading it now...',
+        DAILY_COLORS.primary
+      )],
+      components: [],
+    });
+  }
   let input;
   try {
     if (firstAttachment) {

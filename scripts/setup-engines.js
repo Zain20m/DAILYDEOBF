@@ -27,8 +27,14 @@ const twohbjSetup = spawnSync(python, [path.join(__dirname, 'setup-2hbj-engine.p
 if (twohbjSetup.stdout) process.stdout.write(twohbjSetup.stdout);
 if (twohbjSetup.stderr) process.stderr.write(twohbjSetup.stderr);
 if (twohbjSetup.error || twohbjSetup.status !== 0) {
-  throw new Error('2HBJ engine preparation failed: ' +
-    (twohbjSetup.error ? twohbjSetup.error.message : 'setup script exited with code ' + twohbjSetup.status));
+  // 2HBJ is experimental and optional. A missing native Lupa wheel must
+  // never prevent the main Discord bot and other engines from starting.
+  const detail = twohbjSetup.error
+    ? twohbjSetup.error.message
+    : 'setup script exited with code ' + twohbjSetup.status;
+  console.warn('[2HBJ] Experimental engine is unavailable; continuing startup. ' + detail);
+  if (twohbjSetup.stdout) console.warn('[2HBJ setup stdout] ' + twohbjSetup.stdout.slice(-3000));
+  if (twohbjSetup.stderr) console.warn('[2HBJ setup stderr] ' + twohbjSetup.stderr.slice(-3000));
 }
 const ironveilSetup = spawnSync(python, [path.join(__dirname, 'setup-ironveil.py')], {
   cwd: root,

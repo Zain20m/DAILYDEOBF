@@ -2503,18 +2503,28 @@ class Stepper:
         regfiles = {k for k, v in inner.vars.items() if isinstance(v, RegFile)}
         candidates = {i for r, i in cache[None] if r in regfiles} & set(inner.vars)
 
-        # Discover the operand-stack base before the first handler is stepped.
-        # Otherwise a numeric-for in that first handler raises before
-        # _note_access() has identified carried stack pointers, leaving
-        # _need_jreg() unable to request the stack slots it sees.
-        if self.lf.stack_base is None:
-            initial_tops = [
-                inner.vars[k] for k in candidates
-                if isinstance(inner.vars.get(k), int)
-                and not isinstance(inner.vars.get(k), bool)
-            ]
-            if initial_tops:
-                self.lf.stack_base = min(initial_tops)
+        # A stack pointer is a register-file index local that handlers also
+        # mutate (commonly M += 1 before writing R[M]). Do not choose the
+        # lowest arbitrary register index: that can be an ordinary operand.
+        written = set()
+        for _, _, loop in self.loops:
+            for node in iter_nodes(loop):
+                if node.get("type") == "AstStatCompoundAssign":
+                    target = node.get("var", {})
+                    if target.get("type") == "AstExprLocal":
+                        written.add(target["local"]["location"])
+                elif node.get("type") == "AstStatAssign":
+                    for target in node.get("vars", ()):
+                        if target.get("type") == "AstExprLocal":
+                            written.add(target["local"]["location"])
+        stack_candidates = candidates & written
+        initial_tops = [
+            inner.vars[k] for k in stack_candidates
+            if isinstance(inner.vars.get(k), int)
+            and not isinstance(inner.vars.get(k), bool)
+        ]
+        if self.lf.stack_base is None and len(initial_tops) == 1:
+            self.lf.stack_base = initial_tops[0]
         return candidates
 
     def _local_value(self, loc, before):

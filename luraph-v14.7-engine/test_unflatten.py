@@ -269,6 +269,48 @@ local function run(a, b)
 end
 """
 
+# Luraph 14.x program-level flattening: the loop test is a dispatch test too
+WHILE_COND = """
+local function run(a, b)
+	local r = 0
+	local state = 24
+	while not (state < 24) do
+		if state > 23 then
+			r = a * 3
+			state = 23
+		end
+	end
+	local state2 = 2
+	while state2 ~= 121 do
+		if state2 == 2 then
+			if a > b then state2 = 7 else state2 = 121 end
+		elseif state2 == 7 then
+			r = r - b
+			state2 = 121
+		end
+	end
+	return r
+end
+"""
+
+REPEAT_FALSE = """
+local function run(a, b)
+	local r = 1
+	local state = 57
+	repeat
+		if state == 0x44 then
+			r = r + b
+			break
+		else
+			r = a
+			state = 68
+			continue
+		end
+	until false
+	return r
+end
+"""
+
 HARNESS = "for _,p in ipairs({{1,2},{5,3},{3,3},{-4,9},{10,10},{0,0}}) do print(run(p[1],p[2])) end"
 
 
@@ -282,13 +324,14 @@ def main():
     for name, src in (("linear", LINEAR), ("branch", BRANCH), ("nested-function", NESTED),
                       ("keeps-locals", KEEP_LOCAL), ("loop-exit", LOOP_EXIT),
                       ("loop-with-branch", LOOP_BRANCH), ("elseif-fork", ELSEIF_FORK),
-                      ("break-shape", BREAK_SHAPE)):
+                      ("break-shape", BREAK_SHAPE), ("while-condition", WHILE_COND),
+                      ("repeat-until-false", REPEAT_FALSE)):
         defl = unflatten.deflatten_text(src, astexe)
         if defl == src:
             print("FAIL %s: de-flattener made no change" % name)
             failures += 1
             continue
-        if "state ==" in defl:
+        if "state ==" in defl or "state2 ==" in defl or "state <" in defl:
             print("FAIL %s: a dispatch loop survived" % name)
             failures += 1
         o1 = _run(luau, src, HARNESS)

@@ -182,6 +182,39 @@ class Dump:
         self.extra_patches = (PatchLog(), PatchLog())   # stable patches of protos walked earlier this round
         self._sent = {}         # stable patch key -> value the harness session has applied
 
+    def const_pool_for(self, proto):
+        """Luraph 14.x hoists the script's globals and strings into one table
+        T and starts the script as T[0](T): the table whose [0] is a closure
+        of `proto` (the payload's root). None if there is none."""
+        if os.environ.get("DEVIRT_NO_CONST_POOL") == "1" or not isinstance(proto, LTable):
+            return None
+        cache = self.__dict__.setdefault("_pools", {})
+        if proto.tid not in cache:
+            hit = None
+            for t in self.tables.values():
+                f = t.h.get(0)
+                if isinstance(f, OpaqueFn) and f.pf_tid == proto.tid and len(t.h) >= 8:
+                    hit = t
+                    break
+            cache[proto.tid] = hit
+        return cache[proto.tid]
+
+    def proto_array_ids(self):
+        """id(array) of every per-instruction array of every prototype in
+        the dump (opcode / operand fields): VM internals, never program data."""
+        m = getattr(self, "_proto_arrays", None)
+        if m is None:
+            m = set()
+            protos = [self.tables[t] for t in self.pid_of_table if t in self.tables]
+            protos += [t for t in self.tables.values() if ProtoLifter._is_proto_table(t)]
+            for t in protos:
+                for x in t.h.values():
+                    if isinstance(x, LTable) and x.h and all(isinstance(k, int) for k in x.h) \
+                            and all(isinstance(y, (int, float)) and not isinstance(y, bool) for y in x.h.values()):
+                        m.add(id(x))
+            self._proto_arrays = m
+        return m
+
     def _lazy_late(self, d):
         """Lazy constants decoded at run time from an instruction's decoded
         operand, in a proto the runtime restored to its pre-run state (envlog
@@ -668,6 +701,41 @@ def find_ctor_funcs(root):
     return out
 
 
+def find_assigned_funcs(root):
+    """14.x also fills the VM object after its constructor, inside flattened
+    setup code (`M[56] = function(...) ... end`): key -> function, from the
+    local that gets the most of them."""
+    out = {}
+    groups = {}
+    for n in iter_nodes(root):
+        if n.get("type") != "AstStatAssign":
+            continue
+        for var, val in zip(n["vars"], n["values"]):
+            val = vmmap.unwrap(val)
+            if var.get("type") != "AstExprIndexExpr" or val.get("type") != "AstExprFunction":
+                continue
+            base, key = vmmap.unwrap(var["expr"]), vmmap.unwrap(var["index"])
+            if base.get("type") == "AstExprLocal" and key.get("type") == "AstExprConstantNumber":
+                groups.setdefault(base["local"]["location"], {}).setdefault(S.fix_int(key["value"]), []).append(val)
+    if groups:
+        best_g = max(groups.values(), key=len)
+        for k, fns in best_g.items():
+            if len(fns) == 1:
+                out[k] = fns[0]
+        # (14.8 splits its setup over methods, each naming the VM object
+        # differently: the vararg packer is recognized by its shape alone)
+        packs = {}
+        for g in groups.values():
+            for k, fns in g.items():
+                for f in fns:
+                    if _is_vararg_pack(f):
+                        packs.setdefault(k, []).append(f)
+        for k, fns in packs.items():
+            if k not in out:
+                out[k] = fns[0]
+    return out
+
+
 # --------------------------------------------------------------------------
 # IR (the shared classes are in ir.py)
 
@@ -731,6 +799,44 @@ def _hv(v):
     return id(v)
 
 
+def _loc_key(v):
+    """State.key form of a carried local's value (VM objects by kind/identity)."""
+    if isinstance(v, (RegFile, EnvTable)):
+        return type(v).__name__
+    if isinstance(v, Builtin):
+        return ("builtin", v.name)
+    if isinstance(v, (bool, int, float, bytes)):
+        return (type(v).__name__, v)
+    if isinstance(v, Const):
+        return ("const", type(v.v).__name__, v.v)
+    if isinstance(v, Reg):
+        return ("reg", v.n)
+    return (type(v).__name__, id(v))
+
+
+def _is_vararg_pack(node):
+    """`function(...) local n = f("#", ...); if ... end; return n, {...} end`."""
+    try:
+        if not node.get("vararg") or node.get("args"):
+            return False
+        body = node["body"]["body"]
+        if len(body) != 3 or body[0]["type"] != "AstStatLocal" or body[1]["type"] != "AstStatIf" \
+                or body[2]["type"] != "AstStatReturn":
+            return False
+        call = vmmap.unwrap(body[0]["values"][0])
+        if call["type"] != "AstExprCall" or len(call["args"]) != 2 \
+                or call["args"][0].get("type") != "AstExprConstantString" or call["args"][1].get("type") != "AstExprVarargs":
+            return False
+        ret = body[2]["list"]
+        if len(ret) != 2 or vmmap.unwrap(ret[0]).get("type") != "AstExprLocal":
+            return False
+        tb = vmmap.unwrap(ret[1])
+        return tb["type"] == "AstExprTable" and len(tb["items"]) == 1 \
+            and vmmap.unwrap(tb["items"][0]["value"]).get("type") == "AstExprVarargs"
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return False
+
+
 class State:
     """(mode, pc, loop-stack, known jump-register values, array overlay) at an
     instruction boundary."""
@@ -751,7 +857,7 @@ class State:
             d += 1
             k = k.get(link)
         return (self.mode, self.pc, d, self.jregs, self.ov.h if self.ov is not None else 0,
-                tuple((r, fmt_expr(l)) for r, l in self.packs), self.locs,
+                tuple((r, fmt_expr(l)) for r, l in self.packs), tuple((k, _loc_key(v)) for k, v in self.locs),
                 # (the tail's temp name is path-specific: keying on it would make
                 # every pass through a loop a new state; a variable-result value is
                 # consumed by the next instruction, never merged across branches)
@@ -811,6 +917,7 @@ class ProtoLifter:
         self.requests = set()
         self.jump_regs = set()
         self.need_jump_regs = set()
+        self.patch_regs = set()     # registers feeding instruction patches (newindex)
         self.jvals = {}
         self.jread = set()
         self.stack_base = None       # stack VM: registers above this are its operand stack (Stepper.carry)
@@ -835,6 +942,7 @@ class ProtoLifter:
         for v in proto.h.values():
             if isinstance(v, LTable):
                 self.proto_arrays.add(id(v))
+        self.const_pool = dump.const_pool_for(proto) if hasattr(dump, "const_pool_for") else None
         self.making = False
         if isinstance(proto, JitProto):
             # a function an LPH_JIT function defines: its environment is
@@ -884,7 +992,7 @@ class ProtoLifter:
     def initial_state(self):
         self.in_prologue = True
         cs = Scope(self.maker_scope)
-        cs.vars["..."] = Multi([], VarargTail(1))
+        cs.vars["..."] = Multi([self.const_pool]) if self.const_pool is not None else Multi([], VarargTail(1))
         self.cur_scope = cs
         it = S.Interp(self)
         it.exec_block(self.vm.prologue, cs)
@@ -927,7 +1035,8 @@ class ProtoLifter:
                 if old is not None and st.target.n not in self.pack_read:
                     self.pack_killed.add((st.target.n, fmt_expr(old)))
                 self.pack_copies.pop(st.target.n, None)
-        if isinstance(st, Assign) and isinstance(st.target, Reg) and self.jvals.get(st.target.n) is FRAME:
+        if isinstance(st, Assign) and isinstance(st.target, Reg) and \
+                (self.jvals.get(st.target.n) is FRAME or isinstance(self.jvals.get(st.target.n), ArrRef)):
             del self.jvals[st.target.n]
         if isinstance(st, Assign) and isinstance(st.target, Reg) and st.target.n in self.jump_regs \
                 and self.stack_base is not None and isinstance(st.target.n, int) and st.target.n > self.stack_base:
@@ -943,10 +1052,23 @@ class ProtoLifter:
             v = st.value
             if isinstance(v, Const) and isinstance(v.v, int):
                 self.jvals[st.target.n] = v.v
+                if st.target.n in self.patch_regs:
+                    # `r = K + r`: the read was of the old value; the new
+                    # one is unread and must reach the next instruction
+                    self.jread.discard(st.target.n)
             else:
+                if st.target.n in self.patch_regs and isinstance(v, Expr):
+                    self._need_patch_regs(v)
                 self.jvals.pop(st.target.n, None)
             st.jump = True
         self.out.append(st)
+
+    def _need_patch_regs(self, v):
+        for r in expr_regs(v):
+            if isinstance(r.n, int) and not isinstance(r.n, bool) and r.n < TEMP_REG_BASE:
+                self.patch_regs.add(r.n)
+                if r.n not in self.jump_regs:
+                    self.need_jump_regs.add(r.n)
 
     def new_temp(self):
         self.tcount += 1
@@ -1363,6 +1485,8 @@ class ProtoLifter:
                 raise Unsupported("read below the stack VM's frame (register %s)" % k)
             if self.jvals.get(k) is FRAME:
                 return obj
+            if isinstance(self.jvals.get(k), ArrRef):
+                return self.jvals[k].obj
             if k in self.jvals:
                 self.jread.add(k)
                 return self.jvals[k]
@@ -1405,6 +1529,8 @@ class ProtoLifter:
             if isinstance(key, BoxPart) and key.idx == obj.idx:
                 return Upval(obj.idx)
             return Index(self.as_expr(obj), self.as_expr(key))
+        if obj is not None and obj is self.const_pool:
+            return self.pool_get(key)
         if isinstance(obj, LTable):
             if is_sym(key) and obj is self.vmobj and isinstance(key, Index) and isinstance(key.key, Index) \
                     and key.key.obj == key.obj and isinstance(key.key.key, Const):
@@ -1501,6 +1627,24 @@ class ProtoLifter:
             return lst.extra[key]
         raise Unsupported("packed list index %r" % (key,))
 
+    def pool_get(self, key):
+        """pool[key]: strings, numbers and globals as themselves; anything
+        else stays an index of the pool's name."""
+        if isinstance(key, Multi):
+            key = key.first()
+        if is_sym(key):
+            return Index(Global(CONST_POOL_NAME), self.as_expr(key))
+        v = self.const_pool.get(key)
+        if v is None or isinstance(v, (bool, int, float, bytes)):
+            return v
+        if isinstance(v, Builtin) and v.fn is None:
+            return Global(v.name)
+        if isinstance(v, EnvTable):
+            return v
+        if isinstance(v, Opaque) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", v.src or ""):
+            return Global(v.src)
+        return Index(Global(CONST_POOL_NAME), Const(S.norm_key(key)))
+
     def newindex(self, obj, key, v, it):
         if isinstance(key, Multi):
             key = key.first()
@@ -1513,6 +1657,19 @@ class ProtoLifter:
                 return
             if isinstance(v, RegFile):
                 self.jvals[S.norm_key(key)] = FRAME
+                return
+            if v is not None and v is self.const_pool:
+                # the script's constant pool (Dump.const_pool_for): keep the
+                # table so constant indexes read the real strings and globals
+                k = S.norm_key(key)
+                self.emit(Assign(Reg(k), Global(CONST_POOL_NAME)))
+                self.jvals[k] = ArrRef(v)
+                return
+            if isinstance(v, LTable) and (id(v) in self.proto_arrays or id(v) in self.dump.proto_array_ids()):
+                # one of the VM's own instruction arrays in a register: Luraph's
+                # in-place patching (`N[x] = a; N[x][k] = c`). Keep the object so
+                # the patches reach the overlay instead of becoming code.
+                self.jvals[S.norm_key(key)] = ArrRef(v)
                 return
             if isinstance(key, (int, float)) and key < 1 and self.stack_base is not None:
                 raise Unsupported("store below the stack VM's frame (register %s)" % key)
@@ -1561,6 +1718,11 @@ class ProtoLifter:
                 self.mutated = True
             if self.ov_base is not None and obj.tid is not None:
                 # tables from the dump are shared by all paths: path-local writes
+                if id(obj) in self.proto_arrays and isinstance(v, Expr):
+                    # an instruction patched from registers (`N[x][k] = N[y]`,
+                    # often `N[y] = N[z] - 3` first): walk again tracking those
+                    # registers' constant values (see emit for the chain)
+                    self._need_patch_regs(v)
                 self.write_ov((id(obj), S.norm_key(key)), v, obj.get(key))
                 return
             obj.set(key, v)
@@ -1620,7 +1782,8 @@ class ProtoLifter:
             if not all(isinstance(y, (int, float)) and not isinstance(y, bool) for y in xh.values()):
                 continue
             n = max(xh)
-            if n >= 2 and len(xh) >= 0.9 * n:
+            # (operand arrays leave out zero operands: sparse, same length)
+            if n >= 2 and len(xh) >= 0.3 * n:
                 lengths[n] = lengths.get(n, 0) + 1
         return any(c >= 3 for c in lengths.values())
 
@@ -1648,6 +1811,8 @@ class ProtoLifter:
             return self.jit_closure(v)
         if isinstance(v, SymList):
             return v
+        if isinstance(v, LTable) and v is self.const_pool:
+            return Global(CONST_POOL_NAME)
         if isinstance(v, LTable):
             if v is self.proto:
                 # only Luraph's LPH_CRASH() expansion touches the VM's own
@@ -1665,6 +1830,10 @@ class ProtoLifter:
                 # helper is an unresolved stub that ignores it, so name it
                 # instead; the function itself is lifted separately under its
                 # `-- captured proto <id>` header.
+                if id(v) in self.proto_arrays or id(v) in self.dump.proto_array_ids():
+                    # one per-instruction array of a compiled Luraph function
+                    # (VM internals: Luraph patches its own code through these)
+                    return Global("nil --[[ Luraph instruction array ]]")
                 if self._is_proto_table(v):
                     pid = self._proto_pid(v)
                     return Global("nil --[[ compiled Luraph function%s ]]" % (
@@ -2014,6 +2183,14 @@ class ProtoLifter:
                 # environment state that the VM interpreter does not model,
                 # preserve the function as native source and emit the call
                 # instead of treating it as a broken VM function.
+                if _is_vararg_pack(node):
+                    # Luraph's `function(...) local n = select("#", ...)
+                    # if n == 0 then return n, EMPTY end return n, {...} end`:
+                    # the vararg count and table, which every VM function
+                    # makes of its arguments. Reads of either table are the
+                    # same, so this is (select("#", ...), {...}).
+                    cnt = self.call_builtin(Builtin("select"), Multi([b"#"] + list(args.items), args.tail), it, False)
+                    return Multi([cnt, SymList(list(args.items), args.tail)])
                 try:
                     return it.call_lua(LuaFunc(node, Scope()), args)
                 except Unsupported:
@@ -2138,10 +2315,32 @@ class UpList:
 
 
 REGFILE = RegFile()
+CONST_POOL_NAME = "luraph_constants"   # Dump.const_pool_for, rendered by lift_program
+TEMP_REG_BASE = 1 << 20     # registers holding micro-instruction temporaries (Stepper._carried_temps)
 
 # `s[k] = s`: a register holding the VM frame itself (jvals marker). Closures
 # capture it by value and read the parent's locals as upv[i][reg].
 FRAME = "<frame>"
+
+
+class ArrRef:
+    """A register holding one of the proto's instruction arrays (see newindex)."""
+    __slots__ = ("obj",)
+
+    def __init__(self, obj):
+        self.obj = obj
+
+    def __eq__(self, o):
+        return isinstance(o, ArrRef) and o.obj is self.obj
+
+    def __hash__(self):
+        return hash(("arrref", id(self.obj)))
+
+    def __lt__(self, o):
+        return repr(self) < repr(o)
+
+    def __repr__(self):
+        return "ArrRef(%r)" % (self.obj,)
 
 
 class FrameProxy:
@@ -2531,6 +2730,7 @@ class Stepper:
         self.new_carry = False
         self.fixed_decls = {d for d in (self.pc_decl, self.mode_decl, vm.kstack_key) if d}
         self.sp_cands = self._stack_pointer_candidates()
+        self.temps = self._micro_temps()
 
     def _stack_pointer_candidates(self):
         """Prologue locals the handlers use directly as a register index
@@ -2579,6 +2779,25 @@ class Stepper:
             self.lf.stack_base = initial_tops[0]
         return candidates
 
+    def _micro_temps(self):
+        """Loop-function locals declared without a value before the dispatch
+        loop (`local D,Y,j,g,q,P,Q,W,r,_,G`). Luraph 14.x splits one Lua
+        instruction into several VM micro-instructions that pass operands
+        through these (`g=R[e];Q=s[e]` then `for C=g,Q do N[C]=nil end`), so
+        their values are part of the state between instructions (Stepper._carried)."""
+        if os.environ.get("DEVIRT_NO_TEMP_CARRY") == "1":
+            return {}
+        out = {}
+        for st in self.vm.inner_body[:self.first_inner]:
+            if st["type"] != "AstStatLocal" or st.get("values"):
+                continue
+            for v in st["vars"]:
+                loc = v["location"]
+                if loc in self.fixed_decls or loc in self.lf.special:
+                    continue
+                out[loc] = len(out)
+        return out
+
     def _local_value(self, loc, before):
         """The expression a local of the loop function is declared with."""
         for st in self.vm.inner_body[:before]:
@@ -2599,10 +2818,12 @@ class Stepper:
         if locs:
             # a carried local indexes the registers: a stack pointer, whose
             # initial value is the frame size (the slots above: operand stack)
-            self.lf.stack_base = min(v for _, v in locs)
+            sp = [v for k, v in locs if k in self.carry]
+            if sp:
+                self.lf.stack_base = min(sp)
         return State(mode, pc, ks.vars[self.vm.kstack_key] if ks else None, locs=locs)
 
-    def _carried(self, inner):
+    def _carried(self, inner, emit=False):
         """State.locs: the carried locals' current values."""
         out = []
         new = getattr(self.lf, "rtail_new", None)
@@ -2615,7 +2836,47 @@ class Stepper:
             if not (isinstance(v, int) and not isinstance(v, bool)):
                 raise Unsupported("symbolic value of a VM local carried between instructions (%r)" % (v,))
             out.append((k, v))
+        if self.temps:
+            out += self._carried_temps(inner, emit)
         return tuple(out)
+
+    def _carried_temps(self, inner, emit):
+        """Micro-instruction temporaries (see _micro_temps) still holding a
+        value after an instruction. Concrete values and the VM's own objects
+        are kept as they are; a symbolic value (or a table built by this
+        instruction) is stored in a temp register first, since the registers
+        it reads may change before the next instruction uses it."""
+        out = []
+        lf = self.lf
+        new = getattr(lf, "new_tables", None) or ()
+        for k, idx in self.temps.items():
+            if k in self.carry:
+                continue
+            v = inner.vars.get(k)
+            if isinstance(v, Multi):
+                v = v.first()
+            if v is None or isinstance(v, TopMarker):
+                continue
+            if isinstance(v, (bool, int, float, bytes, RegFile, EnvTable, Builtin, UpContainer, OpaqueFn)) \
+                    or isinstance(v, Const):
+                out.append((k, v))
+                continue
+            if isinstance(v, LTable) and id(v) not in new:
+                out.append((k, v))      # a table that existed before: same object next time
+                continue
+            if not isinstance(v, (Expr, LTable)) or not emit:
+                continue
+            r = Reg(TEMP_REG_BASE + idx)
+            if v == r:
+                out.append((k, r))
+                continue
+            try:
+                val = lf.value_of(v)
+            except Unsupported:
+                continue
+            lf.emit(Assign(r, val))
+            out.append((k, r))
+        return out
 
     def _fresh_scopes(self, state, it):
         """Scopes at the top of the loop function, before the first loop;
@@ -2658,6 +2919,7 @@ class Stepper:
         lf.pack_copies = {}
         lf.pack_read = set()
         lf.rtail_new = None
+        lf.new_tables = set() if self.temps else None
         it = S.Interp(lf)
         it.decisions = list(decisions)
         cs, inner = self._fresh_scopes(state, it)
@@ -2704,12 +2966,13 @@ class Stepper:
         if outcome[0] == "next":
             def get(k):
                 return inner.lookup(k).vars[k]
-            locs = self._carried(inner)
+            locs = self._carried(inner, True)
             sb = lf.stack_base
-            if sb is not None and locs:
+            sp = [v for k, v in locs if k in self.carry]
+            if sb is not None and sp:
                 # operand stack slots: a value stays known while it is on the
                 # stack (reads peek, they don't consume it); above the top it is dead
-                top = max(v for _, v in locs)
+                top = max(sp)
                 jr = tuple(sorted((k, v) for k, v in lf.jvals.items() if k not in lf.jread
                                   and not (isinstance(k, int) and k > top)))
             else:
@@ -2739,7 +3002,7 @@ class Stepper:
             return
         self.read_first |= acc.read_first
         self.written |= acc.written
-        for k in (self.read_first & self.written & self.sp_cands) - self.carry - self.not_carried - self.fixed_decls:
+        for k in (self.read_first & self.written & self.sp_cands) - self.carry - self.not_carried - self.fixed_decls - set(self.temps):
             v = dict.get(acc, k)
             if k in self.lf.special or not (isinstance(v, int) and not isinstance(v, bool)):
                 self.not_carried.add(k)
@@ -3321,10 +3584,31 @@ class Program:
             except (KeyError, AttributeError, IndexError):
                 continue
             ctor = self.ctors[id(self.vm_of(cap))]
-            if isinstance(e, LTable):
-                for k, v in e.h.items():
+            objs = [e] if isinstance(e, LTable) else []
+            # 14.x: the VM object is an upvalue of the VM function (`M`,
+            # captured as __venvN), not the maker's argument
+            extra = self.__dict__.setdefault("_assigned", {})
+            if id(self.root) not in extra:
+                extra[id(self.root)] = find_assigned_funcs(self.root)
+            assigned = extra[id(self.root)]
+            for nm, t in cap.items():
+                if isinstance(nm, str) and nm.startswith("__venv") and isinstance(t, LTable) and t is not e and \
+                        sum(1 for k, v in t.h.items() if isinstance(v, OpaqueFn) and (k in ctor or k in assigned)) >= 3:
+                    objs.append(t)
+            for obj in objs:
+                for k, v in obj.h.items():
                     if isinstance(v, OpaqueFn) and v.node is None and k in ctor:
                         v.node = ctor[k]
+            # helpers assigned later: only the vararg pack (see _is_vararg_pack),
+            # whose meaning is known; the others stay runtime stubs
+            if objs:
+                for k, fnode in assigned.items():
+                    if not _is_vararg_pack(fnode):
+                        continue
+                    for obj in objs:
+                        v = obj.h.get(k)
+                        if isinstance(v, OpaqueFn) and v.node is None:
+                            v.node = fnode
         g = LTable()
         for lib in ("bit32", "string", "table", "math", "buffer"):
             t = LTable()
@@ -3490,22 +3774,25 @@ class Program:
                         return s0, order, True
                     node.error = "symbolic next pc/mode: %s / %s" % (fmt_any(ns.pc), fmt_any(ns.mode))
                     continue
-                if ns.locs:
+                tmps = getattr(st, "temps", None) or ()
+                nsl = tuple(x for x in ns.locs if x[0] not in tmps) if tmps else ns.locs
+                ssl = tuple(x for x in s.locs if x[0] not in tmps) if tmps else s.locs
+                if nsl:
                     # compiled stack code has few stack depths per pc (one,
                     # except at a shared pop-and-jump, a "hub"); ever new ones
                     # are a path where the stack grows each round: cut it off
-                    if ns.pc != s.pc + 1 and s.locs and ns.locs < s.locs:
+                    if ns.pc != s.pc + 1 and ssl and nsl < ssl:
                         hubs.add((s.mode, s.pc))
                     seen_locs = depth_at.setdefault((ns.mode, ns.pc), set())
-                    if ns.locs not in seen_locs and len(seen_locs) >= MAX_STACK_DEPTHS \
+                    if nsl not in seen_locs and len(seen_locs) >= MAX_STACK_DEPTHS \
                             and (ns.mode, ns.pc) not in hubs:
                         node.error = "stack depth %s at %s:%s (seen %s)" % (
-                            ns.locs[0][1], ns.mode, ns.pc, sorted(x[0][1] for x in seen_locs))
+                            nsl[0][1], ns.mode, ns.pc, sorted(x[0][1] for x in seen_locs))
                         # Keep request walks permissive so they can still discover
                         # constants.  A real lift will reject this node before
                         # lowering instead of silently deleting the edge.
                         continue
-                    seen_locs.add(ns.locs)
+                    seen_locs.add(nsl)
                 nk = ns.key(link)
                 # a long-lived unread pack (the entry's `...`) killed inside a
                 # loop gives the loop a second copy: leave such packs out of the
@@ -3933,6 +4220,33 @@ def _vm_roots(prog):
     return vms, payload
 
 
+def render_const_pool(pool):
+    """`local luraph_constants = {...}`: the script's constant pool (see
+    Dump.const_pool_for), as the lifted code indexes it."""
+    def val(v):
+        if v is None or isinstance(v, (bool, int, float, bytes)):
+            return fmt_const(v)
+        if isinstance(v, Builtin):
+            return v.name
+        if isinstance(v, EnvTable):
+            return "getfenv()"
+        if isinstance(v, Opaque) and re.match(r"^[A-Za-z_][A-Za-z0-9_.]*$", v.src or ""):
+            return v.src
+        if isinstance(v, OpaqueFn):
+            return "nil --[[ function ]]"
+        if isinstance(v, LTable):
+            return "{} --[[ table ]]"
+        return "nil --[[ %s ]]" % type(v).__name__
+    out = ["-- the script's constants and globals (Luraph hoists them into one table)",
+           "local %s = {" % CONST_POOL_NAME]
+    for k in sorted(pool.h, key=lambda k: (not isinstance(k, int), k if isinstance(k, int) else repr(k))):
+        if k == 0:
+            continue        # the script itself
+        out.append("\t[%s] = %s," % (fmt_const(k), val(pool.h[k])))
+    out.append("}")
+    return out
+
+
 def program_roots(prog):
     """[(tag, pid, cap)] of the root protos lift_program lifts, in order."""
     vms, payload = _vm_roots(prog)
@@ -3975,6 +4289,10 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
         if tag == payload:
             payload_pid = pid
         lines = fl.lift(vm, vmobj, proto, UpList(), {}, 0)
+        pool = prog.dump.const_pool_for(proto)
+        if pool is not None and any(CONST_POOL_NAME in ln for ln in lines):
+            out.append("")
+            out += render_const_pool(pool)
         if tag == payload and not loaders:
             out.append("")
             if fl.params:

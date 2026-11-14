@@ -13,6 +13,8 @@ Values:
   and symbolic IR expressions (Expr subclasses, see below).
 """
 import math
+import os
+import sys
 import struct
 
 
@@ -414,7 +416,14 @@ def arith(op, a, b):
             r += b
         return fix_int(r)
     if op == "Pow":
-        return fix_int(float(a) ** float(b))
+        try:
+            return fix_int(float(a) ** float(b))
+        except OverflowError:
+            # IEEE pow overflows to +-inf (Lua/Luau semantics)
+            neg = a < 0 and float(b).is_integer() and int(b) % 2 == 1
+            return float("-inf") if neg else float("inf")
+        except ZeroDivisionError:
+            return float("inf")
     raise Unsupported(op)
 
 
@@ -719,6 +728,13 @@ class Interp:
             b = self.eval(st["to"], scope)
             c = self.eval(st["step"], scope) if st.get("step") else 1
             if is_sym(a) or is_sym(b) or is_sym(c):
+                # a copy of a variable number of values into the registers
+                # (call results / varargs): the lifter models it (devirt)
+                # (opt-in: on the 14.7 sample it lifts the copies but the
+                # structurer cannot place the variable-result tails yet)
+                sf = getattr(self.L, "symbolic_for", None) if os.environ.get("DEVIRT_SYMBOLIC_FOR") == "1" else None
+                if sf is not None and sf(st, scope, a, b, c, self):
+                    return
                 if hasattr(self.L, "_need_jreg"):
                     self.L._need_jreg(a, b, c)
                 raise Unsupported("numeric for with symbolic bounds")
@@ -918,6 +934,9 @@ class Interp:
         items = node["items"]
         # {...} and {f()} build SymLists when a tail is involved
         tb = LTable()
+        nt = getattr(self.L, "new_tables", None)
+        if nt is not None:
+            nt.add(id(tb))
         pos = 1
         symbolic = False
         for i, it in enumerate(items):

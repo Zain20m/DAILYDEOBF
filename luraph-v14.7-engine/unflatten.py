@@ -145,6 +145,10 @@ class _Deflattener:
         return isinstance(cond, dict) and cond.get("type") == "AstExprConstantBool" and cond.get("value") is True
 
     @staticmethod
+    def _is_false(cond):
+        return isinstance(cond, dict) and cond.get("type") == "AstExprConstantBool" and cond.get("value") is False
+
+    @staticmethod
     def _else_stmts(st):
         """Statements of an if's else part. An `elseif` is stored as a nested
         AstStatIf (not a block): it is one statement of the else part."""
@@ -544,7 +548,10 @@ class _Deflattener:
                     raise _Revisit(key)
                 entered[key] = (len(items), dict(vals), onpath, dict(scope))
                 onpath = onpath | {key}
-                r = self._iter([[self._body, 0]], vals, items, onpath, budget, loops, scope)
+                if self._wcond is not None and not self._truth(self._eval(self._wcond, vals)):
+                    r = "break"     # the loop test failed: leave the dispatcher
+                else:
+                    r = self._iter([[self._body, 0]], vals, items, onpath, budget, loops, scope)
             except _Revisit as rv:
                 if rv.key not in entered:
                     raise
@@ -592,6 +599,13 @@ class _Deflattener:
         self._ctrl = self._control_vars(w, spans)
         if not self._ctrl or not self._is_ctrl_cond(b[0].get("condition"), self._ctrl):
             return False            # not a dispatcher
+        # `while state ~= EXIT do` / `while not (n < 24) do`: the loop test is
+        # one more dispatch test, checked before every pass over the body
+        self._wcond = None
+        if w.get("type") == "AstStatWhile" and not self._is_true(w.get("condition")):
+            if not self._is_ctrl_cond(w["condition"], self._ctrl):
+                return False
+            self._wcond = w["condition"]
         self._free_cache = {}
         # seed values from the setup statements
         vals = {}
@@ -715,7 +729,8 @@ class _Deflattener:
     def _scan(self, body, edits):
         for i, st in enumerate(body):
             done = False
-            if st.get("type") == "AstStatWhile" and self._is_true(st.get("condition")):
+            if (st.get("type") == "AstStatWhile" and st.get("condition")) or \
+                    (st.get("type") == "AstStatRepeat" and self._is_false(st.get("condition"))):
                 try:
                     done = self._try_loop(body, i, edits)
                 except _Bail:

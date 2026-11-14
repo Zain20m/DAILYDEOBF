@@ -82,11 +82,35 @@ def lower(entry_key, order, D, link, prefix, upnames, closure):
 
 
 def polish(text):
-    """Whole-program text passes: local names from use (names.py, unless
+    """Whole-program text passes: control-flow de-flattening (unflatten.py,
+    unless DEVIRT_NO_UNFLATTEN), local names from use (names.py, unless
     DEVIRT_NO_NAMES), `local function` (localfuncs.py). Each is skipped
     with a warning if it fails."""
     import codegen
     text = text.replace(codegen.LONG_NL, "\n")     # long strings' newlines, kept out of re-indenting
+    # De-flatten first, so the naming pass sees the recovered structure.
+    if not os.environ.get("DEVIRT_NO_UNFLATTEN"):
+        try:
+            import unflatten
+            from obfuscators.luraph_v14_9.vmmap import luau_ast_executable
+            before = text
+            text = unflatten.deflatten_text(text, luau_ast_executable())
+            # the pass verifies internally, but re-parse the whole file as a
+            # final backstop: if anything is off, keep the un-touched text
+            if text is not before and text != before:
+                import tempfile
+                import subprocess
+                with tempfile.NamedTemporaryFile("w", suffix=".luau", delete=False, encoding="utf-8", newline="\n") as f:
+                    f.write(text)
+                    p = f.name
+                try:
+                    if subprocess.run([luau_ast_executable(), p], capture_output=True).returncode != 0:
+                        print("[!] de-flatten produced invalid Luau; kept the flattened form", file=sys.stderr)
+                        text = before
+                finally:
+                    os.remove(p)
+        except Exception as ex:  # noqa: BLE001 - keep the flattened form
+            print("[!] de-flatten pass failed: %s" % ex, file=sys.stderr)
     if not os.environ.get("DEVIRT_NO_NAMES"):
         import names
         try:

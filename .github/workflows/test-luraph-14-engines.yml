@@ -42,6 +42,12 @@ jobs:
           print(f"Compiled {count} Python source files.")
           PY
 
+      - name: De-flatten pass equivalence (control-flow unflattening)
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python3 luraph-v14.7-engine/test_unflatten.py
+
       - name: Load the Luraph v14.7, v14.8 and v14.9 engines
         env:
           PYTHONPATH: luraph-v14.7-engine

@@ -145,6 +145,35 @@ class NewTableE(Expr):
         self.items, self.tail = items, tail
 
 
+def _const_only(e, depth=0):
+    """A literal built from constants only (no calls, no variables)."""
+    if depth > 40:
+        return False
+    if isinstance(e, Const):
+        return True
+    if isinstance(e, NewTableE):
+        return e.tail is None and all((k is None or _const_only(k, depth + 1)) and _const_only(v, depth + 1)
+                                      for k, v in e.items)
+    return False
+
+
+def _bytecode_literal(t):
+    """A Luraph function prototype written as a table literal: small integer
+    keys and at least three parallel per-instruction arrays of numbers."""
+    if not _const_only(t) or not t.items or len(t.items) > 16:
+        return False
+    lengths = {}
+    for k, v in t.items:
+        if k is not None and not (isinstance(k.v, (int, float)) and not isinstance(k.v, bool) and 0 <= k.v <= 16):
+            return False
+        if isinstance(v, NewTableE) and v.items:
+            nums = [x for _, x in v.items if isinstance(x, Const) and isinstance(x.v, (int, float))
+                    and not isinstance(x.v, bool)]
+            if len(nums) == len(v.items) and len(nums) >= 2:
+                lengths[len(nums)] = lengths.get(len(nums), 0) + 1
+    return any(c >= 3 for c in lengths.values())
+
+
 class GenIterE(Expr):
     def __init__(self, args):
         self.args = args
@@ -1565,6 +1594,17 @@ class Renderer:
 
     def call(self, e):
         fn, args = e.fn, e.args
+        # A Luraph runtime stub (it ignores its arguments and returns nil)
+        # handed a compiled function as an inline bytecode table: name it
+        # instead of printing thousands of lines of numbers.
+        if isinstance(fn, Global) and str(getattr(fn, "name", "")).startswith("luraph_runtime") \
+                and any(isinstance(x, NewTableE) and _bytecode_literal(x) for x in args.items):
+            parts = ["nil --[[ compiled Luraph function (inline bytecode table) ]]"
+                     if isinstance(x, NewTableE) and _bytecode_literal(x) else self.expr(x)
+                     for x in args.items]
+            if args.tail is not None:
+                parts.append(self.tail(args.tail))
+            return "%s(%s)" % (self.prefix(fn), ", ".join(parts))
         # obj:method(...) when the first argument is the object the function was read from
         if isinstance(fn, Index) and isinstance(fn.key, Const) and isinstance(fn.key.v, bytes) and args.items:
             same = expr_key(args.items[0]) == expr_key(fn.obj) and not expr_key(fn.obj).startswith("X")

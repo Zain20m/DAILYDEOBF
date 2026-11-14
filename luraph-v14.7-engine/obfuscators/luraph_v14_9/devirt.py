@@ -1601,6 +1601,41 @@ class ProtoLifter:
         if any(isinstance(x, Missing) and not isinstance(x, NilIndex) for x in walk_expr(cond)):
             raise Unsupported("needs a constant that is not decoded yet")
 
+    @staticmethod
+    def _is_proto_table(v):
+        """A Luraph VM function prototype (bytecode table), by shape: small
+        integer keys, and at least three parallel per-instruction arrays
+        (opcode / operand fields) of one length. The field layout differs
+        between 14.7, 14.8 and 14.9; the parallel arrays do not."""
+        h = getattr(v, "h", None)
+        if not h or len(h) > 16 or not all(isinstance(k, int) and 0 <= k <= 16 for k in h):
+            return False
+        lengths = {}
+        for x in h.values():
+            xh = getattr(x, "h", None)
+            if not isinstance(x, LTable) or not xh:
+                continue
+            if not all(isinstance(k, int) for k in xh):
+                continue
+            if not all(isinstance(y, (int, float)) and not isinstance(y, bool) for y in xh.values()):
+                continue
+            n = max(xh)
+            if n >= 2 and len(xh) >= 0.9 * n:
+                lengths[n] = lengths.get(n, 0) + 1
+        return any(c >= 3 for c in lengths.values())
+
+    def _proto_pid(self, v):
+        """The capture id (as in `captured proto <id>`) of a prototype table."""
+        m = getattr(self.dump, "_proto_pid_map", None)
+        if m is None:
+            m = {}
+            for pid, cap in self.dump.protos.items():
+                for x in cap.values():
+                    if isinstance(x, LTable) and self._is_proto_table(x):
+                        m.setdefault(id(x), pid)
+            self.dump._proto_pid_map = m
+        return m.get(id(v))
+
     def value_of(self, v):
         """Value for an IR assignment: expressions, constants, closures, lists."""
         if isinstance(v, Multi):
@@ -1623,6 +1658,17 @@ class ProtoLifter:
                 if lib is not None:
                     # a whole library as a value (`R[a] = string`, Hardcode Globals)
                     return Global(lib)
+                # A compiled Luraph function (its bytecode table: register
+                # count at [3], instruction arrays at [4]/[5]/[7]/[9]) handed to
+                # a runtime helper that builds the closure. Spelled out it was
+                # thousands of lines of numbers (60% of a 14.7 output) and the
+                # helper is an unresolved stub that ignores it, so name it
+                # instead; the function itself is lifted separately under its
+                # `-- captured proto <id>` header.
+                if self._is_proto_table(v):
+                    pid = self._proto_pid(v)
+                    return Global("nil --[[ compiled Luraph function%s ]]" % (
+                        ": see captured proto %s" % pid if pid is not None else ""))
                 # v14.x (especially 14.9) uses real table constructors as
                 # register values in ordinary opcode handlers.  v15 mostly
                 # avoided this shape, so the old lifter rejected every

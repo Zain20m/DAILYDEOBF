@@ -4240,32 +4240,53 @@ def collect_requests(source, protos_path, chunk_paths=(), cache=None, fetch=None
             continue
         todo.append((vm, vm.vmobj_of(cap), vm.proto_of(cap)))
     seen = set()
-    while todo:
-        vm, vmobj, proto = todo.pop()
-        if id(proto) in seen:
-            continue
-        seen.add(id(proto))
-        found = live.get((proto.tid, id(vm)))
-        use = found and _translate(found[1], res, pkey)
-        if use:
-            kept[(found[0], id(vm))] = found[1]
-            ent = found[1]
-            kids, ebw, etw = use
-        else:
-            ent = _walk_one(prog, vm, vmobj, proto, pkey)
-            stats["walked"] += 1
-            key = pkey.get(proto.tid)
-            if key is not None and ent["clean"]:
-                kept[(key, id(vm))] = ent
-            kids = [res.get(c) if isinstance(c, str) else c for c in ent["children"]]
-            ebw, etw = ent["bw"], ent["tw"]
-        stats["functions"] += 1
-        stats["errors"] += ent["errors"]
-        requests |= ent["requests"]
-        bw.update(ebw)
-        tw.update(etw)
-        kvms = [prog.vms.get(t) or _JIT_TAGGED.get(t) or vm for t in ent.get("child_vms") or [None] * len(kids)]
-        todo += [(kvm, vmobj, c) for c, kvm in reversed(list(zip(kids, kvms))) if c is not None]
+    for _pass in range(2):
+        if _pass == 1:
+            if os.environ.get("DEVIRT_NO_ORPHANS"):
+                break
+            # Captured protos the roots never reach (built at run time by a
+            # Luraph helper) are lifted on their own by lift_program: walk them
+            # here too. Otherwise their constant requests only surface in the
+            # full lift and every later round becomes a full lift (3 x 28 s
+            # instead of one on a 155 KB 14.7 script).
+            selected = {tag for tag, _, _ in program_roots(prog)}
+            for _pid, cap in dump.protos.items():
+                if cap.get("__maker") not in selected:
+                    continue
+                try:
+                    ovm = prog.vm_of(cap)
+                    oproto = ovm.proto_of(cap)
+                    ovmobj = ovm.vmobj_of(cap)
+                except (Unsupported, KeyError, TypeError, AttributeError):
+                    continue
+                if isinstance(oproto, LTable) and id(oproto) not in seen:
+                    todo.append((ovm, ovmobj, oproto))
+        while todo:
+            vm, vmobj, proto = todo.pop()
+            if id(proto) in seen:
+                continue
+            seen.add(id(proto))
+            found = live.get((proto.tid, id(vm)))
+            use = found and _translate(found[1], res, pkey)
+            if use:
+                kept[(found[0], id(vm))] = found[1]
+                ent = found[1]
+                kids, ebw, etw = use
+            else:
+                ent = _walk_one(prog, vm, vmobj, proto, pkey)
+                stats["walked"] += 1
+                key = pkey.get(proto.tid)
+                if key is not None and ent["clean"]:
+                    kept[(key, id(vm))] = ent
+                kids = [res.get(c) if isinstance(c, str) else c for c in ent["children"]]
+                ebw, etw = ent["bw"], ent["tw"]
+            stats["functions"] += 1
+            stats["errors"] += ent["errors"]
+            requests |= ent["requests"]
+            bw.update(ebw)
+            tw.update(etw)
+            kvms = [prog.vms.get(t) or _JIT_TAGGED.get(t) or vm for t in ent.get("child_vms") or [None] * len(kids)]
+            todo += [(kvm, vmobj, c) for c, kvm in reversed(list(zip(kids, kvms))) if c is not None]
     cache.entries = kept
     stats["fetched"] = len(dump.fetched)
     if os.environ.get("DEVIRT_TIMING") and dump.fetched:

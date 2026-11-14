@@ -156,22 +156,55 @@ class _Deflattener:
         return [e]
 
     def _is_ctrl_cond(self, e, ctrl):
-        """A boolean expression over control vars and numeric constants only."""
-        if not isinstance(e, dict):
+        """A boolean expression over control vars and numeric constants only
+        (each comparison: both sides a control var or a number, at least one
+        a control var). The expression's shape is summarised once per node, so
+        the control-var fixpoint re-checks it with set lookups only."""
+        summ = self._cond_summary(e)
+        if summ is None:
             return False
-        t = e.get("type")
-        if t == "AstExprGroup":
-            return self._is_ctrl_cond(e["expr"], ctrl)
-        if t == "AstExprUnary" and e.get("op") == "Not":
-            return self._is_ctrl_cond(e["expr"], ctrl)
-        if t == "AstExprBinary":
-            op = e.get("op")
-            if op in ("And", "Or"):
-                return self._is_ctrl_cond(e["left"], ctrl) and self._is_ctrl_cond(e["right"], ctrl)
-            if op in _CMP:
-                return self._cmp_side(e["left"], ctrl) and self._cmp_side(e["right"], ctrl) and (
-                    self._lid(self._ungroup(e["left"])) in ctrl or self._lid(self._ungroup(e["right"])) in ctrl)
-        return False
+        for l, r in summ:
+            lc = l[0] == "L" and l[1] in ctrl
+            rc = r[0] == "L" and r[1] in ctrl
+            if not (lc or rc):
+                return False
+            if not (lc or l[0] == "N") or not (rc or r[0] == "N"):
+                return False
+        return True
+
+    def _cond_summary(self, e):
+        """[(left kind, right kind)] for every comparison of a condition made
+        only of comparisons, not/and/or and parentheses, else None. A kind is
+        ("L", declaration id), ("N",) for a number, or ("X",) otherwise."""
+        cache = self.__dict__.setdefault("_summary_cache", {})
+        key = id(e)
+        if key in cache:
+            return cache[key]
+        out = None
+        if isinstance(e, dict):
+            t = e.get("type")
+            if t == "AstExprGroup":
+                out = self._cond_summary(e["expr"])
+            elif t == "AstExprUnary" and e.get("op") == "Not":
+                out = self._cond_summary(e["expr"])
+            elif t == "AstExprBinary":
+                op = e.get("op")
+                if op in ("And", "Or"):
+                    a, b = self._cond_summary(e["left"]), self._cond_summary(e["right"])
+                    out = None if a is None or b is None else a + b
+                elif op in _CMP:
+                    out = [(self._side_kind(e["left"]), self._side_kind(e["right"]))]
+        cache[key] = out
+        return out
+
+    def _side_kind(self, e):
+        e = self._ungroup(e)
+        lid = self._lid(e)
+        if lid is not None:
+            return ("L", lid)
+        if self._num(e) is not None:
+            return ("N",)
+        return ("X",)
 
     @staticmethod
     def _ungroup(e):
@@ -575,7 +608,18 @@ class _Deflattener:
                     if self._lid(x) in self._ctrl:
                         vals[self._lid(x)] = v["value"]
         self._body = b
-        items = self._structure(vals, frozenset(), [_MAXSTEPS])
+        # Budget proportional to the loop's own size: the rebuilt code is
+        # rejected anyway once it is clearly longer than the loop, so a replay
+        # that copies branches far past that point is stopped early instead of
+        # running to completion first (that was most of the pass's time).
+        nstmts = 0
+        stack = list(b)
+        while stack:
+            n = stack.pop()
+            if n.get("type", "").startswith("AstStat"):
+                nstmts += 1
+            stack.extend(_children(n))
+        items = self._structure(vals, frozenset(), [min(_MAXSTEPS, 1000 + 8 * nstmts)])
         wl = _loc(w["location"])
         indent = re.match(r"[\t ]*", self.text.split("\n")[wl[0]]).group(0)
         lines = self._render_items(items, indent)

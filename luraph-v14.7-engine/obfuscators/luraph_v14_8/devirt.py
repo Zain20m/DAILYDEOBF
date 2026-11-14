@@ -3410,6 +3410,10 @@ class Program:
                     # constant into junk code: keep what it asked for so far
                     break
             steps += 1
+            if steps % 2500 == 0 and os.environ.get("DEVIRT_PROGRESS"):
+                pid = self.dump.pid_of_table.get(lf.proto.tid, "t%s" % lf.proto.tid)
+                print("[*] walk progress: proto %s, %d states visited (%d pending)"
+                      % (pid, steps, len(work)), file=sys.stderr, flush=True)
             if steps > limit * 20:
                 break
             if lf.stack_base is not None and len(order) > STACK_WALK_MAX and getattr(st, "carry", None):

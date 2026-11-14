@@ -460,6 +460,26 @@ class RuntimeMaker:
     (ProtoLifter.index): calling it gives that value itself."""
 
 
+def _mentions(e, x, depth=0):
+    """expression e contains x (structural ==)"""
+    if e == x:
+        return True
+    if depth > 20 or not isinstance(e, Expr):
+        return False
+    return any(_mentions(v, x, depth + 1) for v in vars(e).values() if isinstance(v, Expr))
+
+
+class TopMarker(Bin):
+    """The VM stack top after a call (or VARARG) with a variable number of
+    results: registers start.. hold `tail`, so the top is start - 1 + count.
+    It is an expression like any other; unpack(registers, i, top) gives the
+    registers below `start` followed by the tail."""
+
+    def __init__(self, start, tail):
+        Bin.__init__(self, "Add", TailCount(tail), Const(start - 1))
+        self.start, self.tail = start, tail
+
+
 class SharedFn(Global):
     """A VM closure the payload gets from the VM object (`R[a] = vmobj[k]`).
     Script code cannot reach the VM object, so this is Luraph's runtime
@@ -714,12 +734,13 @@ def _hv(v):
 class State:
     """(mode, pc, loop-stack, known jump-register values, array overlay) at an
     instruction boundary."""
-    __slots__ = ("mode", "pc", "kstack", "jregs", "ov", "packs", "locs")
+    __slots__ = ("mode", "pc", "kstack", "jregs", "ov", "packs", "locs", "rtail")
 
-    def __init__(self, mode, pc, kstack, jregs=(), ov=None, packs=(), locs=()):
+    def __init__(self, mode, pc, kstack, jregs=(), ov=None, packs=(), locs=(), rtail=None):
         self.mode, self.pc, self.kstack, self.jregs, self.ov = mode, pc, kstack, jregs, ov
         self.packs = packs    # ((reg, SymList), ...): registers holding table.pack(...) results
         self.locs = locs      # ((decl, value), ...): carried loop-function locals (Stepper.carry)
+        self.rtail = rtail    # (start reg, tail, (decls holding the top, ...)): see TopMarker
 
     def key(self, link):
         d = 0
@@ -730,7 +751,12 @@ class State:
             d += 1
             k = k.get(link)
         return (self.mode, self.pc, d, self.jregs, self.ov.h if self.ov is not None else 0,
-                tuple((r, fmt_expr(l)) for r, l in self.packs), self.locs)
+                tuple((r, fmt_expr(l)) for r, l in self.packs), self.locs,
+                # (the tail's temp name is path-specific: keying on it would make
+                # every pass through a loop a new state; a variable-result value is
+                # consumed by the next instruction, never merged across branches)
+                None if self.rtail is None else
+                (self.rtail[0], type(self.rtail[1]).__name__, getattr(self.rtail[1], "start", 0), self.rtail[2]))
 
 
 # --------------------------------------------------------------------------
@@ -1689,11 +1715,112 @@ class ProtoLifter:
             o = o.parent
         return keys
 
+    def top_marker(self, j):
+        """(start, tail) if `j` is the stack top after a variable-result copy."""
+        if isinstance(j, TopMarker):
+            return j.start, j.tail
+        new = getattr(self, "rtail_new", None)
+        if new is not None and j is new[2]:
+            return new[0], new[1]
+        return None
+
+    def symbolic_for(self, st, scope, a, b, c, it):
+        """`cnt += 1; R[i] = list[cnt]` (or `R[i] = list[base + cnt]; cnt += 1`)
+        for i = a, <symbolic>: a handler copying a variable number of call
+        results / varargs (a packed list) into the registers. The known items
+        are stored; the rest stays a tail starting at the next register, and
+        the loop's bound (the new stack top) marks it (TopMarker)."""
+        if c != 1 or not isinstance(a, int) or isinstance(a, bool):
+            return False
+        body = st["body"]["body"]
+        if len(body) != 2:
+            return False
+        kinds = [x["type"] for x in body]
+        if sorted(kinds) != ["AstStatAssign", "AstStatCompoundAssign"]:
+            return False
+        inc = body[kinds.index("AstStatCompoundAssign")]
+        asg = body[kinds.index("AstStatAssign")]
+        inc_first = kinds[0] == "AstStatCompoundAssign"
+        un = vmmap.unwrap
+        one = un(inc["value"])
+        if inc["op"] != "Add" or un(inc["var"])["type"] != "AstExprLocal" or \
+                one["type"] != "AstExprConstantNumber" or one["value"] != 1:
+            return False
+        cnt = un(inc["var"])["local"]["location"]
+        if len(asg["vars"]) != 1 or len(asg["values"]) != 1:
+            return False
+        tgt, val = un(asg["vars"][0]), un(asg["values"][0])
+        if tgt["type"] != "AstExprIndexExpr" or val["type"] != "AstExprIndexExpr":
+            return False
+        ti = un(tgt["index"])
+        if ti["type"] != "AstExprLocal" or ti["local"]["location"] != st["var"]["location"]:
+            return False
+        idx = un(val["index"])
+        base_node = None
+        if idx["type"] == "AstExprLocal" and idx["local"]["location"] == cnt:
+            pass
+        elif idx["type"] == "AstExprBinary" and idx["op"] == "Add":
+            l, r = un(idx["left"]), un(idx["right"])
+            if l["type"] == "AstExprLocal" and l["local"]["location"] == cnt:
+                base_node = r
+            elif r["type"] == "AstExprLocal" and r["local"]["location"] == cnt:
+                base_node = l
+            else:
+                return False
+        else:
+            return False
+        regs = it.eval(tgt["expr"], scope)
+        src = it.eval(val["expr"], scope)
+        if isinstance(src, TempVal) and src.i == 2:
+            src = self._as_pack(src.t, b)
+        if not isinstance(regs, RegFile) or not isinstance(src, SymList) or src.tail is None:
+            return False
+        cv = it.getvar(scope, un(inc["var"])["local"])
+        base = it.eval(base_node, scope) if base_node is not None else 0
+        if not all(isinstance(x, int) and not isinstance(x, bool) for x in (cv, base)):
+            return False
+        i0 = cv + (1 if inc_first else 0) + base     # list index read for register a
+        if i0 < 1:
+            return False
+        known = src.items[i0 - 1:]
+        for k, x in enumerate(known):
+            it.assign(("index", regs, a + k), x, scope)
+        tail = src.tail
+        skip = max(0, i0 - 1 - len(src.items))
+        if skip:
+            tail = tail.drop(skip)
+        self.rtail_new = (a + len(known), tail, b)
+        return True
+
+    def _as_pack(self, t, bound):
+        """`count, list = helper(...)` where a copy loop reads list[1..count]:
+        Luraph's runtime packer (select('#', ...), {...}), which the walk only
+        sees as an opaque call. Turn that call back into a pack of its
+        arguments (and drop it: packing has no effect of its own)."""
+        if not _mentions(bound, TempVal(t, 1)):
+            return None
+        for k in range(len(self.out) - 1, -1, -1):
+            st = self.out[k]
+            if isinstance(st, CallStmt) and st.t == t:
+                args = st.args if isinstance(st.args, Multi) else Multi(list(st.args))
+                if args.tail is None:
+                    return None
+                del self.out[k]
+                return SymList(args.items, args.tail)
+        return None
+
     def unpack(self, a):
         t = a.items[0] if a.items else None
         i = a.items[1] if len(a.items) > 1 else 1
         j = a.items[2] if len(a.items) > 2 else None
         if isinstance(t, RegFile):
+            top = self.top_marker(j)
+            if top is not None and isinstance(i, int):
+                start, tail = top
+                if i <= start:
+                    return Multi([FrameArg(n) if self.jvals.get(n) is FRAME else Reg(n) for n in range(i, start)],
+                                 tail)
+                return Multi([], tail.drop(i - start))
             if not isinstance(i, int) or not isinstance(j, int):
                 raise Unsupported("unpack registers with symbolic range")
             return Multi([FrameArg(n) if self.jvals.get(n) is FRAME else Reg(n) for n in range(i, j + 1)])
@@ -1730,6 +1857,11 @@ class ProtoLifter:
             raise Unsupported("in-place move of packed list")
         if is_sym(f) or is_sym(t):
             raise Unsupported("table.move with symbolic positions")
+        if is_sym(e) and isinstance(src, SymList) and f == 1 and isinstance(dst, Expr) and isinstance(t, int):
+            # SETLIST with a multret tail: tbl[t...] = unpack(list)
+            self.emit(SetList(dst, t, Multi([self.value_of(x) if x is not None else Const(None) for x in src.items],
+                                            src.tail)))
+            return dst
         if is_sym(e) and isinstance(src, SymList) and f == 1 and isinstance(dst, Expr) and isinstance(t, int):
             # SETLIST with a multret tail: tbl[t...] = unpack(list)
             self.emit(SetList(dst, t, Multi([self.value_of(x) if x is not None else Const(None) for x in src.items],
@@ -2375,8 +2507,13 @@ class Stepper:
     def _carried(self, inner):
         """State.locs: the carried locals' current values."""
         out = []
+        new = getattr(self.lf, "rtail_new", None)
         for k in sorted(self.carry):
             v = inner.vars.get(k)
+            if new is not None and v is new[2]:
+                continue    # the stack top after a variable-result copy: carried as State.rtail
+            if isinstance(v, TopMarker):
+                continue    # a top marker that was not consumed: dead after this instruction
             if not (isinstance(v, int) and not isinstance(v, bool)):
                 raise Unsupported("symbolic value of a VM local carried between instructions (%r)" % (v,))
             out.append((k, v))
@@ -2401,6 +2538,10 @@ class Stepper:
                 inner.lookup(self.vm.kstack_key).vars[self.vm.kstack_key] = state.kstack
             for k, v in state.locs:
                 inner.vars[k] = v
+            if getattr(state, "rtail", None) is not None:
+                start, tail, decls = state.rtail
+                for k in decls:
+                    inner.vars[k] = TopMarker(start, tail)
         return cs, inner
 
     def run_once(self, state, decisions, tprefix):
@@ -2418,6 +2559,7 @@ class Stepper:
         lf.packs = dict(state.packs) if state is not None else {}
         lf.pack_copies = {}
         lf.pack_read = set()
+        lf.rtail_new = None
         it = S.Interp(lf)
         it.decisions = list(decisions)
         cs, inner = self._fresh_scopes(state, it)
@@ -2474,8 +2616,21 @@ class Stepper:
                                   and not (isinstance(k, int) and k > top)))
             else:
                 jr = tuple(sorted((k, v) for k, v in lf.jvals.items() if k not in lf.jread))
+            rtail = None
+            if lf.rtail_new is not None:
+                # the loop function's locals still holding the new top
+                top = lf.rtail_new[2]
+                decls = tuple(sorted(k for k, v in dict.items(acc) if v is top))
+                if decls:
+                    rtail = (lf.rtail_new[0], lf.rtail_new[1], decls)
+            else:
+                # an instruction that left the top alone passes it on
+                marks = [(k, v) for k, v in dict.items(acc) if isinstance(v, TopMarker)]
+                if marks:
+                    m = marks[0][1]
+                    rtail = (m.start, m.tail, tuple(sorted(k for k, v in marks if v is m)))
             nxt = State(get(self.mode_decl) if self.mode_decl else 0, get(self.pc_decl), get(self.vm.kstack_key) if self.vm.kstack_key else None,
-                        jr, None, lf.state_packs(), locs)
+                        jr, None, lf.state_packs(), locs, rtail)
             return it, Next(nxt)
         return it, Ret(outcome[1])
 
@@ -3366,6 +3521,44 @@ REG_PREFIX = "rstuvwxyzabcdefghijklmnopq"
 REG_ARRAY = 1000000     # register-resident arrays: Reg(REG_ARRAY + base)
 
 
+_LURAPH_RUNTIME = re.compile(r"Luraph|LPH_|lura\.ph|support ticket|short_src|linedefined")
+
+
+def _unbound_upvalue_name(index):
+    parts = index if isinstance(index, tuple) else (index,)
+    suffix = "_".join(re.sub(r"[^A-Za-z0-9_]", "_", str(part)) for part in parts)
+    return "__orphan_upvalue_" + suffix
+
+
+def _unbound_upvalue_indexes(value):
+    """Upvalues referenced by one walked IR graph (without walking dump tables)."""
+    indexes = set()
+    seen = set()
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if item is None or isinstance(item, (str, bytes, int, float, bool)):
+            continue
+        if isinstance(item, Upval):
+            indexes.add(item.idx)
+            continue
+        ident = id(item)
+        if ident in seen:
+            continue
+        seen.add(ident)
+        if isinstance(item, (LTable, Buf, Scope, OpaqueFn)):
+            continue
+        if isinstance(item, dict):
+            stack.extend(item.values())
+        elif isinstance(item, (list, tuple, set)):
+            stack.extend(item)
+        else:
+            attrs = getattr(item, "__dict__", None)
+            if isinstance(attrs, dict):
+                stack.extend(attrs.values())
+    return sorted(indexes, key=repr)
+
+
 class FunctionLifter:
     """Lifts one proto (and, recursively, the closures it creates) to Luau lines."""
 
@@ -3373,14 +3566,25 @@ class FunctionLifter:
         self.prog = prog
         self.stats = {"functions": 0, "errors": 0, "fallbacks": 0}
         self.lifted = set()
+        self.completed = set()    # protos for which a source body was emitted
 
-    def lift(self, vm, vmobj, proto, upvals, upnames, depth=0):
+    def lift(self, vm, vmobj, proto, upvals, upnames, depth=0, orphan=False):
         self.stats["functions"] += 1
         self.lifted.add(id(proto))
         lf = ProtoLifter(vm, self.prog.dump, vmobj, proto, upvals, self.prog.globals)
         st = make_stepper(vm, lf)
         s0, order = self.prog.walk_stable(vm, lf, st, 400000, purpose="final")
         self.prog.requests |= lf.requests
+        orphan_params = []
+        if orphan:
+            idxs = _unbound_upvalue_indexes(order)
+            if len(idxs) > 150:
+                # one parameter per upvalue would pass Luau's register limit
+                upnames = {i: "__orphan_upvalues[%d]" % (n + 1) for n, i in enumerate(idxs)}
+                orphan_params = ["__orphan_upvalues"]
+            else:
+                upnames = {i: _unbound_upvalue_name(i) for i in idxs}
+                orphan_params = list(upnames.values())
 
         bad = unresolved_nodes(order)
         allow_partial = not bool(os.environ.get("DEVIRT_STRICT"))
@@ -3420,6 +3624,9 @@ class FunctionLifter:
             pid = self.prog.dump.pid_of_table.get(proto.tid)
             lines.insert(0, "-- proto %s" % (pid if pid is not None else "t%s" % proto.tid))
         self.stats["errors"] += nerr
+        self.completed.add(id(proto))
+        if orphan:
+            return lines, list(self.params), orphan_params
         return lines
 
     def frame_regs(self, vm, vmobj, c, depth=0):
@@ -3669,6 +3876,81 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
         out.append("")
     if payload_pid is not None:
         out.append("return vm_root_%s(...)" % payload_pid)
+
+    # Prototypes the runtime captured but the lifted code never reaches as a
+    # closure (e.g. created by an unresolved Luraph runtime helper, as the
+    # v14.8 payload is): lift them on their own so their source is not lost.
+    orphan_count = 0
+    if not os.environ.get("DEVIRT_NO_ORPHANS"):
+        selected = {tag for tag, _ in vms if tag == payload or loaders}
+        for pid, cap in prog.dump.protos.items():
+            tag = cap.get("__maker")
+            if tag not in selected:
+                continue
+            try:
+                vm = prog.vm_of(cap)
+                proto = vm.proto_of(cap)
+                vmobj = vm.vmobj_of(cap)
+            except (Unsupported, KeyError, TypeError, AttributeError):
+                continue
+            if id(proto) in fl.completed:
+                continue
+            safe_pid = re.sub(r"[^A-Za-z0-9_]", "_", str(pid))
+            if not safe_pid or safe_pid[0].isdigit():
+                safe_pid = "p_" + safe_pid
+            name = "recovered_proto_" + safe_pid
+            try:
+                lines, proto_params, upvalue_params = fl.lift(vm, vmobj, proto, UpList(), {}, 0, orphan=True)
+            except Exception as ex:  # noqa: BLE001
+                out.append("-- captured proto %s could not be lifted on its own: %s" %
+                           (pid, str(ex).replace("\n", " ")[:240]))
+                out.append("")
+                continue
+            body = "\n".join(lines)
+            marks = len(_LURAPH_RUNTIME.findall(body))
+            # Luraph's own env probes/anti-tamper live in the same proto as
+            # genuine script code in some builds, so a few matches are not
+            # reason enough to hide the whole thing -- only an overwhelming
+            # majority of the body being probe text (very long, almost no
+            # Roblox-API-looking calls) is worth a warning instead of the code.
+            # a real API hit is a call/index, not the string appearing as a bare
+            # quoted table value (Luraph's own string tables spell "GetService"
+            # etc. too, as plain entries, which the old check mistook for calls)
+            api_hits = len(re.findall(r"[:.](?:GetService|WaitForChild|FindFirstChild|Kick|new)\(|"
+                                       r"\bLocalPlayer\b|\bworkspace\b|\bgame:|\brequest\(", body))
+            # most of this VM's own bootstrap/env-probe captures are, line for
+            # line, either {[N]="..."} / {[N]=number,} lookup-table entries or
+            # giant buffer.fromstring(...) binary blobs -- not statements.
+            # A real script, even a big one, is mostly ordinary statements.
+            data_lines = len(re.findall(r'^\t*\[[^\]]+\]\s*=|^\t*\S+\s*=\s*buffer\.fromstring\(',
+                                         body, re.M))
+            huge_probe = len(lines) > 2000 and data_lines > 0.8 * len(lines) and api_hits * 50 < len(lines)
+            signature = list(upvalue_params)
+            signature.extend(p for p in proto_params if p != "...")
+            if "..." in proto_params:
+                signature.append("...")
+            if len(signature) > 190:
+                # no compiled Luau function has this many parameters (the
+                # local limit is 200): Luraph-internal, and not valid Luau
+                out.append("-- captured proto %s: %d parameters, not script code (not shown)" % (pid, len(signature)))
+                out.append("")
+                continue
+            if huge_probe:
+                out.append("-- captured proto %s: Luraph's own environment-fingerprinting data (%d probe "
+                            "markers, 0 Roblox API calls in %d lines), not the script; not shown. If the "
+                            "real payload is still missing, it is likely gated behind this env check, which "
+                            "also explains an \"endless loop / no environment access\" abort elsewhere in "
+                            "this run." % (pid, marks, len(lines)))
+                out.append("")
+                continue
+            out.append("-- captured proto %s: created at run time by a Luraph runtime helper, so it is" % pid)
+            out.append("-- lifted on its own (upvalues it uses come first in the parameter list)")
+            out.append("local function %s(%s)" % (name, ", ".join(signature)))
+            out.extend("\t" + line for line in lines)
+            out.append("end")
+            out.append("")
+            orphan_count += 1
+    fl.stats["orphan_protos"] = orphan_count
     # Luraph runtime functions the script calls (SharedFn): stubs up front
     shared = []
     for n in sorted(prog.dump.shared.values()):

@@ -2409,7 +2409,7 @@ async function processIronbrew1(message, prompt, input) {
       const diagnostic = String(result.stderr || result.stdout || '').slice(-1400);
       throw new Error(
         'IronBrew finished without producing a Luau result.' +
-        (diagnostic ? '\\n' + diagnostic : '')
+        (diagnostic ? '\n' + diagnostic : '')
       );
     }
 
@@ -2424,7 +2424,7 @@ async function processIronbrew1(message, prompt, input) {
     if (traceBytes > 0 && useLift) await prependDailyDeobfHeader(tracePath);
 
     const reportPath = path.join(outputDir, 'ironbrew1-report.txt');
-    const stats = String(result.stderr || '').match(/(\\d+) functions, (\\d+) unlifted blocks, (\\d+) unstructured jumps/);
+    const stats = String(result.stderr || '').match(/(\d+) functions, (\d+) unlifted blocks, (\d+) unstructured jumps/);
     const report = [
       'DAILY DEOBF · IronBrew 1',
       'Input: ' + input.filename,
@@ -2451,12 +2451,12 @@ async function processIronbrew1(message, prompt, input) {
     }
 
     await message.reply({
-      content: '✅ **DAILY DEOBF · IronBrew 1**\\nDetected: IronBrew 1' +
-        '\\nResult: ' + (useLift ? 'VM bytecode lift' : 'behaviour trace fallback') +
-        '\\nOutput size: ' + formatBytes(selectedBytes) +
-        (stats ? '\\nLifted functions: ' + stats[1] + ' · Unlifted blocks: ' + stats[2] : '') +
-        '\\nAttached: ' + (useLift ? 'IronBrew1_devirtualized.luau' : 'IronBrew1_trace.luau') +
-        '\\n\\nReconstruction is not guaranteed to be complete; check the report and trace.',
+      content: '✅ **DAILY DEOBF · IronBrew 1**\nDetected: IronBrew 1' +
+        '\nResult: ' + (useLift ? 'VM bytecode lift' : 'behaviour trace fallback') +
+        '\nOutput size: ' + formatBytes(selectedBytes) +
+        (stats ? '\nLifted functions: ' + stats[1] + ' · Unlifted blocks: ' + stats[2] : '') +
+        '\nAttached: ' + (useLift ? 'IronBrew1_devirtualized.luau' : 'IronBrew1_trace.luau') +
+        '\n\nReconstruction is not guaranteed to be complete; check the report and trace.',
       files,
       allowedMentions: { repliedUser: false },
     });
@@ -2822,7 +2822,7 @@ async function processCenturion(message, prompt, input) {
       const diagnostic = String(result.stdout || result.stderr || '').slice(-1200);
       throw new Error(
         'Centurion finished without producing a recovered Luau file.' +
-        (diagnostic ? '\\n' + diagnostic : '')
+        (diagnostic ? '\n' + diagnostic : '')
       );
     }
 
@@ -2928,7 +2928,15 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
       ENGINE_151_CLI,
       target.inputPath,
       target.outputPath,
-      180_000,
+      // This is the OUTER kill timer for the whole node process, distinct
+      // from --timeout 180 below (an internal per-trace-run budget) and
+      // DEOB_CANDIDATE_TIMEOUT_MS (per racing candidate). A large script can
+      // legitimately need several trace runs and devirt rounds in sequence,
+      // each up to its own internal budget, so the outer timer must have
+      // much more headroom than any one of those -- 180_000 (3 min) here
+      // previously meant the whole run got SIGKILLed before even one slow
+      // internal step finished on anything but small files.
+      ENGINE_TIMEOUT_MS,
       false,
       [
         '--plugin', 'luraph_v15',
@@ -3803,7 +3811,7 @@ async function startGetWorkflow(message, inlineSource = null) {
           status: 200,
         };
       }
-      const credentialText = String(input.originalText || '') + '\\n' + String(input.source || '');
+      const credentialText = String(input.originalText || '') + '\n' + String(input.source || '');
       const luaProtectSource = await fetchLuaProtectLoaderSource(rawUrl);
       if (luaProtectSource !== null) return { source: luaProtectSource, finalUrl: rawUrl, contentType: 'application/lua', status: 200 };
       const vantarmorSource = await fetchVantarmorLoaderSource(rawUrl, credentialText);
@@ -4657,7 +4665,7 @@ async function processJnkIeFetcher(message, prompt, input) {
 
     const hwid = supplied.content.trim();
     await supplied.delete().catch(() => {});
-    if (!hwid || hwid.length > 512 || /[\\r\\n]/.test(hwid)) {
+    if (!hwid || hwid.length > 512 || /[\r\n]/.test(hwid)) {
       throw new Error('The supplied HWID was empty or invalid. Run .deobf again.');
     }
 
@@ -5072,7 +5080,7 @@ async function startWorkflow(message, inlineText = null) {
     ? 'Direct URL detected. Downloading the supplied script now...'
     : hasInlineAttachment
       ? 'File received. Reading and validating the uploaded script...'
-      : 'Upload a **.lua**, **.luau**, **.pureluau** or **.txt** file, paste source, or send a direct HTTP/HTTPS script URL.\\n\\n**Maximum input:** 18 MB';
+      : 'Upload a **.lua**, **.luau**, **.pureluau** or **.txt** file, paste source, or send a direct HTTP/HTTPS script URL.\n\n**Maximum input:** 18 MB';
   const prompt = await message.reply({
     embeds: [dailyEmbed('New deobfuscation', initialDescription, DAILY_COLORS.primary)],
     allowedMentions: { repliedUser: false },
@@ -5331,7 +5339,7 @@ async function startWorkflow(message, inlineText = null) {
     engineSuggestion
       ? '**Detector suggestion:** Dvx thinks this file is ' + engineSuggestion.label +
         (engineSuggestion.engine ? '. Would you like to choose ' + engineSuggestion.label + '?' : ', but could not identify the exact version.') +
-        '\\n' + engineSuggestion.reason + ' This is a suggestion, not an automatic engine selection.'
+        '\n' + engineSuggestion.reason + ' This is a suggestion, not an automatic engine selection.'
       : null,
     '**2HBJ option:** Experimental imported VM decompiler. The bundled mappings are tuned to the supplied sample and may not match every 2HBJ build.',
     '',
@@ -5697,7 +5705,7 @@ client.on(Events.MessageCreate, async (message) => {
         '**Reply received from ' + message.author.username + ':**',
         replyText || (attachmentLines.length ? '(attachment)' : '(empty message)'),
         ...attachmentLines,
-      ].join('\\n');
+      ].join('\n');
       await requester.send({
         content: body.slice(0, 1900),
         allowedMentions: { parse: [] },

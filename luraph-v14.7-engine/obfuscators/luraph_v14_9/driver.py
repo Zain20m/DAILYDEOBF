@@ -190,8 +190,17 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
         print("[!] v14.x lifter captured no liftable VM functions; falling back to the behavior trace",
               file=sys.stderr)
         return False
+
+    # backend.lower() leaves blocks it could not lift as error("devirt: ...")
+    # lines: say so at the top instead of letting the file pass as complete
+    unlifted = int((stats or {}).get("errors", 0))
+    note = ""
+    if unlifted:
+        note = ("-- NOTE: partial lift: %d VM block(s) could not be lifted; each one is an\n"
+                "-- error(\"devirt: ...\") line below. Everything else is recovered code.\n\n" % unlifted)
+        print("[!] %d VM block(s) could not be lifted (marked in the output)" % unlifted, file=sys.stderr)
     header = job.credit_header()
-    job.write(dpath, header + finished + "\n")
+    job.write(dpath, header + note + finished + "\n")
     return True
 
 

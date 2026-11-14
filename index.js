@@ -32,6 +32,7 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const PREFIX = '.deobf';
 const MAX_OUTPUT_BYTES = 18 * 1024 * 1024;
 const MAX_INPUT_BYTES = 18 * 1024 * 1024;
+const MAX_DAILYFUSCATOR_INPUT_BYTES = 1 * 1024 * 1024;
 const MAX_PURELUA_CHARS = 4_000_000;
 const MAX_PURELUA_BYTES = 8 * 1024 * 1024;
 const MAX_GET_FILES = 50;
@@ -86,11 +87,28 @@ const slashCommands = [
       .setName('obfuscator')
       .setDescription('Choose an obfuscator')
       .setRequired(true)
-      .addChoices({ name: 'IronVeil', value: 'ironveil' }))
+      .addChoices(
+        { name: 'IronVeil', value: 'ironveil' },
+        { name: 'Dailyfuscator v3', value: 'dailyfuscator' },
+      ))
     .addAttachmentOption((option) => option
       .setName('file')
       .setDescription('Upload the source file to obfuscate')
       .setRequired(true))
+    .addStringOption((option) => option
+      .setName('profile')
+      .setDescription('Dailyfuscator protection profile')
+      .addChoices(
+        { name: 'Light', value: 'light' },
+        { name: 'Standard', value: 'standard' },
+        { name: 'Hard', value: 'hard' },
+      )
+      .setRequired(false))
+    .addStringOption((option) => option
+      .setName('seed')
+      .setDescription('Optional build seed (up to 128 characters)')
+      .setMaxLength(128)
+      .setRequired(false))
     .toJSON(),
 ];
 
@@ -4250,9 +4268,135 @@ async function writeObfuscationLog(interaction, details) {
   }
 }
 
+async function handleDailyfuscatorCommand(interaction, attachment) {
+  const startedAt = Date.now();
+  const originalName = path.basename(String(attachment && attachment.name || 'script.lua').replace(/\\/g, '/'));
+  let completed = false;
+  let failure = '';
+
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const extension = path.extname(originalName).toLowerCase();
+    if (!['.lua', '.luau', '.txt'].includes(extension)) {
+      throw new Error('Dailyfuscator accepts .lua, .luau and .txt source files.');
+    }
+    if (Number.isFinite(attachment && attachment.size) && attachment.size > MAX_DAILYFUSCATOR_INPUT_BYTES) {
+      throw new Error('Dailyfuscator input is limited to 1 MB per file.');
+    }
+
+    await interaction.editReply('**[1/4]** Downloading your Lua/Luau source...');
+    const response = await fetch(attachment.url, {
+      redirect: 'error',
+      signal: AbortSignal.timeout(20_000),
+      headers: { 'user-agent': 'DAILY-DEOBF/1.0' },
+    });
+    if (!response.ok) throw new Error('Discord file download returned HTTP ' + response.status + '.');
+    const inputBuffer = await readResponse(response, MAX_DAILYFUSCATOR_INPUT_BYTES);
+    if (!inputBuffer.length) throw new Error('The uploaded source file is empty.');
+    const source = decodeSource(inputBuffer);
+    if (!source.trim()) throw new Error('The uploaded source file contains no Lua/Luau code.');
+
+    await interaction.editReply('**[2/4]** Loading the approved Dailyfuscator v3 engine...');
+    const { loadDailyfuscator } = require('./scripts/dailyfuscator-runtime');
+    const engine = await loadDailyfuscator();
+
+    const requestedProfile = interaction.options.getString('profile') || 'standard';
+    const profile = ['light', 'standard', 'hard'].includes(requestedProfile) ? requestedProfile : 'standard';
+    const seed = interaction.options.getString('seed') || undefined;
+
+    await interaction.editReply('**[3/4]** Running Dailyfuscator v3 (' + profile + ')...');
+    const result = engine.obfuscate(source, {
+      profile,
+      seed,
+      minBytes: 512000,
+    });
+    if (!result || !result.ok) {
+      throw new Error(result && result.error || 'Dailyfuscator did not produce an output.');
+    }
+
+    const outputBuffer = Buffer.from(result.code, 'utf8');
+    if (!outputBuffer.length) throw new Error('Dailyfuscator returned an empty output.');
+    if (outputBuffer.length > MAX_OUTPUT_BYTES) {
+      throw new Error('The obfuscated output exceeds the 18 MB Discord attachment limit.');
+    }
+
+    const baseName = path.basename(originalName, extension)
+      .replace(/[^A-Za-z0-9._-]/g, '_') || 'script';
+    const outputName = 'dailyfuscator-' + baseName + '.lua';
+    const profileLabel = profile.charAt(0).toUpperCase() + profile.slice(1);
+    const report = result.report || {};
+    const warnings = Array.isArray(report.warnings) ? report.warnings : [];
+    const skipped = Object.entries(report.skipped || {})
+      .filter((entry) => Number(entry[1]) > 0)
+      .map((entry) => entry[0] + ': ' + entry[1]);
+    const reportLines = [
+      'DAILYFUSCATOR v3 · BUILD REPORT',
+      'Original file: ' + originalName,
+      'Output file: ' + outputName,
+      'Profile: ' + profileLabel,
+      'Input bytes: ' + inputBuffer.length.toLocaleString('en-US'),
+      'Output bytes: ' + outputBuffer.length.toLocaleString('en-US'),
+      'Seed: ' + String(report.seed ?? 'not reported'),
+      'Virtualized functions: ' + Number(report.virtualized || 0),
+      'Skipped VM constructs: ' + (skipped.join(', ') || 'None reported'),
+      'Flattened control-flow blocks: ' + Number(report.flattened || 0),
+      'Protected strings: ' + Number(report.strings || 0),
+      'Protected numbers: ' + Number(report.numbers || 0),
+      'Renamed identifiers: ' + Number(report.renamed || 0),
+      'Checksum: ' + String(report.checksum ?? 'not reported'),
+      '',
+      'WARNINGS',
+      ...(warnings.length ? warnings.slice(0, 40).map((warning) => '- ' + String(warning).slice(0, 300)) : ['None']),
+      '',
+      'The source was transformed statically and was not executed by the bot.',
+      'Unsupported or runtime-specific constructs may remain outside the VM. Test the output in your own controlled environment.',
+    ];
+    const reportBuffer = Buffer.from(reportLines.join('\n'), 'utf8');
+    const reportName = 'dailyfuscator-' + baseName + '-report.txt';
+
+    await interaction.editReply('**[4/4]** Obfuscation complete. Uploading the protected file and report...');
+    await interaction.editReply({
+      content: [
+        '✅ **Dailyfuscator v3 finished.**',
+        'Profile: **' + profileLabel + '**',
+        'Input: ' + inputBuffer.length.toLocaleString('en-US') + ' bytes',
+        'Output: ' + outputBuffer.length.toLocaleString('en-US') + ' bytes',
+        'Virtualized functions: ' + Number(report.virtualized || 0),
+        'Warnings: ' + warnings.length,
+        'Your original upload was not modified. The bot did not execute the input script.',
+      ].join('\n'),
+      files: [
+        new AttachmentBuilder(outputBuffer, { name: outputName }),
+        new AttachmentBuilder(reportBuffer, { name: reportName }),
+      ],
+      allowedMentions: { parse: [] },
+    });
+    completed = true;
+  } catch (error) {
+    failure = String(error && error.message || error);
+    console.error('Dailyfuscator v3 failed:', error);
+    await interaction.editReply(
+      'Dailyfuscator v3 could not process that file: ' + failure.slice(0, 900) +
+      '. Your original file was left unchanged.'
+    ).catch(() => {});
+  } finally {
+    await writeObfuscationLog(interaction, {
+      engine: 'Dailyfuscator v3',
+      filename: originalName,
+      success: completed,
+      error: failure,
+      durationMs: Date.now() - startedAt,
+    });
+  }
+}
+
 async function handleObfuscatorCommand(interaction) {
   const engine = interaction.options.getString('obfuscator');
   const attachment = interaction.options.getAttachment('file');
+  if (engine === 'dailyfuscator') {
+    await handleDailyfuscatorCommand(interaction, attachment);
+    return;
+  }
   if (engine !== 'ironveil') {
     await interaction.reply({ content: 'That obfuscator is not available.', ephemeral: true });
     return;
@@ -4553,6 +4697,7 @@ function helpText() {
     '',
     'SLASH COMMANDS',
     '/purelua',
+    '/obf - choose IronVeil or Dailyfuscator v3; Dailyfuscator supports Light, Standard and Hard profiles',
   ].join('\n');
 }
 

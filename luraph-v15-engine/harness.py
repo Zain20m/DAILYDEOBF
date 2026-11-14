@@ -164,6 +164,12 @@ def build_harness(source, cfg, chunks=None):
         rdata = f.read()
     with open(os.path.join(HERE, "datatypes.luau"), encoding="utf-8") as f:
         dtypes = f.read().replace("--!nocheck", "", 1)
+    # EncodingService's Zstd/Base64 (zstd.luau), computed for real
+    zpath = os.path.join(HERE, "zstd.luau")
+    zstd = ""
+    if os.path.exists(zpath):
+        with open(zpath, encoding="utf-8") as f:
+            zstd = f.read().replace("--!nocheck", "", 1)
     return ("local __SOURCE = " + long_string(source) + "\n"
             "local __CONFIG = " + cfg_lua + "\n"
             "local __P2D = {" + "".join("[%s] = %s,\n" % (lua_value(k), lua_value(v))
@@ -173,7 +179,8 @@ def build_harness(source, cfg, chunks=None):
             "local __UNICODE = (function()\n" + udata + "\nend)()\n"
             "local __ROBLOX = (function()\n" + rdata + "\nend)()\n"
             # offline datatype models; no new top-level local (the chunk is at Luau's limit)
-            "__ROBLOX.datatypes = (function()\n" + dtypes + "\nend)()\n" + runtime)
+            "__ROBLOX.datatypes = (function()\n" + dtypes + "\nend)()\n"
+            + ("__ROBLOX.zstd = (function()\n" + zstd + "\nend)()\n" if zstd else "") + runtime)
 
 
 def chunk_key(src):

@@ -205,12 +205,19 @@ def build_harness(source, cfg, chunks=None):
         rdata = f.read()
     with open(os.path.join(RUNTIME_DIR, "datatypes.luau"), encoding="utf-8") as f:
         dtypes = f.read().replace("--!nocheck", "", 1)
+    # EncodingService's Zstd/Base64 (zstd.luau), computed for real
+    zpath = os.path.join(RUNTIME_DIR, "zstd.luau")
+    zstd = ""
+    if os.path.exists(zpath):
+        with open(zpath, encoding="utf-8") as f:
+            zstd = f.read().replace("--!nocheck", "", 1)
     LAST_MARK[0] = secrets.token_hex(PROTO["nonce_hex_bytes"])
     return ("local __STDLIB = " + SHIELD_STDLIB + "\n"
             "local __SHIELD = setmetatable({}, { __index = __STDLIB })\n"
             "local __UNICODE = (function()\n" + udata + "\nend)()\n"
             "local __ROBLOX = (function()\n" + rdata + "\nend)()\n"
             "__ROBLOX.datatypes = (function()\n" + dtypes + "\nend)()\n"
+            + ("__ROBLOX.zstd = (function()\n" + zstd + "\nend)()\n" if zstd else "") +
             "local __RAW = { getfenv = getfenv, setfenv = setfenv, loadstring = loadstring }\n"
             "local __RUN = function(__MARK, __SOURCE, __CONFIG, __P2D, __CHUNKS, __UNICODE, __ROBLOX, __RAW)\n"
             + runtime + "\n"

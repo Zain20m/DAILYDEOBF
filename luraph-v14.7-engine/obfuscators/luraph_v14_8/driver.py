@@ -470,7 +470,11 @@ def run(job):
                 return write_semantic_candidate(semantic)
 
         nil_calls = lifted.count("(nil)(")
-        if nil_calls < 50 or nil_calls * 100 < lifted.count("\n"):
+        # (reject only a lift where calls of nil are a real share of the code:
+        # the old 1%-of-lines bar was calibrated against output padded with
+        # thousands of lines of inline bytecode tables, which are now
+        # collapsed, so the same lift started failing it)
+        if nil_calls < 50 or nil_calls * 25 < lifted.count("\n"):
             return dpath
         print("[!] the devirtualized output is broken (%d calls of nil)" % nil_calls, file=sys.stderr)
         if not job.debug:

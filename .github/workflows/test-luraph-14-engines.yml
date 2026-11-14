@@ -6,6 +6,7 @@ on:
       - "luraph-v14.7-engine/**"
       - "luraph-v14.3-engine/**"
       - "luraph-v15-engine/bin/**"
+      - "luraph-v15.1-engine/core/obfuscators/luraph_v14/**"
       - "index.js"
       - "scripts/setup-engines.js"
       - ".github/workflows/test-luraph-14-engines.yml"
@@ -29,7 +30,8 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          engines = [Path("luraph-v14.7-engine"), Path("luraph-v14.3-engine")]
+          engines = [Path("luraph-v14.7-engine"), Path("luraph-v14.3-engine"),
+                     Path("luraph-v15.1-engine/core/obfuscators/luraph_v14")]
           count = 0
           for engine in engines:
               for source in engine.rglob("*.py"):
@@ -225,6 +227,36 @@ jobs:
           PY
           python3 luraph-v14.7-engine/cli.py --help >/dev/null
           echo "Shared v14.7-v14.9 CLI help check passed."
+
+
+      - name: Test v15.1 v14-compat factory closure captures
+        env:
+          PYTHONPATH: luraph-v15.1-engine/core
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python3 - <<'PY'
+          from types import SimpleNamespace
+          import luasym as S
+          from obfuscators.luraph_v15 import devirt as D
+          import obfuscators.luraph_v14.devirt
+
+          lifter = object.__new__(D.ProtoLifter)
+          lifter.vm = SimpleNamespace()
+          lifter.dump = SimpleNamespace(pid_of_table={77: 1})
+          lifter.children = []
+          lifter.captured_regs = set()
+          proto = S.LTable(tid=77)
+          frame = S.LTable({1: S.RegFile(), 2: 21})
+          upvals = S.LTable({1: D.MaybeBox(14), 2: frame})
+          result = lifter.call_symbolic(D.OpaqueFn(900), S.Multi([proto, upvals]), None, False)
+          child = result.first()
+          assert isinstance(child, D.ClosureExpr), child
+          assert child.upvals[0].reg == 14
+          assert child.upvals[1] is frame
+          assert lifter.captured_regs == {14, 21}, lifter.captured_regs
+          assert lifter.children == [child]
+          print("v15.1 v14-compat closure capture regression passed.")
+          PY
 
       - name: Run the Luraph v14.3 bundled sample through the adapter
         env:

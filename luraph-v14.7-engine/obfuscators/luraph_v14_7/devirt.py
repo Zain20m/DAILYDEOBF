@@ -2496,7 +2496,21 @@ class Stepper:
         _, inner = self._fresh_scopes(None, S.Interp(self.lf))
         self.lf.out = []
         regfiles = {k for k, v in inner.vars.items() if isinstance(v, RegFile)}
-        return {i for r, i in cache[None] if r in regfiles} & set(inner.vars)
+        candidates = {i for r, i in cache[None] if r in regfiles} & set(inner.vars)
+
+        # Discover the operand-stack base before the first handler is stepped.
+        # Otherwise a numeric-for in that first handler raises before
+        # _note_access() has identified carried stack pointers, leaving
+        # _need_jreg() unable to request the stack slots it sees.
+        if self.lf.stack_base is None:
+            initial_tops = [
+                inner.vars[k] for k in candidates
+                if isinstance(inner.vars.get(k), int)
+                and not isinstance(inner.vars.get(k), bool)
+            ]
+            if initial_tops:
+                self.lf.stack_base = min(initial_tops)
+        return candidates
 
     def _local_value(self, loc, before):
         """The expression a local of the loop function is declared with."""

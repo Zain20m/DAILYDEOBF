@@ -154,6 +154,35 @@ jobs:
           lifter._need_jreg(Bin("Add", Reg(101), Const(1)))
           assert lifter.need_jump_regs == {101}, lifter.need_jump_regs
 
+          # First-pass regression: the stack base must be known before a
+          # handler's symbolic numeric-for raises, not only after carry analysis.
+          from types import SimpleNamespace
+          first_pass = object.__new__(devirt149.Stepper)
+          first_pass.vm = SimpleNamespace(_sp_cands={}, inner_body=[])
+          first_pass.loops = [(0, None, {
+              "type": "AstStatWhile",
+              "body": {"body": [{
+                  "type": "AstStatExpr",
+                  "expr": {
+                      "type": "AstExprIndexExpr",
+                      "expr": {"type": "AstExprLocal", "local": {"location": "regs"}},
+                      "index": {"type": "AstExprLocal", "local": {"location": "top"}},
+                  },
+              }]},
+          })]
+          first_pass.lf = SimpleNamespace(out=[], stack_base=None)
+          first_pass._fresh_scopes = lambda state, interp: (
+              None, SimpleNamespace(vars={"regs": S.RegFile(), "top": 16})
+          )
+          assert first_pass._stack_pointer_candidates() == {"top"}
+          assert first_pass.lf.stack_base == 16, first_pass.lf.stack_base
+          probe149 = object.__new__(devirt149.ProtoLifter)
+          probe149.stack_base = first_pass.lf.stack_base
+          probe149.jump_regs = set()
+          probe149.need_jump_regs = set()
+          probe149._need_jreg(Bin("Add", Reg(17), Const(1)))
+          assert probe149.need_jump_regs == {17}, probe149.need_jump_regs
+
           assert 'allow_partial = os.environ.get("DEVIRT_ALLOW_PARTIAL") == "1"' in Path(
               "luraph-v14.7-engine/obfuscators/luraph_v14_9/devirt.py"
           ).read_text(encoding="utf-8")

@@ -206,14 +206,16 @@ jobs:
               factory_lifter.children = []
               factory_lifter.captured_regs = set()
               child_proto = S.LTable(tid=77)
-              child_upvals = S.LTable({1: module.MaybeBox(14)})
+              frame_descriptor = S.LTable({1: S.RegFile(), 2: 21})
+              child_upvals = S.LTable({1: module.MaybeBox(14), 2: frame_descriptor})
               child_result = factory_lifter.call_symbolic(
                   module.OpaqueFn(900), S.Multi([child_proto, child_upvals]), None, False
               )
               child = child_result.first()
               assert isinstance(child, module.ClosureExpr), child
               assert child.upvals[0].reg == 14, child.upvals
-              assert factory_lifter.captured_regs == {14}, factory_lifter.captured_regs
+              assert child.upvals[1] is frame_descriptor, child.upvals
+              assert factory_lifter.captured_regs == {14, 21}, factory_lifter.captured_regs
               assert factory_lifter.children == [child], factory_lifter.children
 
           assert 'allow_partial = os.environ.get("DEVIRT_ALLOW_PARTIAL") == "1"' in Path(

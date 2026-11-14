@@ -1948,8 +1948,7 @@ class ProtoLifter:
                 if not isinstance(ups, LTable):
                     continue
                 entries = [ups.get(k) for k in range(1, ups.length() + 1)]
-                c = ClosureExpr(proto, entries)
-                c.vm = self.vm
+                c = self._closure_value(proto, entries, self.vm)
                 return Multi([c])
         if isinstance(fn, RuntimeMaker):
             vals = args.items
@@ -2007,6 +2006,25 @@ class ProtoLifter:
     def vm_fn_node(self, fn):
         return fn.node
 
+    def _closure_value(self, proto, entries, vm):
+        """Create a child closure and register its parent-side captures.
+
+        Both the normal maker and opaque runtime-factory fallback must keep
+        captured-register invalidation and recursive child-frame analysis in
+        sync. Keeping this in one place prevents their semantics drifting.
+        """
+        c = ClosureExpr(proto, entries)
+        c.vm = vm
+        for e in entries:
+            if isinstance(e, MaybeBox):
+                self.captured_regs.add(e.reg)
+            if isinstance(e, LTable):
+                values = list(e.h.values())
+                if any(isinstance(x, RegFile) for x in values):
+                    self.captured_regs.update(v for v in values if isinstance(v, int))
+        self.children.append(c)
+        return c
+
     def make_closure(self, args, vm=None):
         """A VM closure of the proto in args; vm: the interpreter (VMModel)
         whose maker was called, when it is not this proto's."""
@@ -2027,17 +2045,7 @@ class ProtoLifter:
         if isinstance(ups, LTable):
             for i in range(1, ups.length() + 1):
                 entries.append(ups.get(i))
-        c = ClosureExpr(proto, entries)
-        c.vm = vm
-        for e in entries:
-            if isinstance(e, MaybeBox):
-                self.captured_regs.add(e.reg)
-            if isinstance(e, LTable):
-                for v in e.h.values():
-                    if isinstance(v, int) and any(isinstance(x, RegFile) for x in e.h.values()):
-                        self.captured_regs.add(v)
-        self.children.append(c)
-        return c
+        return self._closure_value(proto, entries, vm)
 
 
 def lst_nkey(lst):

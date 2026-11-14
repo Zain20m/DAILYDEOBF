@@ -7,6 +7,7 @@ on:
       - "luraph-v14.3-engine/**"
       - "luraph-v15-engine/bin/**"
       - "luraph-v15.1-engine/core/obfuscators/luraph_v14/**"
+      - "luraph-v15.1-engine/core/obfuscators/luraph_v15/**"
       - "index.js"
       - "scripts/setup-engines.js"
       - ".github/workflows/test-luraph-14-engines.yml"
@@ -31,7 +32,8 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           engines = [Path("luraph-v14.7-engine"), Path("luraph-v14.3-engine"),
-                     Path("luraph-v15.1-engine/core/obfuscators/luraph_v14")]
+                     Path("luraph-v15.1-engine/core/obfuscators/luraph_v14"),
+                     Path("luraph-v15.1-engine/core/obfuscators/luraph_v15")]
           count = 0
           for engine in engines:
               for source in engine.rglob("*.py"):
@@ -240,6 +242,29 @@ jobs:
           python3 luraph-v14.7-engine/cli.py --help >/dev/null
           echo "Shared v14.7-v14.9 CLI help check passed."
 
+
+      - name: Test v15 core open-upvalue guards
+        env:
+          PYTHONPATH: luraph-v15.1-engine/core
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python3 - <<'PY'
+          from obfuscators.luraph_v15 import devirt as D
+          lifter = object.__new__(D.ProtoLifter)
+          try:
+              lifter.index(D.MaybeBox(15), 1, None)
+          except D.Unsupported as exc:
+              assert "unresolved open upvalue box" in str(exc), exc
+          else:
+              raise AssertionError("v15 core box read silently became nil")
+          try:
+              lifter.newindex(D.MaybeBox(15), 1, 7, None)
+          except D.Unsupported as exc:
+              assert "unresolved open upvalue box" in str(exc), exc
+          else:
+              raise AssertionError("v15 core box write was silently dropped")
+          print("v15 core open-upvalue fail-closed regression passed.")
+          PY
 
       - name: Test v15.1 v14-compat factory closure captures
         env:

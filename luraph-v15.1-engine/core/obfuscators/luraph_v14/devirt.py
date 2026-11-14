@@ -338,6 +338,20 @@ def _native_opaque_fn(self, fn):
                     "(function(%s) return %s end)(%s)" % (",".join(names), text, ",".join(values)))
 
 
+def _factory_closure(self, proto, entries):
+    """Rebuild a v14 child closure with the same capture bookkeeping as the VM maker."""
+    c = ClosureExpr(proto, entries)
+    c.vm = self.vm
+    for e in entries:
+        if isinstance(e, D.MaybeBox):
+            self.captured_regs.add(e.reg)
+        if isinstance(e, LTable):
+            values = list(e.h.values())
+            if any(isinstance(x, RegFile) for x in values):
+                self.captured_regs.update(v for v in values if isinstance(v, int))
+    self.children.append(c)
+    return c
+
 def _call_symbolic(self, fn, args, it, stat):
     if isinstance(fn, OpaqueFn) and fn.node is None and fn.pf_tid is None:
         vals = list(args.items)
@@ -348,8 +362,7 @@ def _call_symbolic(self, fn, args, it, stat):
             if not isinstance(ups, LTable):
                 continue
             entries = [ups.get(k) for k in range(1, ups.length() + 1)]
-            c = ClosureExpr(proto, entries)
-            c.vm = self.vm
+            c = _factory_closure(self, proto, entries)
             return Multi([c])
     try:
         return _lf_call_symbolic(self, fn, args, it, stat)

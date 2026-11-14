@@ -60,10 +60,8 @@ class NilIndex(Missing):
 
 
 def _interp_patches():
-    """`nil[key]` reads and reads of locals the maker never bound stay
-    symbolic; nil arithmetic routes through the lifter's symbolic binop; a
-    numeric for whose bounds come from an unresolved helper is skipped
-    rather than crashing the walk."""
+    """Keep missing v14 values symbolic and fail closed on unresolved loops.
+    Silently skipping a numeric-for body creates convincing but false output."""
     if getattr(S.Interp, "_v14_nil_index_patch", False):
         return
     orig_eval = S.Interp.eval
@@ -111,7 +109,11 @@ def _interp_patches():
             except S.Unsupported:
                 raise
             if a is None or b is None or c is None:
-                return
+                raise Unsupported(
+                    "numeric for has unresolved bounds "
+                    "(from=%s, to=%s, step=%s); refusing to omit its body"
+                    % (type(a).__name__, type(b).__name__, type(c).__name__)
+                )
         InterpTick.n += 1
         if _DECODE_DEADLINE[0] is not None and InterpTick.n % 2048 == 0 \
                 and time.monotonic() > _DECODE_DEADLINE[0]:
@@ -467,7 +469,16 @@ def _lift_program_inner(source, protos_path, chunk_paths=(), fetch=None):
                 continue
         try:
             text, stats, reqs, bufs = _orig_lift_program(source, protos_path, chunk_paths, fetch)
-        except Exception:
+        except Unsupported as exc:
+            # The helper-decode deadline is global to this root-selection
+            # attempt. Do not swallow it and retry four roots after the budget
+            # has expired; that only makes timeout reporting misleading.
+            if "helper decode budget exhausted" in str(exc):
+                raise
+            last_error = exc
+            continue
+        except Exception as exc:
+            last_error = exc
             continue
         finally:
             if pid is not None and old_root is not None:
@@ -481,7 +492,9 @@ def _lift_program_inner(source, protos_path, chunk_paths=(), fetch=None):
         if best_score <= 0:
             break
     if best_out is None:
-        return _orig_lift_program(source, protos_path, chunk_paths, fetch)
+        if "last_error" in locals() and last_error is not None:
+            raise last_error
+        raise Unsupported("no viable Luraph v14 payload root could be lifted")
     return best_out
 
 

@@ -4641,8 +4641,9 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
         out += ["\t" + l for l in lines]
         out.append("end")
         out.append("")
-    if payload_pid is not None:
-        out.append("return vm_root_%s(...)" % payload_pid)
+    # the final `return vm_root_N(...)` must be the LAST statement (Luau
+    # rejects code after a return): it is appended after the extra blocks
+    final_return = ("return vm_root_%s(...)" % payload_pid) if payload_pid is not None else None
 
     # DEVIRT_ALL_FROM=<seq>: a decrypted payload starts several independent
     # top-level closures (pcall'd modules, task.spawn bodies) that the root
@@ -4675,6 +4676,8 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
                 out.append("end")
         sys.stderr.write("[*] DEVIRT_ALL_FROM=%s: %d extra top-level payload closures lifted\n" % (all_from, extra))
 
+    if final_return is not None:
+        out.append(final_return)
     shared = []
     for n in sorted(prog.dump.shared.values()):
         shared += ["-- Luraph runtime function (from the VM object, not part of the script: not lifted).",

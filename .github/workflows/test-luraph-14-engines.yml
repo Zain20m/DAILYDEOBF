@@ -42,6 +42,12 @@ jobs:
           print(f"Compiled {count} Python source files.")
           PY
 
+      - name: De-flatten pass equivalence (control-flow unflattening)
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python3 luraph-v14.7-engine/test_unflatten.py
+
       - name: Load the Luraph v14.7, v14.8 and v14.9 engines
         env:
           PYTHONPATH: luraph-v14.7-engine
@@ -49,6 +55,7 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import os
           import cli
           import harness
           from obfuscators.luraph_v14_7 import driver as driver147, vmmap as map147, devirt as devirt147
@@ -192,7 +199,15 @@ jobs:
           first_pass._fresh_scopes = lambda state, interp: (
               None, SimpleNamespace(vars={"regs": S.RegFile(), "top": 16, "idx": 2})
           )
+          # The frame-base guess is opt-in (it mis-picked the base on the real
+          # 14.7 sample); by default it must leave stack_base alone.
           assert first_pass._stack_pointer_candidates() == {"top", "idx"}
+          assert first_pass.lf.stack_base is None, first_pass.lf.stack_base
+          os.environ["DEVIRT_STACK_GUESS"] = "1"
+          try:
+              assert first_pass._stack_pointer_candidates() == {"top", "idx"}
+          finally:
+              os.environ.pop("DEVIRT_STACK_GUESS", None)
           assert first_pass.lf.stack_base == 16, first_pass.lf.stack_base
           probe149 = object.__new__(devirt149.ProtoLifter)
           probe149.stack_base = first_pass.lf.stack_base

@@ -1005,6 +1005,21 @@ class ProtoLifter:
         if isinstance(v, OpaqueFn) and v.pf_tid is not None and v.node is None:
             n = self.dump.shared.setdefault(v.lfid, len(self.dump.shared) + 1)
             return SharedFn(v, n)
+        if isinstance(v, OpaqueFn) and v.node is not None:
+            # a native Lua function the dump bound to its AST (an
+            # LPH_NO_VIRTUALIZE function, or plain Lua Luraph left alone):
+            # keep its exact source when it reads no outer locals
+            text = self.plain_function_text(v)
+            if text is not None:
+                return Opaque("function", text)
+        if isinstance(v, OpaqueFn):
+            # an untagged Luraph runtime closure, or a large native one (the
+            # VM's own dispatcher/decryptor pieces): there is no script source
+            # to show, so name it (luraph_runtimeN stub). Only this value is
+            # stubbed -- the rest of the block still lifts as real code
+            # instead of the whole block becoming error("devirt: ...").
+            n = self.dump.shared.setdefault(v.lfid, len(self.dump.shared) + 1)
+            return SharedFn(v, n)
         if isinstance(v, Buf):
             # a buffer constant (LPH_ENCFUNC: the encrypted function)
             t = self.new_temp()
@@ -1018,6 +1033,10 @@ class ProtoLifter:
             text = self.plain_function_text(v)
             if text is not None:
                 return Opaque("function", text)
+            # a native Luraph helper (e.g. its RC4-style string decryptor)
+            # passed around as a value: stub it by identity, as above
+            n = self.dump.shared.setdefault(("luafunc", id(v)), len(self.dump.shared) + 1)
+            return SharedFn(v, n)
         raise Unsupported("value %r in an expression" % (v,))
 
     def plain_function_text(self, fn):
@@ -1322,6 +1341,10 @@ class ProtoLifter:
                 if lib is not None:
                     # a whole library as a value (`R[a] = string`, Hardcode Globals)
                     return Global(lib)
+                # A filled table here is VM-internal state. Lowering it to a
+                # literal was tried (as the v14 lifter does) but lets the walk
+                # continue into regions whose state explodes (2.6 GB+, host
+                # OOM kill on a 258 KB v15.0 sample), so keep the honest hole.
                 raise Unsupported("storing a non-empty VM table into a register")
             return S.NewTable()
         return self.as_expr(v)
@@ -3336,8 +3359,9 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
         out += ["\t" + l for l in lines]
         out.append("end")
         out.append("")
-    if payload_pid is not None:
-        out.append("return vm_root_%s(...)" % payload_pid)
+    # the chunk's final `return vm_root_N(...)` must be the LAST statement
+    # (Luau rejects code after a return): emit it after the orphan protos
+    final_return = ("return vm_root_%s(...)" % payload_pid) if payload_pid is not None else None
 
     orphan_count = 0
     if os.environ.get("DEVIRT_ALL_PROTOS"):
@@ -3381,6 +3405,8 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
                 out.append("")
 
     fl.stats["orphan_protos"] = orphan_count
+    if final_return is not None:
+        out.append(final_return)
 
     # Luraph runtime functions the script calls (SharedFn): stubs up front
     shared = []

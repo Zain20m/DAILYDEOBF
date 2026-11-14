@@ -2531,7 +2531,10 @@ class Stepper:
             if isinstance(inner.vars.get(k), int)
             and not isinstance(inner.vars.get(k), bool)
         ]
-        if self.lf.stack_base is None and len(initial_tops) == 1:
+        # Opt-in only: on the real 14.7/14.8/14.9 samples this guess picked a
+        # wrong frame base (14.7: 13 -> 18 unlifted blocks, 'store below the
+        # stack VM's frame'); the walker finds the base itself without it.
+        if os.environ.get('DEVIRT_STACK_GUESS') == '1' and self.lf.stack_base is None and len(initial_tops) == 1:
             self.lf.stack_base = initial_tops[0]
         return candidates
 

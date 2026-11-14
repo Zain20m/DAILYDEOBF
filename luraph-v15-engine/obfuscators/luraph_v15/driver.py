@@ -326,12 +326,33 @@ def run(job):
         if nil_bit32:
             issues.append("%d bit32 calls with nil operands" % nil_bit32)
         if issues:
-            print("[!] devirtualized candidate failed validation: %s; returning behaviour trace" %
-                  "; ".join(issues), file=sys.stderr)
-            if not job.debug:
-                os.remove(dpath)
-            write_trace()
-            return job.trace_path
+            # Only a lift that MISREAD the VM is worse than the trace: lots of
+            # calls/indexes/arithmetic on nil relative to its size, or no
+            # recovered code at all. A few error("devirt: ...") holes or
+            # runtime-helper stubs in an otherwise good lift used to throw the
+            # whole file away (48 recovered functions lost over 7 holes); keep
+            # it, and say exactly what is missing at the top instead.
+            # DEOB_STRICT_LIFT=1 restores the all-or-nothing behaviour.
+            code_lines = sum(1 for ln in lifted.splitlines() if ln.strip() and not ln.strip().startswith("--"))
+            misreads = nil_calls + nil_indexes + nil_arithmetic + nil_bit32
+            holes = len(re.findall(r'error\s*\(\s*["\']devirt:', lifted, re.I))
+            garbage = (code_lines < 10
+                       or misreads > max(5, code_lines // 40)
+                       or holes > max(20, code_lines // 15))
+            if garbage or os.environ.get("DEOB_STRICT_LIFT") == "1":
+                print("[!] devirtualized candidate failed validation: %s; returning behaviour trace" %
+                      "; ".join(issues), file=sys.stderr)
+                if not job.debug:
+                    os.remove(dpath)
+                write_trace()
+                return job.trace_path
+            print("[!] partial lift kept (%d unlifted block(s), %d nil misread(s) in %d lines): %s" %
+                  (holes, misreads, code_lines, "; ".join(issues)), file=sys.stderr)
+            note = ("-- NOTE: partial VM lift. %d block(s) could not be lifted (error(\"devirt: ...\")\n"
+                    "-- lines) and %d Luraph runtime helper(s) stay as stubs; everything else is\n"
+                    "-- recovered code.\n\n" % (holes, len(runtime_stubs)))
+            with open(dpath, "w", encoding="utf-8", newline="\n") as f:
+                f.write(note + lifted)
         return dpath
 
 

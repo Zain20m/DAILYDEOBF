@@ -157,6 +157,12 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
             break
         with open(ppath, "w", encoding="utf-8", newline="\n") as f:
             f.write(m.group(1))
+    if text is None:
+        # quick rounds only walk; if a constant run failed before the closing
+        # full lift there is no text yet: lift what the dump holds now
+        print("[*] no full lift yet: lifting the current dump", file=sys.stderr)
+        text, stats, reqs, bufs = devirt.run_big_stack(devirt.lift_program, job.source_path, ppath, chunk_paths,
+                                                       live and live())
     header = (job.credit_header() +
               "-- Local names are inferred from use (the original names are not in the bytecode)\n")
     job.write(dpath, header + devirt.finish_text(text) + "\n")

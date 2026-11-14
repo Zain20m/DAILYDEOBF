@@ -143,18 +143,23 @@ def merge_equivalent(entry, blocks, D):
         return "\n".join(parts)
 
     merged_any = False
+    # block id -> (normalised text, temp order): a block's text only
+    # changes when a merge renames temps, so keep it between passes
+    cache = {}
     while True:
         texts, temps, defs = {}, {}, {}
         for bid, b in blocks.items():
 
-            tx = text(b)
-            order = []
-            for mo in _TEMP_RE.finditer(tx):
-                if mo.group(1) not in order:
-                    order.append(mo.group(1))
-            pos = {t: i for i, t in enumerate(order)}
-            texts[bid] = _TEMP_RE.sub(lambda mo: "T#%d" % pos[mo.group(1)], tx)
-            temps[bid] = order
+            got = cache.get(bid)
+            if got is None:
+                tx = text(b)
+                order = []
+                for mo in _TEMP_RE.finditer(tx):
+                    if mo.group(1) not in order:
+                        order.append(mo.group(1))
+                pos = {t: i for i, t in enumerate(order)}
+                got = cache[bid] = (_TEMP_RE.sub(lambda mo: "T#%d" % pos[mo.group(1)], tx), order)
+            texts[bid], temps[bid] = got
             for s in b.stmts:
                 if isinstance(s, D.CallStmt):
                     defs[s.t] = bid
@@ -214,6 +219,8 @@ def merge_equivalent(entry, blocks, D):
             if rmap:
                 _rename_temps(b.stmts, rmap, seen)
                 _rename_temps([b.cond, b.values], rmap, seen)
+        if rmap:
+            cache.clear()      # statements were rewritten: texts are stale
         recompute_preds(blocks)
 
 def thread_empty(entry, blocks):

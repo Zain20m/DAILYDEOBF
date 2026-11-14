@@ -422,6 +422,16 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
               % (best[2], best[0][0], -best[0][1]), file=sys.stderr)
         text = best[1]
     if text is None:
+        # quick rounds only walk; if a constant run failed before the closing
+        # full lift there is no text yet: lift what the dump holds now
+        try:
+            print("[*] no full lift yet: lifting the current dump", file=sys.stderr)
+            text = devirt.run_big_stack(devirt.lift_program, job.source_path, ppath, chunk_paths,
+                                        live and live())[0]
+        except Exception as ex:  # noqa: BLE001 - fall through to the error below
+            print("[!] final lift failed: %s" % ex, file=sys.stderr)
+            text = None
+    if text is None:
         # every round failed before the first full lift (the "constant request
         # run failed" path breaks out with text still None): finish_text(None)
         # used to crash with a TypeError that hid the real error

@@ -2178,6 +2178,8 @@ async function processLuraph14x(message, prompt, input, version) {
           // that turned a 95%-recovered script into nothing. Emit the lift with the
           // few unresolved spots marked as error("devirt: ...") lines instead.
           DEVIRT_ALLOW_PARTIAL: '1',
+          // Empty overrides any host-level setting that might force full lifts.
+          DEVIRT_FULL_ROUNDS: '',
           // Keep the request-collection fast path enabled. Forcing a full
           // control-flow lift on every constant round repeats the most
           // expensive work and can leave large samples silent for many minutes.

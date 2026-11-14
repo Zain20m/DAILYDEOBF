@@ -21,7 +21,7 @@ const { inspectLiftText } = require('./scripts/lift-validation');
 const { convertToPureLuau } = require('./pureluau');
 const { createAutomaticPureLuauResult } = require('./scripts/automatic-pureluau');
 const { detectFlowAuthLuraphVersion } = require('./scripts/flowauth-version');
-const { detectIronBrewSuggestion } = require('./scripts/ironbrew-detection');
+const { detectEngineSuggestion } = require('./scripts/engine-detection');
 const { repairIronVeilSource } = require('./scripts/ironveil-auto-repair');
 const {
   resolveStaticSources,
@@ -668,48 +668,6 @@ function looksLikeViewerPageOrJavaScript(source, contentType = '') {
     htmlish && /\b(?:document|window|script)\b/i.test(text);
 }
 
-function detectEngineSuggestion(source) {
-  const text = String(source || '');
-  const ironbrewSuggestion = detectIronBrewSuggestion(text);
-  if (ironbrewSuggestion) return ironbrewSuggestion;
-
-  const normalizedText = text.replace(/^\uFEFF/, '');
-  const banner = normalizedText.match(/This\s+file\s+was\s+protected\s+(?:by|using)\s+Luraph(?:\s+Obfuscator)?\s*(?:version\s*)?v?\s*(\d+(?:\.\d+)?)/i) ||
-    normalizedText.match(/(?:Protected\s+by|Protected\s+using)\s*[:\-]?\s*Luraph(?:\s+Obfuscator)?\s*(?:version\s*)?v?\s*(\d+(?:\.\d+)?)/i) ||
-    normalizedText.match(/\bLuraph(?:\s+Obfuscator)?\s*(?:version\s*)?v?\s*(\d+(?:\.\d+)?)/i);
-
-  if (banner) {
-    const version = banner[1];
-    if (version === '15' || version === '15.0') {
-      return { engine: 'luraph-v15', label: 'Luraph v15', confidence: 'high', reason: 'The source contains an explicit Luraph v15 version banner.' };
-    }
-    if (version === '15.1') {
-      return { engine: 'luraph-151', label: 'Luraph 15.1', confidence: 'high', reason: 'The source contains an explicit Luraph 15.1 version banner.' };
-    }
-    if (version === '14.7') {
-      return { engine: 'luraph-v147', label: 'Luraph 14.7', confidence: 'high', reason: 'The source contains an explicit Luraph v14.7 version banner.' };
-    }
-    if (version === '14.8') {
-      return { engine: 'luraph-v148', label: 'Luraph 14.8', confidence: 'high', reason: 'The source contains an explicit Luraph v14.8 version banner.' };
-    }
-    if (version === '14.9') {
-      return { engine: 'luraph-v149', label: 'Luraph 14.9', confidence: 'high', reason: 'The source contains an explicit Luraph v14.9 version banner.' };
-    }
-    if (version === '14.3') {
-      return { engine: 'luraph-v143', label: 'Luraph 14.3 static analysis', confidence: 'high', reason: 'The source contains an explicit Luraph v14.3 version banner. The available archive provides static payload decoding.' };
-    }
-  }
-
-  if (/\b(?:LPH_ATTRIBUTES|LPH_PRECHECK|LPH_ASSUME|LPH_ENCBUF)\b/.test(text)) {
-    return { engine: 'luraph-151', label: 'Luraph 15.1', confidence: 'medium', reason: 'The source contains Luraph 15.1 macro markers.' };
-  }
-
-  if (/\bThis file was protected using Luraph\b|\bLuraph Obfuscator\b/i.test(text)) {
-    return { engine: null, label: 'Luraph', confidence: 'medium', reason: 'A Luraph marker was found, but the exact version could not be identified.' };
-  }
-
-  return null;
-}
 function isClearlyPlainLuau(source) {
   const text = String(source || '').replace(/^\uFEFF/, '').trim();
   if (!text) return false;
@@ -1428,7 +1386,13 @@ function runCommand(command, args, cwd, timeoutMs, options = {}) {
       clearTimeout(timer);
       if (pendingStderr.trim() && options.onProgress) options.onProgress(pendingStderr.trim());
       if (timedOut || signal === 'SIGKILL') {
-        const error = new Error('The engine exceeded its ' + formatDuration(timeoutMs) + ' processing limit.');
+        // Only report a timeout when OUR timer fired. A SIGKILL we did not
+        // send comes from the host (almost always the out-of-memory killer),
+        // and calling that a "25m limit" after one minute was misleading.
+        const error = new Error(timedOut
+          ? 'The engine exceeded its ' + formatDuration(timeoutMs) + ' processing limit.'
+          : 'The engine was killed by the host system (signal ' + (signal || 'SIGKILL') + ') before finishing; this is almost always the server running out of memory on a large input, not a timeout.');
+        error.killedByHost = !timedOut;
         error.stdout = stdout;
         error.stderr = stderr;
         error.signal = signal || 'SIGKILL';
@@ -2202,6 +2166,10 @@ async function processLuraph14x(message, prompt, input, version) {
       ],
       {
         env: {
+          // The 14.x engines refuse ALL output when even one VM state is unresolved;
+          // that turned a 95%-recovered script into nothing. Emit the lift with the
+          // few unresolved spots marked as error("devirt: ...") lines instead.
+          DEVIRT_ALLOW_PARTIAL: '1',
           DEVIRT_FULL_ROUNDS: '1',
           DEVIRT_TIMING: '1',
           DEVIRT_ERRS: '1',
@@ -2985,6 +2953,9 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
           // Keep the seed search enabled, but bound every parallel candidate.
           DEOB_FAST: '',
           DEOB_CANDIDATE_TIMEOUT_MS: '120000',
+          // Racing 3 python candidates triples peak memory; on large inputs
+          // that gets the whole engine OOM-killed by the host, so run one.
+          ...(Buffer.byteLength(input.source, 'utf8') > 1_000_000 ? { DEOB_PY_CANDIDATES: 'python:1' } : {}),
           DEOB_CANDIDATE_IDLE_TIMEOUT_MS: '75000',
           DEVIRT_LOADERS: '1',
           DEVIRT_FULL_ROUNDS: '1',
@@ -5504,7 +5475,16 @@ async function startWorkflow(message, inlineText = null) {
   }
 
   const engineSuggestion = detectEngineSuggestion(input.source);
-  const isLuraphSuggestion = Boolean(engineSuggestion && /^luraph/i.test(engineSuggestion.label));
+  const isLuraphSuggestion = Boolean(engineSuggestion && (/^luraph/i.test(engineSuggestion.engine || '') ||
+    (!engineSuggestion.engine && (engineSuggestion.alternatives || []).some((id) => /^luraph/.test(id)))));
+  const suggestedAlternatives = new Set((engineSuggestion && engineSuggestion.alternatives) || []);
+  // Label/style for one engine button: green "Recommended" for the detector's
+  // pick, a hint for the runner-up engines, plain otherwise.
+  const engineButton = (button, engineId, label) => {
+    if (engineSuggestion && engineSuggestion.engine === engineId) return button.setLabel(('Recommended: ' + label).slice(0, 80)).setStyle(ButtonStyle.Success);
+    if (suggestedAlternatives.has(engineId)) return button.setLabel(('Also try: ' + label).slice(0, 80)).setStyle(ButtonStyle.Primary);
+    return button.setLabel(label).setStyle(ButtonStyle.Secondary);
+  };
   const chooseRows = [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -5515,46 +5495,30 @@ async function startWorkflow(message, inlineText = null) {
         .setCustomId(`deobf-luraph-menu:${message.author.id}`)
         .setLabel(isLuraphSuggestion ? 'Recommended: Luraph' : 'Luraph')
         .setStyle(isLuraphSuggestion ? ButtonStyle.Success : ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`deobf-centurion:${message.author.id}`)
-        .setLabel('Centurion')
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`deobf-ironbrew1:${message.author.id}`)
-        .setLabel(engineSuggestion && engineSuggestion.engine === 'ironbrew1' ? 'Recommended: IronBrew 1' : 'IronBrew 1')
-        .setStyle(engineSuggestion && engineSuggestion.engine === 'ironbrew1' ? ButtonStyle.Success : ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`deobf-ironbrew2:${message.author.id}`)
-        .setLabel(engineSuggestion && engineSuggestion.engine === 'ironbrew2' ? 'Recommended: IronBrew 2' : 'IronBrew 2')
-        .setStyle(engineSuggestion && engineSuggestion.engine === 'ironbrew2' ? ButtonStyle.Success : ButtonStyle.Secondary),
+      engineButton(new ButtonBuilder()
+        .setCustomId(`deobf-centurion:${message.author.id}`), 'centurion', 'Centurion'),
+      engineButton(new ButtonBuilder()
+        .setCustomId(`deobf-ironbrew1:${message.author.id}`), 'ironbrew1', 'IronBrew 1'),
+      engineButton(new ButtonBuilder()
+        .setCustomId(`deobf-ironbrew2:${message.author.id}`), 'ironbrew2', 'IronBrew 2'),
     ),
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`deobf-vantarmor:${message.author.id}`)
-        .setLabel('Vantarmor / Universal')
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`deobf-luaprotect:${message.author.id}`)
-        .setLabel('LuaProtect Fetcher')
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`deobf-jnkie:${message.author.id}`)
-        .setLabel('JNKIE Fetcher')
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`deobf-fulcrum:${message.author.id}`)
-        .setLabel('Fulcrum / Polsec')
-        .setStyle(ButtonStyle.Secondary),
+      engineButton(new ButtonBuilder()
+        .setCustomId(`deobf-vantarmor:${message.author.id}`), 'vantarmor', 'Vantarmor / Universal'),
+      engineButton(new ButtonBuilder()
+        .setCustomId(`deobf-luaprotect:${message.author.id}`), 'luaprotect', 'LuaProtect Fetcher'),
+      engineButton(new ButtonBuilder()
+        .setCustomId(`deobf-jnkie:${message.author.id}`), 'jnkie', 'JNKIE Fetcher'),
+      engineButton(new ButtonBuilder()
+        .setCustomId(`deobf-fulcrum:${message.author.id}`), 'fulcrum', 'Fulcrum / Polsec'),
       new ButtonBuilder()
         .setCustomId(`deobf-cancel:${message.author.id}`)
         .setLabel('Cancel')
         .setStyle(ButtonStyle.Secondary),
     ),
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`deobf-2hbj:${message.author.id}`)
-        .setLabel('2HBJ (Experimental)')
-        .setStyle(ButtonStyle.Secondary),
+      engineButton(new ButtonBuilder()
+        .setCustomId(`deobf-2hbj:${message.author.id}`), '2hbj', '2HBJ (Experimental)'),
     ),
   ];
   const luraphVersionRows = [
@@ -5563,20 +5527,16 @@ async function startWorkflow(message, inlineText = null) {
         ['14.3', 'luraph-v143', 'Luraph 14.3 (Static)'],
         ['14.7', 'luraph-v147', 'Luraph 14.7 (VIP)'],
         ['14.8', 'luraph-v148', 'Luraph 14.8'],
-      ].map(([version, engine, label]) => new ButtonBuilder()
-        .setCustomId(`deobf-luraph-version:${version}:${message.author.id}`)
-        .setLabel(engineSuggestion && engineSuggestion.engine === engine ? 'Recommended: ' + label : label)
-        .setStyle(engineSuggestion && engineSuggestion.engine === engine ? ButtonStyle.Success : ButtonStyle.Secondary))
+      ].map(([version, engine, label]) => engineButton(new ButtonBuilder()
+        .setCustomId(`deobf-luraph-version:${version}:${message.author.id}`), engine, label))
     ),
     new ActionRowBuilder().addComponents(
       ...[
         ['14.9', 'luraph-v149', 'Luraph 14.9'],
         ['15', 'luraph-v15', 'Luraph 15'],
         ['15.1', 'luraph-151', 'Luraph 15.1'],
-      ].map(([version, engine, label]) => new ButtonBuilder()
-        .setCustomId(`deobf-luraph-version:${version}:${message.author.id}`)
-        .setLabel(engineSuggestion && engineSuggestion.engine === engine ? 'Recommended: ' + label : label)
-        .setStyle(engineSuggestion && engineSuggestion.engine === engine ? ButtonStyle.Success : ButtonStyle.Secondary))
+      ].map(([version, engine, label]) => engineButton(new ButtonBuilder()
+        .setCustomId(`deobf-luraph-version:${version}:${message.author.id}`), engine, label))
     ),
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -5603,10 +5563,10 @@ async function startWorkflow(message, inlineText = null) {
       ? 'The original URL could not be downloaded automatically. Choose an engine, then attach the Lua/Luau file or paste its source.'
       : 'Select a deobfuscator below to analyze the supplied Lua/Luau source.',
     engineSuggestion
-      ? '**Detector suggestion:** Dvx thinks this file is ' + engineSuggestion.label +
-        (engineSuggestion.engine ? '. Would you like to choose ' + engineSuggestion.label + '?' : ', but could not identify the exact version.') +
-        '\n' + engineSuggestion.reason + ' This is a suggestion, not an automatic engine selection.'
-      : null,
+      ? '**Detector (' + engineSuggestion.confidence + ' confidence):** ' + engineSuggestion.label +
+        (engineSuggestion.engine ? ' → green button is the recommended engine' : ' → no engine here fits this file') +
+        ((engineSuggestion.alternatives || []).length ? '; blue buttons are worth trying next' : '') + '.\n' + engineSuggestion.reason
+      : '**Detector:** no known obfuscator signature or VM layout was found.',
     '**2HBJ option:** Experimental imported VM decompiler. The bundled mappings are tuned to the supplied sample and may not match every 2HBJ build.',
     '',
     input.pendingUrlFailure ? '**Input ready**' : '**Payload scan complete**',

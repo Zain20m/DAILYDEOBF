@@ -168,13 +168,25 @@ jobs:
                       "expr": {"type": "AstExprLocal", "local": {"location": "regs"}},
                       "index": {"type": "AstExprLocal", "local": {"location": "top"}},
                   },
+                  {
+                      "type": "AstStatExpr",
+                      "expr": {
+                          "type": "AstExprIndexExpr",
+                          "expr": {"type": "AstExprLocal", "local": {"location": "regs"}},
+                          "index": {"type": "AstExprLocal", "local": {"location": "idx"}},
+                      },
+                  },
+                  {
+                      "type": "AstStatCompoundAssign",
+                      "var": {"type": "AstExprLocal", "local": {"location": "top"}},
+                  },
               }]},
           })]
           first_pass.lf = SimpleNamespace(out=[], stack_base=None)
           first_pass._fresh_scopes = lambda state, interp: (
-              None, SimpleNamespace(vars={"regs": S.RegFile(), "top": 16})
+              None, SimpleNamespace(vars={"regs": S.RegFile(), "top": 16, "idx": 2})
           )
-          assert first_pass._stack_pointer_candidates() == {"top"}
+          assert first_pass._stack_pointer_candidates() == {"top", "idx"}
           assert first_pass.lf.stack_base == 16, first_pass.lf.stack_base
           probe149 = object.__new__(devirt149.ProtoLifter)
           probe149.stack_base = first_pass.lf.stack_base

@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const { performance } = require('node:perf_hooks');
 const { StringDecoder } = require('string_decoder');
 const { getPythonBin } = require('./pyenv');
 
@@ -69,7 +70,7 @@ async function runCandidates(cfgData, job) {
     const env = Object.assign({}, process.env, { PYTHONPATH: coreDir });
     if (c.seed !== null) env.PYTHONHASHSEED = c.seed;
 
-    const t0 = Date.now();
+    const t0 = performance.now();
     const proc = spawn(c.exe, [bridgePy, 'pipeline', cfgPath], {
       env,
       stdio: ['ignore', 'ignore', 'pipe'],
@@ -116,7 +117,7 @@ async function runCandidates(cfgData, job) {
     function resetIdleTimer() {
       if (run.idleTimer) clearTimeout(run.idleTimer);
       run.idleTimer = setTimeout(() => {
-        const idleFor = Date.now() - run.lastOutputAt;
+        const idleFor = performance.now() - run.lastOutputAt;
         terminate('no diagnostics for ' + Math.round(idleFor / 1000) + 's');
       }, idleTimeoutMs);
       if (run.idleTimer.unref) run.idleTimer.unref();
@@ -145,7 +146,7 @@ async function runCandidates(cfgData, job) {
       's; idle limit ' + Math.round(idleTimeoutMs / 1000) + 's).');
 
     proc.stderr.on('data', chunk => {
-      run.lastOutputAt = Date.now();
+      run.lastOutputAt = performance.now();
       if (!run.timedOutReason && !run.cancelReason) resetIdleTimer();
       forwardDiagnostics(chunk);
     });
@@ -169,7 +170,7 @@ async function runCandidates(cfgData, job) {
       if (run.forceKillTimer) clearTimeout(run.forceKillTimer);
       run.code = code;
       run.signal = signal || null;
-      run.secs = (Date.now() - t0) / 1000;
+      run.secs = (performance.now() - t0) / 1000;
       run.stats = fs.existsSync(own.dpath) ? parseStats(run.log) : null;
 
       if (run.timedOutReason) {

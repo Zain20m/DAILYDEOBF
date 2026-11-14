@@ -4487,7 +4487,7 @@ async function handleCryonCommand(interaction, attachment) {
         'Input: ' + inputBuffer.length.toLocaleString('en-US') + ' bytes',
         'Output: ' + outputBuffer.length.toLocaleString('en-US') + ' bytes',
         'Your original upload was not modified. The bot sent the source to Cryon and did not execute it.',
-      ].join('\\n'),
+      ].join('\n'),
       files: [new AttachmentBuilder(outputBuffer, { name: outputName })],
       allowedMentions: { parse: [] },
     });

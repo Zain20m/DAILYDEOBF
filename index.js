@@ -90,6 +90,7 @@ const slashCommands = [
       .addChoices(
         { name: 'IronVeil', value: 'ironveil' },
         { name: 'Dailyfuscator v3', value: 'dailyfuscator' },
+        { name: 'Cryon API', value: 'cryon' },
       ))
     .addAttachmentOption((option) => option
       .setName('file')
@@ -108,6 +109,19 @@ const slashCommands = [
       .setName('seed')
       .setDescription('Optional build seed (up to 128 characters)')
       .setMaxLength(128)
+      .setRequired(false))
+    .addStringOption((option) => option
+      .setName('optimize')
+      .setDescription('Cryon build optimization level')
+      .addChoices(
+        { name: '1 · Default', value: '1' },
+        { name: '2 · Balanced', value: '2' },
+        { name: '3 · Maximum', value: '3' },
+      )
+      .setRequired(false))
+    .addBooleanOption((option) => option
+      .setName('compress')
+      .setDescription('Enable Cryon output compression')
       .setRequired(false))
     .toJSON(),
 ];
@@ -4390,9 +4404,116 @@ async function handleDailyfuscatorCommand(interaction, attachment) {
   }
 }
 
+async function handleCryonCommand(interaction, attachment) {
+  const startedAt = Date.now();
+  const originalName = path.basename(String(attachment && attachment.name || 'script.lua').replace(/\\/g, '/'));
+  let completed = false;
+  let failure = '';
+
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const token = String(process.env.CRYON_API_TOKEN || '').trim();
+    if (!token) {
+      throw new Error('Cryon is not configured. Add CRYON_API_TOKEN to the bot environment variables.');
+    }
+    const extension = path.extname(originalName).toLowerCase();
+    if (!['.lua', '.luau', '.txt'].includes(extension)) {
+      throw new Error('Cryon accepts .lua, .luau and .txt source files.');
+    }
+    if (Number.isFinite(attachment && attachment.size) && attachment.size > 150 * 1024) {
+      throw new Error('Cryon has a strict 150 KB source limit.');
+    }
+
+    await interaction.editReply('**[1/4]** Downloading your Lua/Luau source...');
+    const download = await fetch(attachment.url, {
+      redirect: 'error',
+      signal: AbortSignal.timeout(20_000),
+      headers: { 'user-agent': 'DAILY-DEOBF/1.0' },
+    });
+    if (!download.ok) throw new Error('Discord file download returned HTTP ' + download.status + '.');
+    const inputBuffer = await readResponse(download, 150 * 1024);
+    if (!inputBuffer.length) throw new Error('The uploaded source file is empty.');
+    const source = decodeSource(inputBuffer);
+    if (!source.trim()) throw new Error('The uploaded source file contains no Lua/Luau code.');
+
+    const optimize = Number(interaction.options.getString('optimize') || '1');
+    if (![1, 2, 3].includes(optimize)) throw new Error('Cryon optimize must be 1, 2 or 3.');
+    const compress = interaction.options.getBoolean('compress') ?? true;
+
+    await interaction.editReply('**[2/4]** Sending source to Cryon...');
+    const apiResponse = await fetch('https://cryon.cpsnetwork.xyz/api/obfuscate', {
+      method: 'POST',
+      redirect: 'error',
+      signal: AbortSignal.timeout(90_000),
+      headers: {
+        authorization: 'Bearer ' + token,
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      body: JSON.stringify({ source, optimize, compress }),
+    });
+
+    const raw = await apiResponse.text();
+    let payload = null;
+    try { payload = JSON.parse(raw); } catch {}
+    if (!apiResponse.ok) {
+      const message = payload && (payload.error || payload.message) || raw.slice(0, 500) || 'No error details returned.';
+      const statusHelp = {
+        400: ' Check the source and options.',
+        401: ' The Cryon token is missing, invalid or revoked.',
+        403: ' The token may not have Premium API access.',
+        413: ' The source exceeds Cryon’s 150 KB limit.',
+        429: ' Cryon rate limit reached. Wait before retrying.',
+      }[apiResponse.status] || '';
+      throw new Error('Cryon API returned HTTP ' + apiResponse.status + ': ' + String(message).slice(0, 500) + statusHelp);
+    }
+    if (!payload || typeof payload.code !== 'string' || !payload.code.trim()) {
+      throw new Error('Cryon returned HTTP success but no usable code field.');
+    }
+
+    const outputBuffer = Buffer.from(payload.code, 'utf8');
+    if (outputBuffer.length > MAX_OUTPUT_BYTES) {
+      throw new Error('Cryon output exceeds the 18 MB Discord attachment limit.');
+    }
+    const baseName = path.basename(originalName, extension)
+      .replace(/[^A-Za-z0-9._-]/g, '_') || 'script';
+    const outputName = 'cryon-' + baseName + '.lua';
+    await interaction.editReply('**[3/4]** Cryon finished. Preparing the sealed output...');
+    await interaction.editReply({
+      content: [
+        'Cryon API finished successfully.',
+        'Optimization: **' + optimize + '**',
+        'Compression: **' + (compress ? 'Enabled' : 'Disabled') + '**',
+        'Input: ' + inputBuffer.length.toLocaleString('en-US') + ' bytes',
+        'Output: ' + outputBuffer.length.toLocaleString('en-US') + ' bytes',
+        'Your original upload was not modified. The bot sent the source to Cryon and did not execute it.',
+      ].join('\\n'),
+      files: [new AttachmentBuilder(outputBuffer, { name: outputName })],
+      allowedMentions: { parse: [] },
+    });
+    completed = true;
+  } catch (error) {
+    failure = String(error && error.message || error);
+    console.error('Cryon API obfuscation failed:', failure);
+    await interaction.editReply('Cryon could not process that file: ' + failure.slice(0, 900)).catch(() => {});
+  } finally {
+    await writeObfuscationLog(interaction, {
+      engine: 'Cryon API',
+      filename: originalName,
+      success: completed,
+      error: failure,
+      durationMs: Date.now() - startedAt,
+    });
+  }
+}
+
 async function handleObfuscatorCommand(interaction) {
   const engine = interaction.options.getString('obfuscator');
   const attachment = interaction.options.getAttachment('file');
+  if (engine === 'cryon') {
+    await handleCryonCommand(interaction, attachment);
+    return;
+  }
   if (engine === 'dailyfuscator') {
     await handleDailyfuscatorCommand(interaction, attachment);
     return;

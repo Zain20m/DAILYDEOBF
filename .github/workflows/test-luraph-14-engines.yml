@@ -219,6 +219,18 @@ jobs:
               assert child.upvals[1] is frame_descriptor, child.upvals
               assert factory_lifter.captured_regs == {14, 21}, factory_lifter.captured_regs
               assert factory_lifter.children == [child], factory_lifter.children
+              try:
+                  factory_lifter.index(module.MaybeBox(15), 1, None)
+              except module.Unsupported as exc:
+                  assert "unresolved open upvalue box" in str(exc), exc
+              else:
+                  raise AssertionError("open upvalue box read silently became nil")
+              try:
+                  factory_lifter.newindex(module.MaybeBox(15), 1, 7, None)
+              except module.Unsupported as exc:
+                  assert "unresolved open upvalue box" in str(exc), exc
+              else:
+                  raise AssertionError("open upvalue box write was silently dropped")
 
           assert 'allow_partial = os.environ.get("DEVIRT_ALLOW_PARTIAL") == "1"' in Path(
               "luraph-v14.7-engine/obfuscators/luraph_v14_9/devirt.py"
@@ -255,6 +267,18 @@ jobs:
           assert child.upvals[1] is frame
           assert lifter.captured_regs == {14, 21}, lifter.captured_regs
           assert lifter.children == [child]
+          try:
+              lifter.index(D.MaybeBox(15), 1, None)
+          except D.Unsupported as exc:
+              assert "unresolved open upvalue box" in str(exc), exc
+          else:
+              raise AssertionError("v15.1 v14-compat box read silently became nil")
+          try:
+              lifter.newindex(D.MaybeBox(15), 1, 7, None)
+          except D.Unsupported as exc:
+              assert "unresolved open upvalue box" in str(exc), exc
+          else:
+              raise AssertionError("v15.1 v14-compat box write was silently dropped")
           print("v15.1 v14-compat closure capture regression passed.")
           PY
 

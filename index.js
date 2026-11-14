@@ -1015,52 +1015,49 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
     workLabel = unit || 'VM functions processed';
   }
 
+  // Compact status card: an embed (grey while running, green when done,
+  // red on failure) instead of a big markdown heading plus a stack of
+  // diagnostic lines.
   function render() {
     const elapsed = Date.now() - startedAt;
     const heading = failed
-      ? '## ❌ ' + displayLabel + ' Deobfuscator stopped'
+      ? '❌ **' + displayLabel + ' stopped**'
       : (completed
-        ? '## ' + doneEmoji + ' ' + displayLabel + ' Deobfuscator finished'
-        : (options.activeHeading || ('## ' + loadingEmoji + ' Running ' + displayLabel + ' Deobfuscator')));
-    const lines = [heading, 'Working on your sample.', ''];
+        ? doneEmoji + ' **' + displayLabel + ' finished**'
+        : (options.activeHeading
+          ? String(options.activeHeading).replace(/^#+\s*/, '').replace(/^(\S+)\s+(.*)$/, '$1 **$2**')
+          : loadingEmoji + ' **Running ' + displayLabel + '**'));
+    const lines = [heading, ''];
 
     for (let i = 0; i < stages.length; i++) {
       const marker = completed || i < stageIndex
         ? doneEmoji
-        : (i === stageIndex ? (failed ? '❌' : loadingEmoji) : '▫');
-      const title = i === stageIndex && !completed
-        ? '**' + stages[i] + '**'
-        : stages[i];
-      lines.push(marker + ' ' + title);
+        : (i === stageIndex ? (failed ? '❌' : loadingEmoji) : '▫️');
+      lines.push(marker + ' ' + (i === stageIndex && !completed ? '**' + stages[i] + '**' : stages[i]));
     }
 
-    lines.push('');
-    const elapsedText = (elapsed / 1000).toFixed(1) + 's elapsed';
-    lines.push('-# ' + (workCount === null
-      ? elapsedText
-      : workCount.toLocaleString('en-US') + ' ' + workLabel + ' • ' + elapsedText));
-    if (failed && detail) lines.push('', '-# Error: ' + detail.slice(0, 240));
-    if (!failed && !completed) {
-      const now = Date.now();
+    // one status line: time · work done (only once there is some) · stage
+    const now = Date.now();
+    const status = [formatDuration(elapsed)];
+    if (workCount) status.push(workCount.toLocaleString('en-US') + ' ' + workLabel);
+    if (!failed && !completed && phase && phase.toLowerCase() !== String(stages[stageIndex]).toLowerCase()) {
+      status.push(phase.slice(0, 60) + ' (' + formatDuration(now - phaseStartedAt) + ')');
+    }
+    lines.push('', '-# ' + status.join(' · '));
+
+    if (failed && detail) {
+      lines.push('-# ' + detail.slice(0, 200));
+    } else if (!completed) {
+      if (detail) lines.push('-# ' + detail.slice(0, 140));
+      if (lastErrorLine) lines.push('-# ⚠️ ' + lastErrorLine.slice(0, 140));
       const silentForMs = now - lastEngineOutputAt;
-      const phaseForMs = now - phaseStartedAt;
-      lines.push('', '-# Stage: ' + phase.slice(0, 140));
-      lines.push('-# Time in this stage: ' + formatDuration(phaseForMs));
-      if (detail) lines.push('-# ' + detail.slice(0, 220));
-      if (lastDiagnosticLine) lines.push('-# Last diagnostic: ' + lastDiagnosticLine.slice(0, 180));
-      if (lastErrorLine) lines.push('-# Engine warning/error: ' + lastErrorLine.slice(0, 180));
-      if (silentForMs >= 20_000) {
-        lines.push('-# ⏳ No new engine output for ' + formatDuration(silentForMs) + '. The subprocess has not reported completion; its configured timeout is still active.');
-      }
+      if (silentForMs >= 20_000) lines.push('-# ⏳ quiet for ' + formatDuration(silentForMs) + ' (still running)');
     }
-    if (candidateProgress.size) {
-      lines.push('', '-# Candidate activity:');
-      for (const [name, status] of candidateProgress) {
-        lines.push('-# ' + name + ': ' + status.slice(0, 150));
-      }
-    }
-    if (statusEditError) lines.push('-# Status update warning: ' + statusEditError.slice(0, 140));
-    return lines.join('\n');
+    if (statusEditError) lines.push('-# ⚠️ status update: ' + statusEditError.slice(0, 100));
+
+    return new EmbedBuilder()
+      .setColor(failed ? DAILY_COLORS.danger : (completed ? DAILY_COLORS.success : DAILY_COLORS.muted))
+      .setDescription(lines.join('\n').slice(0, 4000));
   }
 
   async function publish(force = false) {
@@ -1071,7 +1068,7 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
     editing = true;
     lastEdit = now;
     try {
-      await prompt.edit({ content: render(), embeds: [], components: [] });
+      await prompt.edit({ content: '', embeds: [render()], components: [] });
       statusEditError = '';
     } catch (error) {
       statusEditError = String(error && (error.message || error) || 'Discord message edit failed');

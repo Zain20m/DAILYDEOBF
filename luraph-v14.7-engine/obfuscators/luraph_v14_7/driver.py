@@ -173,6 +173,27 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
               file=sys.stderr)
         return False
 
+    # Reject output that contains known holes in the recovered VM graph.
+    # Partial output is available only through the explicit DEVIRT_ALLOW_PARTIAL=1
+    # debugging override. A large output file is not evidence of real logic.
+    partial_allowed = os.environ.get("DEVIRT_ALLOW_PARTIAL") == "1"
+    unresolved_states = int((stats or {}).get("unresolved_states", 0))
+    unlifted = int((stats or {}).get("errors", 0))
+    symbolic_markers = (
+        "MISSING[" in finished
+        or "unresolved Luraph runtime helper" in finished
+        or bool(re.search(r'^\s*error\(["\']devirt:', finished, re.M))
+    )
+    if not partial_allowed and (unresolved_states or unlifted or symbolic_markers):
+        print(
+            "[!] refusing incomplete Luraph v14 output: "
+            "%d unresolved state(s), %d unlifted block(s), symbolic markers=%s; "
+            "using an intercepted payload or diagnostic trace instead"
+            % (unresolved_states, unlifted, symbolic_markers),
+            file=sys.stderr,
+        )
+        return False
+
     # backend.lower() leaves blocks it could not lift as error("devirt: ...")
     # lines: say so at the top instead of letting the file pass as complete
     unlifted = int((stats or {}).get("errors", 0))

@@ -2424,7 +2424,7 @@ async function processIronbrew1(message, prompt, input) {
     if (traceBytes > 0 && useLift) await prependDailyDeobfHeader(tracePath);
 
     const reportPath = path.join(outputDir, 'ironbrew1-report.txt');
-    const stats = String(result.stderr || '').match(/(\\d+) functions, (\\d+) unlifted blocks, (\\d+) unstructured jumps/);
+    const stats = String(result.stderr || '').match(/(\d+) functions, (\d+) unlifted blocks, (\d+) unstructured jumps/);
     const report = [
       'DAILY DEOBF · IronBrew 1',
       'Input: ' + input.filename,

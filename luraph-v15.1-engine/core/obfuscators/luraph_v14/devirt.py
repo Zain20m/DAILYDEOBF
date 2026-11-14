@@ -228,6 +228,8 @@ def _proto_init(self, vm, dump, vmobj, proto, upvals, globals_tab, *args, **kwar
 def _index(self, obj, key, it):
     if isinstance(key, Multi):
         key = key.first()
+    if isinstance(obj, D.MaybeBox):
+        raise Unsupported("read through an unresolved open upvalue box")
     if obj is None:
         sk = _shadow_key(self, key)
         if sk in self.nil_shadow:
@@ -237,6 +239,8 @@ def _index(self, obj, key, it):
 
 
 def _newindex(self, obj, key, v, it):
+    if isinstance(obj, D.MaybeBox):
+        raise Unsupported("write through an unresolved open upvalue box")
     if obj is None:
         if isinstance(key, Multi):
             key = key.first()

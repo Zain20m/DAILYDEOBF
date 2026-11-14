@@ -1092,8 +1092,16 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
       }
     }
     lastEngineOutputAt = Date.now();
+    // Per-block lifter debug output (DEVIRT_ERRS / DEVIRT_TB): tracebacks,
+    // `luasym.Unsupported: compare None 109`, `-- at 0:167 op (0, 22)`, VM
+    // register dumps. These are expected while round 1 meets constants that are
+    // decoded and retried in later rounds; shown as "Engine warning/error" they
+    // made every normal run look like a crash. Keep them out of the status.
+    const liftNoise = /^(?:Traceback \(most recent call last\)|File "|[\w.]*(?:Unsupported|WalkIncomplete|VMCrash)\b:?|--\s*at\s+\d+:\d+|arr#\d|[~^]{3,}|raise\b|\w[\w.]*\(.*\)$)/.test(line) ||
+      (!/^\[[*+!]\]/.test(line) && /^\s*(?:self\.|it\.|st\.|node\b|return\b|[A-Za-z_][\w.]*\s*=)/.test(line));
+    if (liftNoise) return;
     lastDiagnosticLine = (candidatePrefix + line).slice(0, 220);
-    if (/\b(error|exception|traceback|failed|fatal)\b/i.test(line)) {
+    if (/^\[!\]/.test(line) || /\b(fatal|killed|out of memory)\b/i.test(line) || /^(?:RuntimeError|MemoryError|SystemExit)\b/.test(line)) {
       lastErrorLine = (candidatePrefix + line).slice(0, 220);
     }
     let match;

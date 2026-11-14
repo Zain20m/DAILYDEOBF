@@ -810,6 +810,7 @@ class ProtoLifter:
         self.children = []
         self.requests = set()
         self.jump_regs = set()
+        self.need_jump_regs = set()
         self.jvals = {}
         self.jread = set()
         self.stack_base = None       # stack VM: registers above this are its operand stack (Stepper.carry)
@@ -899,6 +900,22 @@ class ProtoLifter:
     # ---- hooks used by luasym.Interp
     def is_dispatch(self, node):
         return self.vm.is_dispatch(node)
+
+    def _need_jreg(self, *values):
+        """Request a fresh VM walk with symbolic stack registers tracked.
+
+        Numeric-for bounds in a handler may refer to values above the local
+        frame. Those are dynamic VM values, not arbitrary unknown constants.
+        Tracking them lets the next pass carry their concrete state.
+        """
+        if self.stack_base is None:
+            return
+        for value in values:
+            if isinstance(value, Expr):
+                for reg in expr_regs(value):
+                    if (isinstance(reg.n, int) and reg.n > self.stack_base
+                            and reg.n not in self.jump_regs):
+                        self.need_jump_regs.add(reg.n)
 
     def emit(self, st):
         if isinstance(st, Assign) and isinstance(st.target, Reg):
@@ -3344,6 +3361,13 @@ class Program:
                     node = Node([], outcome=None)
                     node.error = str(e)
                     nerr += 1
+                new_jump_regs = lf.need_jump_regs - lf.jump_regs
+                if new_jump_regs:
+                    # The failed symbolic numeric-for exposed stack slots
+                    # that must be tracked as VM state. Restart from the
+                    # entry instead of emitting an incomplete handler.
+                    lf.jump_regs |= new_jump_regs
+                    return s0, order, True
                 if getattr(st, "new_carry", False):
                     # a VM local turned out to carry state between
                     # instructions: walk again with it in the states
@@ -3603,7 +3627,10 @@ class FunctionLifter:
         # already carries an interpreter error.
         self.stats["walked_states"] += len(order)
         self.stats["unresolved_states"] += len(bad)
-        allow_partial = not bool(os.environ.get("DEVIRT_STRICT"))
+        # Partial lifts are opt-in. By default, any lost VM state aborts the
+        # reconstruction instead of turning a broken graph into valid-looking
+        # but unrelated Luau.
+        allow_partial = os.environ.get("DEVIRT_ALLOW_PARTIAL") == "1"
         if bad and not allow_partial:
             details = "; ".join(
                 "%s:%s: %s" % (k[0], k[1], why) for k, why in bad[:12]

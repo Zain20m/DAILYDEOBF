@@ -958,7 +958,7 @@ async function sendAutomaticPureLuau(message, sourceText, originalName, contextL
 
 function createAnalysisProgress(prompt, filename, inputBytes, label, options = {}) {
   const startedAt = Date.now();
-  const displayLabel = /^Luraph\b/i.test(label) ? 'Luraph' : label;
+  const displayLabel = options.displayLabel || (/^Luraph\b/i.test(label) ? 'Luraph' : label);
   const payloadLabel = /^Luraph\b/i.test(label)
     ? 'Decrypting the Luraph payload'
     : 'Decrypting the protected payload';
@@ -967,7 +967,7 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
     'Lifting VM functions',
     'Validating and packaging output',
   ];
-  const loadingEmoji = '🔄';
+  const loadingEmoji = options.loadingEmoji || '🔄';
   const doneEmoji = '✅';
   const maxDevirtRounds = Number.isFinite(options.maxDevirtRounds)
     ? Math.max(1, options.maxDevirtRounds)
@@ -1021,7 +1021,7 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
       ? '## ❌ ' + displayLabel + ' Deobfuscator stopped'
       : (completed
         ? '## ' + doneEmoji + ' ' + displayLabel + ' Deobfuscator finished'
-        : '## ' + loadingEmoji + ' Running ' + displayLabel + ' Deobfuscator');
+        : (options.activeHeading || ('## ' + loadingEmoji + ' Running ' + displayLabel + ' Deobfuscator')));
     const lines = [heading, 'Working on your sample.', ''];
 
     for (let i = 0; i < stages.length; i++) {
@@ -2178,7 +2178,9 @@ async function processLuraph14x(message, prompt, input, version) {
           // that turned a 95%-recovered script into nothing. Emit the lift with the
           // few unresolved spots marked as error("devirt: ...") lines instead.
           DEVIRT_ALLOW_PARTIAL: '1',
-          DEVIRT_FULL_ROUNDS: '1',
+          // Keep the request-collection fast path enabled. Forcing a full
+          // control-flow lift on every constant round repeats the most
+          // expensive work and can leave large samples silent for many minutes.
           DEVIRT_TIMING: '1',
           DEVIRT_ERRS: '1',
           DEVIRT_TB: '1',
@@ -2988,7 +2990,14 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
   const dedicated = await prepare('selected-v' + version);
   const selectedEngineDir = version === '15' ? ENGINE_V15_DIR : ENGINE_151_DIR;
   const inputBytes = Buffer.byteLength(input.source, 'utf8');
-  const progress = createAnalysisProgress(prompt, input.filename, inputBytes, 'Luraph v' + version);
+  const progress = createAnalysisProgress(
+    prompt, input.filename, inputBytes, 'Luraph v' + version,
+    version === '15' ? {
+      displayLabel: 'Luraph v15',
+      loadingEmoji: '<a:emoji_4:1571169316345479350>',
+      activeHeading: '## <a:emoji_4:1571169316345479350> Processing Luraph v15',
+    } : {},
+  );
   const startedAt = Date.now();
   let dedicatedLogs = '';
   let dedicatedError = null;

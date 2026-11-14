@@ -1092,8 +1092,16 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
       }
     }
     lastEngineOutputAt = Date.now();
+    // Per-block lifter debug output (DEVIRT_ERRS / DEVIRT_TB): tracebacks,
+    // `luasym.Unsupported: compare None 109`, `-- at 0:167 op (0, 22)`, VM
+    // register dumps. These are expected while round 1 meets constants that are
+    // decoded and retried in later rounds; shown as "Engine warning/error" they
+    // made every normal run look like a crash. Keep them out of the status.
+    const liftNoise = /^(?:Traceback \(most recent call last\)|File "|[\w.]*(?:Unsupported|WalkIncomplete|VMCrash)\b:?|--\s*at\s+\d+:\d+|arr#\d|[~^]{3,}|raise\b|\w[\w.]*\(.*\)$)/.test(line) ||
+      (!/^\[[*+!]\]/.test(line) && /^\s*(?:self\.|it\.|st\.|node\b|return\b|[A-Za-z_][\w.]*\s*=)/.test(line));
+    if (liftNoise) return;
     lastDiagnosticLine = (candidatePrefix + line).slice(0, 220);
-    if (/\b(error|exception|traceback|failed|fatal)\b/i.test(line)) {
+    if (/^\[!\]/.test(line) || /\b(fatal|killed|out of memory)\b/i.test(line) || /^(?:RuntimeError|MemoryError|SystemExit)\b/.test(line)) {
       lastErrorLine = (candidatePrefix + line).slice(0, 220);
     }
     let match;
@@ -2955,7 +2963,11 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
           DEOB_CANDIDATE_TIMEOUT_MS: '120000',
           // Racing 3 python candidates triples peak memory; on large inputs
           // that gets the whole engine OOM-killed by the host, so run one.
-          ...(Buffer.byteLength(input.source, 'utf8') > 1_000_000 ? { DEOB_PY_CANDIDATES: 'python:1' } : {}),
+          // The racing candidates usually agree exactly but triple peak memory
+          // (884 MB on a 785 KB file): one candidate for big inputs, or always
+          // when DEOB_LOW_MEMORY=1 is set for a small bot host.
+          ...(process.env.DEOB_LOW_MEMORY === '1' || Buffer.byteLength(input.source, 'utf8') > 512_000
+            ? { DEOB_PY_CANDIDATES: 'python:1' } : {}),
           DEOB_CANDIDATE_IDLE_TIMEOUT_MS: '75000',
           DEVIRT_LOADERS: '1',
           DEVIRT_FULL_ROUNDS: '1',
@@ -3056,7 +3068,12 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
       selectedEngineDir
     );
 
-    if (version === '15' && !dedicatedValidation.complete) {
+    // Only fall back to v15.1 when legacy v15 produced no source at all. On
+    // v15 files legacy v15 recovers far more (795 vs 198 functions on a 785 KB
+    // v15.0 sample), and the fallback was only ever used if it came back fully
+    // complete -- so running it after a partial legacy lift mostly cost time
+    // and memory (884 MB peak), and got the whole job OOM-killed on small hosts.
+    if (version === '15' && !dedicatedValidation.complete && !dedicatedValidation.candidate) {
       // Legacy v15 cannot follow scripts that loadstring a second VM chunk and
       // gives up on several anti-tamper layouts. Give the v15.1 engine (which
       // also handles v15) a chance before returning a failed lift.

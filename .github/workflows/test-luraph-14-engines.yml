@@ -161,12 +161,14 @@ jobs:
           first_pass.vm = SimpleNamespace(_sp_cands={}, inner_body=[])
           first_pass.loops = [(0, None, {
               "type": "AstStatWhile",
-              "body": {"body": [{
-                  "type": "AstStatExpr",
-                  "expr": {
-                      "type": "AstExprIndexExpr",
-                      "expr": {"type": "AstExprLocal", "local": {"location": "regs"}},
-                      "index": {"type": "AstExprLocal", "local": {"location": "top"}},
+              "body": {"body": [
+                  {
+                      "type": "AstStatExpr",
+                      "expr": {
+                          "type": "AstExprIndexExpr",
+                          "expr": {"type": "AstExprLocal", "local": {"location": "regs"}},
+                          "index": {"type": "AstExprLocal", "local": {"location": "top"}},
+                      },
                   },
                   {
                       "type": "AstStatExpr",
@@ -180,7 +182,7 @@ jobs:
                       "type": "AstStatCompoundAssign",
                       "var": {"type": "AstExprLocal", "local": {"location": "top"}},
                   },
-              }]},
+              ]},
           })]
           first_pass.lf = SimpleNamespace(out=[], stack_base=None)
           first_pass._fresh_scopes = lambda state, interp: (
@@ -194,6 +196,25 @@ jobs:
           probe149.need_jump_regs = set()
           probe149._need_jreg(Bin("Add", Reg(17), Const(1)))
           assert probe149.need_jump_regs == {17}, probe149.need_jump_regs
+
+          # The opaque runtime-factory path must register the same captures
+          # as make_closure(), or constant propagation can keep stale facts.
+          for module in (devirt147, devirt148, devirt149):
+              factory_lifter = object.__new__(module.ProtoLifter)
+              factory_lifter.vm = SimpleNamespace()
+              factory_lifter.dump = SimpleNamespace(pid_of_table={77: 1})
+              factory_lifter.children = []
+              factory_lifter.captured_regs = set()
+              child_proto = S.LTable(tid=77)
+              child_upvals = S.LTable({1: module.MaybeBox(14)})
+              child_result = factory_lifter.call_symbolic(
+                  module.OpaqueFn(900), S.Multi([child_proto, child_upvals]), None, False
+              )
+              child = child_result.first()
+              assert isinstance(child, module.ClosureExpr), child
+              assert child.upvals[0].reg == 14, child.upvals
+              assert factory_lifter.captured_regs == {14}, factory_lifter.captured_regs
+              assert factory_lifter.children == [child], factory_lifter.children
 
           assert 'allow_partial = os.environ.get("DEVIRT_ALLOW_PARTIAL") == "1"' in Path(
               "luraph-v14.7-engine/obfuscators/luraph_v14_9/devirt.py"

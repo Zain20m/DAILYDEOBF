@@ -1106,7 +1106,10 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
     }
     let match;
 
-    if ((match = line.match(/obfuscator:\s*(.+)/i))) {
+    if ((match = line.match(/walk progress: proto ([^,]+), ([\d,]+) states visited \(([\d,]+) pending\)/i))) {
+      advance('Reconstructing Luau control flow',
+        'Proto ' + match[1] + ' · ' + match[2] + ' states visited · ' + match[3] + ' queued.');
+    } else if ((match = line.match(/obfuscator:\s*(.+)/i))) {
       advance('Fingerprinting the input', 'Matched engine: ' + match[1].slice(0, 100));
     } else if ((match = line.match(/tracing .*?\(run\s+(\d+)\)/i))) {
       advance('Executing VM trace pass ' + match[1], 'Tracing the protected payload and recording VM behavior.');
@@ -2184,6 +2187,7 @@ async function processLuraph14x(message, prompt, input, version) {
           // control-flow lift on every constant round repeats the most
           // expensive work and can leave large samples silent for many minutes.
           DEVIRT_TIMING: '1',
+          DEVIRT_PROGRESS: '1',
           DEVIRT_ERRS: '1',
           DEVIRT_TB: '1',
           DEVIRT_WALK_LIMIT: '750000',

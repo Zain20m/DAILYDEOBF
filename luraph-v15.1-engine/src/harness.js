@@ -205,6 +205,9 @@ function buildHarness(source, cfg, chunks = {}) {
   const udata = fs.existsSync(unicodeFile) ? fs.readFileSync(unicodeFile, 'ascii').replace('--!nocheck', '') : '';
   const rdata = fs.existsSync(robloxFile) ? fs.readFileSync(robloxFile, 'ascii').replace('--!nocheck', '') : '';
   const dtypes = fs.existsSync(dtypesFile) ? fs.readFileSync(dtypesFile, 'utf8').replace('--!nocheck', '') : '';
+  // EncodingService's Zstd/Base64 (zstd.luau), computed for real
+  const zstdFile = path.join(HERE, '..', 'runtime', 'zstd.luau');
+  const zstd = fs.existsSync(zstdFile) ? fs.readFileSync(zstdFile, 'utf8').replace('--!nocheck', '') : '';
 
   const cfgLua = '{' + Object.entries(cfg).map(([k, v]) => `${k} = ${luaValue(v)}`).join(', ') + '}';
   const p2dLua = '{' + [...P2D_CACHE.entries()].map(([k, v]) => `[${luaValue(k)}] = ${luaValue(v)},\n`).join('') + '}';
@@ -218,6 +221,7 @@ function buildHarness(source, cfg, chunks = {}) {
     'local __UNICODE = (function()\n' + udata + '\nend)()\n' +
     'local __ROBLOX = (function()\n' + rdata + '\nend)()\n' +
     '__ROBLOX.datatypes = (function()\n' + dtypes + '\nend)()\n' +
+    (zstd ? '__ROBLOX.zstd = (function()\n' + zstd + '\nend)()\n' : '') +
     'local __RAW = { getfenv = getfenv, setfenv = setfenv, loadstring = loadstring, collectgarbage = collectgarbage }\n' +
     'local __RUN = function(__MARK, __SOURCE, __CONFIG, __P2D, __CHUNKS, __UNICODE, __ROBLOX, __RAW)\n' +
     runtime + '\n' +

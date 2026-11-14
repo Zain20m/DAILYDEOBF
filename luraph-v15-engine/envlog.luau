@@ -1493,6 +1493,33 @@ local function onCall(p, ...)
 		return r
 	end
 
+	-- EncodingService works on real bytes: a payload shipped as a zstd-compressed
+	-- buffer must decompress like in Roblox (otherwise the next buffer.readu8
+	-- on the result fails and the run stops there). zstd.luau, verified
+	-- against libzstd.
+	if isMethod and __ROBLOX and __ROBLOX.zstd then
+		local pi = INFO[info.parent]
+		local cls = pi and (pi.className or (pi.props and pi.props.ClassName))
+		if cls == "EncodingService" then
+			local Z = __ROBLOX.zstd
+			local fn = ({ DecompressBuffer = Z.decompress, CompressBuffer = Z.compress,
+				Base64Encode = Z.base64Encode, Base64Decode = Z.base64Decode })[name]
+			if name == "GetDecompressedBufferSize" then
+				fn = function(b)
+					return Z.contentSize(b) or buffer.len(Z.decompress(b))
+				end
+			end
+			if fn then
+				emit({ text = calleeText .. "(" .. fmtArgs(R.unpack(args, 1, args.n)) .. ")" })
+				local ok, r = R.pcall(fn, a1)
+				if not ok then
+					R.error(r, 0) -- Roblox raises on bad input as well
+				end
+				return r
+			end
+		end
+	end
+
 	if name == "GetService" or name == "FindService" then
 		local svc = a1
 		if R.type(svc) == "string" and serviceCache[svc] then

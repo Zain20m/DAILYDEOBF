@@ -113,6 +113,51 @@ jobs:
               os.unlink(sample_path)
           print(f"Luraph v14.9 AST parser resolved and ran: {parser}")
           print("All three VM drivers, mappers and devirtualizers imported.")
+
+          # Regression tests for the failures recorded in Luraph149_report.txt.
+          from ir import Missing, Bin, Const, Reg
+          import luasym as S
+
+          class ProbeLifter:
+              special = {}
+              def sym_binop(self, op, left, right):
+                  return (op, left, right)
+
+          probe = ProbeLifter()
+          interp = S.Interp(probe)
+          missing_local = interp.getvar(S.Scope(), {"location": "1,2", "name": "captured"})
+          assert isinstance(missing_local, Missing), missing_local
+
+          symbolic_arithmetic = interp.binop("Add", None, 7)
+          assert symbolic_arithmetic[0] == "Add"
+          assert isinstance(symbolic_arithmetic[1], Missing), symbolic_arithmetic
+          assert symbolic_arithmetic[2] == 7, symbolic_arithmetic
+
+          try:
+              interp.exec_stmt({
+                  "type": "AstStatFor",
+                  "from": {"type": "AstExprConstantNil"},
+                  "to": {"type": "AstExprConstantNumber", "value": 10},
+                  "step": None,
+                  "var": {"location": "3,4", "name": "i"},
+                  "body": {"body": []},
+              }, S.Scope())
+          except S.Unsupported as exc:
+              assert "unresolved nil bounds" in str(exc), exc
+          else:
+              raise AssertionError("unresolved numeric-for bounds were silently skipped")
+
+          lifter = object.__new__(devirt149.ProtoLifter)
+          lifter.stack_base = 100
+          lifter.jump_regs = set()
+          lifter.need_jump_regs = set()
+          lifter._need_jreg(Bin("Add", Reg(101), Const(1)))
+          assert lifter.need_jump_regs == {101}, lifter.need_jump_regs
+
+          assert 'allow_partial = os.environ.get("DEVIRT_ALLOW_PARTIAL") == "1"' in Path(
+              "luraph-v14.7-engine/obfuscators/luraph_v14_9/devirt.py"
+          ).read_text(encoding="utf-8")
+          print("Luraph v14 symbolic-state regression checks passed.")
           PY
           python3 luraph-v14.7-engine/cli.py --help >/dev/null
           echo "Shared v14.7-v14.9 CLI help check passed."

@@ -626,7 +626,11 @@ class Interp:
             return self.L.special_get(sp, self)
         s = scope.lookup(key)
         if s is None:
-            raise Unsupported("unbound local %s@%s" % (local["name"], key))
+            # A v14 maker may reference a captured local that the runtime
+            # capture did not materialize. Preserve it symbolically; do not
+            # silently substitute nil or invent a concrete value.
+            from ir import Missing
+            return Missing("outer:%s@%s" % (local["name"], key))
         return s.vars[key]
 
     def setvar(self, scope, local, v):
@@ -715,9 +719,13 @@ class Interp:
             b = self.eval(st["to"], scope)
             c = self.eval(st["step"], scope) if st.get("step") else 1
             if is_sym(a) or is_sym(b) or is_sym(c):
+                if hasattr(self.L, "_need_jreg"):
+                    self.L._need_jreg(a, b, c)
                 raise Unsupported("numeric for with symbolic bounds")
-            if (a is None or b is None or c is None
-                    or not all(isinstance(value, (int, float)) for value in (a, b, c))):
+            if a is None or b is None or c is None:
+                raise Unsupported("numeric for with unresolved nil bounds")
+            if not all(isinstance(value, (int, float)) and not isinstance(value, bool)
+                       for value in (a, b, c)):
                 raise Unsupported("numeric for with non-numeric bounds")
             i = a
             n = 0
@@ -939,9 +947,19 @@ class Interp:
 
     # ---- operators
     def binop(self, op, a, b):
+        arithmetic = ("Add", "Sub", "Mul", "Div", "FloorDiv", "Mod", "Pow")
+        if op in arithmetic and (a is None or b is None):
+            # In v14 VM handlers, a missing captured/register value is not
+            # necessarily a real Lua nil. Carry an explicit symbolic hole so
+            # the lifter can request/fail on it instead of throwing away the
+            # rest of the handler or replacing it with zero.
+            from ir import Missing
+            left = Missing("arith-left") if a is None else a
+            right = Missing("arith-right") if b is None else b
+            return self.L.sym_binop(op, left, right)
         if is_sym(a) or is_sym(b) or isinstance(a, (SymList, RegFile)) or isinstance(b, (SymList, RegFile)):
             return self.L.sym_binop(op, a, b)
-        if op in ("Add", "Sub", "Mul", "Div", "FloorDiv", "Mod", "Pow"):
+        if op in arithmetic:
             x, y = lua_num(a), lua_num(b)
             if x is None or y is None:
                 raise Unsupported("arith on %r %r" % (a, b))

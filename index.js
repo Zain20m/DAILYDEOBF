@@ -935,6 +935,12 @@ async function prependDailyDeobfHeader(filePath) {
 }
 
 async function sendAutomaticPureLuau(message, sourceText, originalName, contextLabel) {
+  // One result file per run: the automatic PureLuau copy (and its report) is
+  // only sent when the host asks for every file (DEOB_SEND_ALL=1); /pureluau
+  // still converts a file on request.
+  if (!SEND_ALL_FILES) {
+    return { status: 'skipped', reason: 'One-file mode: the automatic PureLuau copy is not sent (DEOB_SEND_ALL=1 sends it).' };
+  }
   let result;
   try {
     result = createAutomaticPureLuauResult(sourceText, originalName);
@@ -1448,6 +1454,21 @@ function runEngine(engineDir, engineCli, inputPath, outputPath, timeoutMs, legac
     ...extraArgs,
   ];
   return runCommand(process.execPath, args, engineDir, timeoutMs, options);
+}
+
+// One result file per run unless the host asks for everything (DEOB_SEND_ALL=1).
+const SEND_ALL_FILES = process.env.DEOB_SEND_ALL === '1';
+
+// The few engine lines worth showing in the message (what the one file is).
+function engineSummaryLines(log) {
+  const keep = [];
+  for (const line of String(log || '').split('\n')) {
+    if (/^\[\*\] (removed Luraph runtime code|named \d+ function|run status)/.test(line)
+      || /^\[!\] \d+ VM block\(s\) could not be lifted/.test(line)) {
+      keep.push(line.replace(/^\[[*!]\] /, '').slice(0, 300));
+    }
+  }
+  return keep.length ? '\n' + keep.slice(0, 5).map((l) => '• ' + l).join('\n') : '';
 }
 
 function runPythonEngine(engineDir, engineCli, inputPath, outputPath, timeoutMs, extraArgs = [], options = {}) {
@@ -2058,7 +2079,9 @@ async function sendAnalysisOutput(message, input, config) {
   // sent separately as ordered parts so it is never silently dropped.
   let attachmentBytes = candidateBytes > 0 && candidateBytes <= MAX_OUTPUT_BYTES ? candidateBytes : 0;
   const reportBytes = await fileSize(reportPath);
-  if (reportBytes > 0 && attachmentBytes + reportBytes <= MAX_OUTPUT_BYTES) {
+  // one file: the result (the report only when there is no result, or with DEOB_SEND_ALL=1)
+  if (reportBytes > 0 && attachmentBytes + reportBytes <= MAX_OUTPUT_BYTES
+    && (SEND_ALL_FILES || (!attachedCandidateName && !candidateParts.length))) {
     attachments.push(new AttachmentBuilder(reportPath, { name: 'analysis-report.txt' }));
     attachmentBytes += reportBytes;
   }
@@ -2075,7 +2098,7 @@ async function sendAnalysisOutput(message, input, config) {
   chunkCandidates.sort((a, b) => b.bytes - a.bytes);
   let attachedChunkCount = 0;
   for (const chunk of chunkCandidates) {
-    if (attachedChunkCount >= 8) break;
+    if (!SEND_ALL_FILES || attachedChunkCount >= 8) break;
     if (attachmentBytes + chunk.bytes > MAX_OUTPUT_BYTES) continue;
     attachments.push(new AttachmentBuilder(chunk.path, { name: chunk.name }));
     attachmentBytes += chunk.bytes;
@@ -2087,7 +2110,7 @@ async function sendAnalysisOutput(message, input, config) {
   const safeName = String(input.filename || 'script.lua').replaceAll(String.fromCharCode(96), '');
   let summary;
   if (environmentProbeOnly) {
-    summary = '**DAILY DEOBF · ' + config.label + '**\n⚠️ Environment compatibility check failed (PC-R01) before payload execution.\nThis is probe output, not deobfuscated source.\nDynamic VM chunks attached: ' + attachedChunkCount + '.\nAttached: environment_probe_partial.txt and analysis-report.txt.';
+    summary = '**DAILY DEOBF · ' + config.label + '**\n⚠️ Environment compatibility check failed (PC-R01) before payload execution.\nThis is probe output, not deobfuscated source.\nAttached: environment_probe_partial.txt' + (SEND_ALL_FILES ? ', analysis-report.txt and ' + attachedChunkCount + ' dynamic VM chunk(s).' : '.');
   } else if (hasLiftedSource) {
     summary = '**DAILY DEOBF · ' + config.label + '**\n✅ Luau candidate passed structural checks and syntax validation.\nProcessed: ' + safeName +
       '\nFunctions lifted: ' + (liftedFunctions === null ? 'see report' : liftedFunctions) +
@@ -2099,8 +2122,8 @@ async function sendAnalysisOutput(message, input, config) {
       '\nAttached: partial_result.lua';
   } else {
     summary = '**DAILY DEOBF · ' + config.label + '**\n⚠️ Trace-only result. The full VM lift did not complete.\nProcessed: ' + safeName +
-      '\nAttached: runtime_trace.luau (trace only, not reconstructed source), analysis-report.txt, and ' +
-      attachedChunkCount + ' dynamic VM chunk(s).';
+      '\nAttached: runtime_trace.lua (trace only, not reconstructed source)' +
+      (SEND_ALL_FILES ? ', analysis-report.txt, and ' + attachedChunkCount + ' dynamic VM chunk(s).' : '.');
   }
 
   if (candidateParts.length) {
@@ -2285,20 +2308,27 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
           ? 'The VM lift was incomplete, so the main file is a behaviour trace (what the script did in the sandbox).'
           : 'Dedicated v' + version + ' engine finished.') +
         '\nOutput size: ' + formatBytes(stat.size) + '\nAttached: Luraph' + versionTag + '_deobfuscated.lua' +
-        extraFiles.map((f) => ', ' + luaFileName(f.name)).join('') + ' and engine report.',
-      files: [
-        new AttachmentBuilder(outputPath, { name: 'Luraph' + versionTag + '_deobfuscated.luau' }),
-        ...extraFiles.map((f) => new AttachmentBuilder(f.path, { name: f.name })),
-        new AttachmentBuilder(reportPath, { name: 'Luraph' + versionTag + '_report.txt' }),
-      ],
+        (SEND_ALL_FILES ? extraFiles.map((f) => ', ' + luaFileName(f.name)).join('') + ' and engine report.' : '') +
+        engineSummaryLines(result.stderr || result.stdout || ''),
+      // One file: the result. DEOB_SEND_ALL=1 (host) adds the other result of
+      // the run, the engine report and the PureLuau copy for debugging.
+      files: SEND_ALL_FILES
+        ? [
+          new AttachmentBuilder(outputPath, { name: 'Luraph' + versionTag + '_deobfuscated.luau' }),
+          ...extraFiles.map((f) => new AttachmentBuilder(f.path, { name: f.name })),
+          new AttachmentBuilder(reportPath, { name: 'Luraph' + versionTag + '_report.txt' }),
+        ]
+        : [new AttachmentBuilder(outputPath, { name: 'Luraph' + versionTag + '_deobfuscated.luau' })],
       allowedMentions: { repliedUser: false },
     });
-    await sendAutomaticPureLuau(
-      message,
-      await fs.readFile(outputPath, 'utf8'),
-      'Luraph' + versionTag + '_deobfuscated.luau',
-      'Luraph v' + version + ' deobfuscation'
-    );
+    if (SEND_ALL_FILES) {
+      await sendAutomaticPureLuau(
+        message,
+        await fs.readFile(outputPath, 'utf8'),
+        'Luraph' + versionTag + '_deobfuscated.luau',
+        'Luraph v' + version + ' deobfuscation'
+      );
+    }
     await progress.complete('The Luraph v' + version + ' reconstruction, engine report and automatic PureLuau pass finished.');
     await prompt.edit({
       content: '✅ Luraph v' + version + ' analysis finished. The reconstructed Luau file is attached above.',

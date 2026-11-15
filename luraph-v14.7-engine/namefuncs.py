@@ -144,7 +144,12 @@ def rename(text, exe):
             if "createElement" not in local.values():
                 local[p] = "createElement"
         for p in re.findall(r"\b__orphan_upvalue_(\w+)\b", params):
-            local.setdefault("__orphan_upvalue_" + p, "upvalue" + p)
+            old = "__orphan_upvalue_" + p
+            # only TweenService has :Create(instance, TweenInfo, goal)
+            if re.search(r"(?<![\w.:])%s:Create\([^()]*,\s*TweenInfo\.new\(" % re.escape(old), body) \
+                    and "TweenService" not in local.values():
+                local.setdefault(old, "TweenService")
+            local.setdefault(old, "upvalue" + p)
         seg = "\n".join(lines[a:b + 1])
         for old, new in local.items():
             if not re.search(_ident(new), seg):

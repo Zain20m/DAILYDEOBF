@@ -2206,9 +2206,15 @@ class ProtoLifter:
             # emitting a stub call that expands the Luraph bootstrap.
             vals = list(args.items)
             for i, proto in enumerate(vals):
+                if isinstance(proto, LTable) and proto.tid not in self.dump.pid_of_table and \
+                        self._is_proto_table(proto) and self._proto_pid(proto) is None and \
+                        (i + 1 >= len(vals) or isinstance(vals[i + 1], LTable) or vals[i + 1] in (None, False)):
+                    # a function that never ran during the trace: Luraph
+                    # decrypts code on first run, so its body is unreadable
+                    return Multi([Global(UNDECRYPTED_FN)])
                 if not isinstance(proto, LTable) or not (proto.tid in self.dump.pid_of_table or (
                         self._is_proto_table(proto) and self._proto_pid(proto) is not None)):
-                    continue        # (a proto that never ran has no known environment)
+                    continue
                 ups = vals[i + 1] if i + 1 < len(vals) else None
                 if not isinstance(ups, LTable) and ups not in (None, False):
                     continue
@@ -2398,6 +2404,7 @@ class UpList:
 
 
 REGFILE = RegFile()
+UNDECRYPTED_FN = "luraph_undecrypted_function"   # see call_symbolic (closure factory)
 CONST_POOL_NAME = "luraph_constants"   # Dump.const_pool_for, rendered by lift_program
 TEMP_REG_BASE = 1 << 20     # registers holding micro-instruction temporaries (Stepper._carried_temps)
 
@@ -4502,8 +4509,19 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
             "end",
             "",
         ]
+    if any(UNDECRYPTED_FN in ln for ln in out):
+        shared += [
+            "-- a function Luraph never decrypted: it did not run while the script was",
+            "-- analysed (Luraph decrypts a function's code on its first call)",
+            "local function %s(...)" % UNDECRYPTED_FN,
+            "\treturn nil",
+            "end",
+            "",
+        ]
     if shared:
         at = next((i for i, l in enumerate(out) if l and not l.startswith("--")), len(out))
+        while at > 0 and out[at - 1].startswith("--"):
+            at -= 1     # (keep a comment with the line it describes)
         out[at:at] = shared
     text = backend.polish("\n".join(out))
     return text, fl.stats, prog.requests, buffer_patches(prog.dump)

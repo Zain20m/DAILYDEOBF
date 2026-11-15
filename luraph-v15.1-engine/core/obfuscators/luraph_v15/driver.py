@@ -118,6 +118,7 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
     t0 = time.time()
     last_errors = None
     full_lifts = 0
+    best = None
     prefix_partial = "-- partial result: saved after a full lift (the run may not have finished)\n"
     for rnd in range(1, rounds + 1):
         t1 = time.time()
@@ -153,6 +154,14 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
                   % (stats["functions"], stats["errors"], stats["fallbacks"], len(new), time.time() - t1),
                   file=sys.stderr)
             full_lifts += 1
+            # later rounds can lift less (a constant run that took another
+            # path): keep the best lift seen, not just the last one
+            score = (stats["errors"], stats.get("fallbacks", 0), -stats["functions"])
+            if best is None or score < best[0]:
+                best = (score, text)
+            elif best is not None:
+                print("[*]   keeping the earlier lift (%d unlifted blocks, %d functions)"
+                      % (best[0][0], -best[0][2]), file=sys.stderr)
             # a killed run (time / memory) still has this lift to send
             try:
                 job.write(dpath + ".partial", prefix_partial + devirt.finish_text(text) + "\n")
@@ -197,6 +206,8 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
         sys.exit("[!] no devirtualized output was produced: the constant-request run failed "
                  "before the first full lift (see the error above); re-run with "
                  "DEVIRT_FULL_ROUNDS=1 to lift the first round without extra constant runs")
+    if best is not None:
+        text = best[1]
     job.write(dpath, prefix + devirt.finish_text(text) + "\n")
 
 MAX_FULL_LIFTS = int(os.environ.get("DEVIRT_MAX_FULL_LIFTS", "4"))

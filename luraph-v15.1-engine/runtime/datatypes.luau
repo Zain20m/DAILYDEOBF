@@ -126,13 +126,43 @@ local function lookAt(at, target, up)
 	return make(at, right, up2, -look)
 end
 
+-- float32 vector helpers on {x, y, z} tables (the engine's G3D-derived
+-- maths: unit vectors via a float32 reciprocal length, Vector3.Unit too)
+local function t3(v) return { v.x, v.y, v.z } end
+local function dot32(a, b) return f32(f32(f32(a[1] * b[1]) + f32(a[2] * b[2])) + f32(a[3] * b[3])) end
+local function unit32(a)
+	local inv = f32(1 / f32(math.sqrt(dot32(a, a))))
+	return { f32(a[1] * inv), f32(a[2] * inv), f32(a[3] * inv) }
+end
+local function cross32(a, b)
+	return { f32(f32(a[2] * b[3]) - f32(a[3] * b[2])), f32(f32(a[3] * b[1]) - f32(a[1] * b[3])),
+		f32(f32(a[1] * b[2]) - f32(a[2] * b[1])) }
+end
+local function v3of(a) return vec(a[1], a[2], a[3]) end
 local lib = {}
 function lib.new(...)
 	local n = select("#", ...)
 	local a = { ... }
 	if n == 0 then return wrap(IDENTITY) end
 	if n == 1 and isVec(a[1]) then return make(a[1], X, Y, Z) end
-	if n == 2 and isVec(a[1]) and isVec(a[2]) then return lookAt(a[1], a[2], Y) end
+	if n == 2 and isVec(a[1]) and isVec(a[2]) then
+		-- the old CFrame.new(pos, target): G3D's CoordinateFrame::lookAt
+		-- (bit-exact with real Studio answers, 8/8), not CFrame.lookAt
+		local p = a[1]
+		local look = unit32({ f32(a[2].x - p.x), f32(a[2].y - p.y), f32(a[2].z - p.z) })
+		local up = { 0, 1, 0 }
+		if math.abs(dot32(look, up)) > 0.99 then
+			up = { 1, 0, 0 }
+			if math.abs(dot32(look, up)) > 0.99 then up = { 0, 1, 0 } end
+		end
+		local d = dot32(look, up)
+		up = unit32({ f32(up[1] - f32(look[1] * d)), f32(up[2] - f32(look[2] * d)), f32(up[3] - f32(look[3] * d)) })
+		local z = { f32(-look[1]), f32(-look[2]), f32(-look[3]) }
+		local zx = cross32(z, up)
+		local x = unit32({ f32(-zx[1]), f32(-zx[2]), f32(-zx[3]) })
+		local y = cross32(z, x)
+		return make(p, v3of(x), v3of(y), v3of(z))
+	end
 	if n == 3 then return make(vec(num(a[1]), num(a[2]), num(a[3])), X, Y, Z) end
 	if n == 7 then
 		return fromQuat(vec(num(a[1]), num(a[2]), num(a[3])), num(a[4]), num(a[5]), num(a[6]), num(a[7]))
@@ -180,11 +210,19 @@ lib.fromEulerAnglesXYZ = lib.Angles
 function lib.fromEulerAnglesYXZ(a, b, c) return eulerOrdered("YXZ", a, b, c) end
 lib.fromOrientation = lib.fromEulerAnglesYXZ
 function lib.fromAxisAngle(axis, angle)
+	-- G3D's Matrix3::fromAxisAngle in float32, axis unitised again
+	-- (bit-exact with real Studio answers, 8/8)
 	if not isVec(axis) then unsupported() end
-	local u = vnorm(axis)
-	local h = num(angle) / 2
-	local s = math.sin(h)
-	return fromQuat(O, u.x * s, u.y * s, u.z * s, math.cos(h))
+	local u = unit32(t3(axis))
+	local x, y, z = u[1], u[2], u[3]
+	local c, s = cs32(angle)
+	local t = f32(1 - c)
+	local xym, xzm, yzm = f32(f32(x * y) * t), f32(f32(x * z) * t), f32(f32(y * z) * t)
+	local xs, ys, zs = f32(x * s), f32(y * s), f32(z * s)
+	return fromRows(O,
+		f32(f32(f32(x * x) * t) + c), f32(xym - zs), f32(xzm + ys),
+		f32(xym + zs), f32(f32(f32(y * y) * t) + c), f32(yzm - xs),
+		f32(xzm - ys), f32(yzm + xs), f32(f32(f32(z * z) * t) + c))
 end
 function lib.lookAt(at, target, up)
 	if not isVec(at) or not isVec(target) or (up ~= nil and not isVec(up)) then unsupported() end
@@ -283,7 +321,36 @@ local METHODS = {
 	VectorToObjectSpace = each(function(c, v) return rotT(c, vecArg(v)) end),
 	ToEulerAnglesXYZ = function(self) return eulerXYZ(get(self)) end,
 	ToEulerAnglesYXZ = function(self) return eulerYXZ(get(self)) end,
-	ToEulerAngles = function(self, _order) return eulerXYZ(get(self)) end,
+	ToEulerAngles = function(self, order)
+		-- the decomposition matching fromEulerAngles(x, y, z, order); ZXY
+		-- checked against real Studio answers (7/8, the 8th one bit off)
+		local name = "XYZ"
+		if type(order) == "number" then
+			name = ORDERS[order] or unsupported()
+		elseif order ~= nil then
+			local ok, v = pcall(function() return order.Value end)
+			name = ok and type(v) == "number" and ORDERS[v] or unsupported()
+		end
+		local c = get(self)
+		-- m[r][col]: rows of the rotation
+		local m = { { c.x.x, c.y.x, c.z.x }, { c.x.y, c.y.y, c.z.y }, { c.x.z, c.y.z, c.z.z } }
+		local function as(v) return math.asin(math.clamp(v, -1, 1)) end
+		local x, y, z
+		if name == "XYZ" then return eulerXYZ(c)
+		elseif name == "YXZ" then return eulerYXZ(c)
+		elseif name == "ZXY" then
+			x = as(m[3][2]); z = math.atan2(-m[1][2], m[2][2]); y = math.atan2(-m[3][1], m[3][3])
+		elseif name == "ZYX" then
+			y = as(-m[3][1]); z = math.atan2(m[2][1], m[1][1]); x = math.atan2(m[3][2], m[3][3])
+		elseif name == "XZY" then
+			z = as(-m[1][2]); x = math.atan2(m[3][2], m[2][2]); y = math.atan2(m[1][3], m[1][1])
+		elseif name == "YZX" then
+			z = as(m[2][1]); y = math.atan2(-m[3][1], m[1][1]); x = math.atan2(-m[2][3], m[2][2])
+		else
+			return unsupported()
+		end
+		return f32(x), f32(y), f32(z)
+	end,
 	ToOrientation = function(self) return eulerYXZ(get(self)) end,
 	FuzzyEq = function(self, other, eps)
 		local a, b = get(self), get(other)
@@ -306,7 +373,17 @@ local METHODS = {
 		return f32(2 * math.acos(d))
 	end,
 	ToAxisAngle = function(self)
-		local qx, qy, qz, qw = toQuat(get(self))
+		-- G3D's Matrix3::toAxisAngle in float32 (bit-exact with real Studio
+		-- answers, 40/40 values); the near-0 / near-pi cases keep the old model
+		local c = get(self)
+		local tr = f32(f32(c.x.x + c.y.y) + c.z.z)
+		local cosv = math.clamp(f32(f32(0.5) * f32(tr - 1)), -1, 1)
+		local ang = f32(math.acos(cosv))
+		if ang > 1e-6 and ang < math.pi - 1e-4 then
+			local a = unit32({ f32(c.y.z - c.z.y), f32(c.z.x - c.x.z), f32(c.x.y - c.y.x) })
+			return v3of(a), ang
+		end
+		local qx, qy, qz, qw = toQuat(c)
 		if qw < 0 then qx, qy, qz, qw = -qx, -qy, -qz, -qw end
 		local s = math.sqrt(math.max(0, 1 - qw * qw))
 		if s < 1e-9 then return X, 0 end
@@ -315,6 +392,9 @@ local METHODS = {
 	Lerp = function(self, other, t)
 		local a, b = get(self), get(other)
 		t = num(t)
+		-- the engine returns the ends unchanged (real Studio answers 20/20)
+		if t == 0 then return wrap(a) end
+		if t == 1 then return wrap(b) end
 		local ax, ay, az, aw = toQuat(a)
 		local bx, by, bz, bw = toQuat(b)
 		local d = ax * bx + ay * by + az * bz + aw * bw

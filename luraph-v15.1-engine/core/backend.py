@@ -68,12 +68,47 @@ def lower(entry_key, order, D, link, prefix, upnames, closure):
     rend = CG.Renderer(names)
     return rend.block(body, ""), params, nerr, sr.fallbacks
 
+def _paren_nil_prefix(text):
+    """`nil.x` / `nil:m()` / `nil[k]` (a value the lift resolved to nil used
+    as an object) is not valid Luau; `(nil).x` is, and keeps the meaning.
+    Outside string literals only, and only kept if the file then parses."""
+    import re
+    if not re.search(r"(?<![\w.:'\"\]])nil\s*[.:\[]", text):
+        return text
+    out = []
+    for line in text.split("\n"):
+        if "nil" in line:
+            def fix(m, line=line):
+                before = line[:m.start()]
+                if before.count('"') % 2 or before.count("'") % 2 or "--" in before:
+                    return m.group(0)
+                # a statement starting with `(` after a call is ambiguous: `;` first
+                return (";(nil)" if not before.strip() else "(nil)") + m.group(1)
+            line = re.sub(r"(?<![\w.:'\"\]])nil(\s*[.:\[])", fix, line)
+        out.append(line)
+    new = "\n".join(out)
+    try:
+        import tempfile, subprocess
+        import harness
+        with tempfile.NamedTemporaryFile("w", suffix=".luau", delete=False, encoding="utf-8", newline="\n") as f:
+            f.write(new)
+            path = f.name
+        try:
+            ok = subprocess.run([harness.luau_ast(), path], capture_output=True).returncode == 0
+        finally:
+            os.remove(path)
+    except Exception:  # noqa: BLE001
+        ok = False
+    return new if ok else text
+
+
 def polish(text):
     """Whole-program text passes: local names from use (names.py, unless
     DEVIRT_NO_NAMES), `local function` (localfuncs.py). Each is skipped
     with a warning if it fails."""
     import codegen
     text = text.replace(codegen.LONG_NL, "\n")     
+    text = _paren_nil_prefix(text)
     if not os.environ.get("DEVIRT_NO_NAMES"):
         import names
         try:

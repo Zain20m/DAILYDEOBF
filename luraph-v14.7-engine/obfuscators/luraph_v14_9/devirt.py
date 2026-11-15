@@ -2201,8 +2201,10 @@ class ProtoLifter:
                 ups = vals[i + 1] if i + 1 < len(vals) else None
                 if not isinstance(ups, LTable):
                     continue
-                entries = [ups.get(k) for k in range(1, ups.length() + 1)]
-                c = self._closure_value(proto, entries, self.vm)
+                # (`Y = W > 0 and {}`: false when the proto has no upvalues)
+                c = self._closure_value(proto, [], self.vm)
+                if isinstance(ups, LTable):
+                    self._fill_upvals(c, ups)
                 return Multi([c])
         if isinstance(fn, RuntimeMaker):
             vals = args.items
@@ -2309,11 +2311,36 @@ class ProtoLifter:
             return Missing(None)
         if not isinstance(proto, LTable):
             raise Unsupported("closure of non-proto")
-        entries = []
+        c = self._closure_value(proto, [], vm)
         if isinstance(ups, LTable):
-            for i in range(1, ups.length() + 1):
-                entries.append(ups.get(i))
-        return self._closure_value(proto, entries, vm)
+            self._fill_upvals(c, ups)
+        return c
+
+    def _fill_upvals(self, c, ups):
+        """The closure's upvalues from its upvalue table. 14.x fills that
+        table after making the closure (`_ = make(proto, Y); for ... do
+        Y[C - 1] = box end`), so it is read again when the instruction ends
+        (finish_closures); its keys start at 0 there (c.upbase)."""
+        self._set_upvals(c, ups)
+        self.__dict__.setdefault("pending_closures", []).append((c, ups))
+
+    def _set_upvals(self, c, ups):
+        keys = [k for k in ups.h if isinstance(k, int) and not isinstance(k, bool)]
+        base = 0 if 0 in ups.h else 1
+        top = max(keys) if keys else base - 1
+        c.upvals = [ups.get(k) for k in range(base, top + 1)]
+        c.upbase = base
+        for e in c.upvals:
+            if isinstance(e, MaybeBox):
+                self.captured_regs.add(e.reg)
+            if isinstance(e, LTable):
+                values = list(e.h.values())
+                if any(isinstance(x, RegFile) for x in values):
+                    self.captured_regs.update(v for v in values if isinstance(v, int))
+
+    def finish_closures(self):
+        for c, ups in self.__dict__.pop("pending_closures", []):
+            self._set_upvals(c, ups)
 
 
 def lst_nkey(lst):
@@ -3007,6 +3034,7 @@ class Stepper:
         if outcome[0] == "ret":
             m = outcome[1] if isinstance(outcome[1], Multi) else Multi([outcome[1]])
             outcome = ("ret", Multi([lf.value_of(x) if not isinstance(x, SymList) else x for x in m.items], m.tail))
+        lf.finish_closures()
         self._note_access(acc)
         if outcome[0] == "next":
             def get(k):
@@ -4079,7 +4107,7 @@ class FunctionLifter:
                 if id(c.proto) not in frames:
                     frames[id(c.proto)] = self.frame_regs(vm, vmobj, c)
                 c.frame_map = frames[id(c.proto)]
-                c.frame_regs = sorted({r for i, e in enumerate(c.upvals, 1) if isinstance(e, RegFile)
+                c.frame_regs = sorted({r for i, e in enumerate(c.upvals, getattr(c, "upbase", 1)) if isinstance(e, RegFile)
                                        for r in c.frame_map.get(i, ())})
         me = sys.modules[__name__]
         apply_frame_calls(order)
@@ -4102,7 +4130,7 @@ class FunctionLifter:
         """{upvalue index: registers} a closure reads or writes through the
         register frames it captured (`s[k] = s`), found by walking it (and
         its own closures that get the frame passed through)."""
-        idx = [i for i, e in enumerate(c.upvals, 1) if isinstance(e, (RegFile, FrameProxy))]
+        idx = [i for i, e in enumerate(c.upvals, getattr(c, "upbase", 1)) if isinstance(e, (RegFile, FrameProxy))]
         cvm = getattr(c, "vm", None) or vm
         memo = self.__dict__.setdefault("_frame_memo", {})
         mkey = (id(c.proto), id(cvm), tuple(idx))
@@ -4135,7 +4163,7 @@ class FunctionLifter:
         capnames = getattr(c, "capnames", {})
         upnames = {}
         fmap = getattr(c, "frame_map", {})
-        for i, e in enumerate(c.upvals, 1):
+        for i, e in enumerate(c.upvals, getattr(c, "upbase", 1)):
             if isinstance(e, RegFile):
                 # the parent's frame: upv[i][r] is the parent's local r
                 for r in fmap.get(i, ()):
@@ -4144,6 +4172,8 @@ class FunctionLifter:
                 # a frame the parent got as its own upvalue
                 for r in fmap.get(i, ()):
                     upnames[(i, r)] = parent_names.get(("up", (e.idx, r)), "upv%d_%d" % (e.idx, r))
+            elif isinstance(e, LTable) and any(e is t for t in self.prog.dump.__dict__.get("_pools", {}).values()):
+                upnames[i] = CONST_POOL_NAME    # the constant pool, captured by value
             elif isinstance(e, LTable):
                 vals = list(e.h.values())
                 ints = [v for v in vals if isinstance(v, int)]
@@ -4162,7 +4192,7 @@ class FunctionLifter:
             else:
                 upnames[i] = "nil"
         params = ["..."]
-        fidx = [i for i, e in enumerate(c.upvals, 1) if isinstance(e, (RegFile, FrameProxy))]
+        fidx = [i for i, e in enumerate(c.upvals, getattr(c, "upbase", 1)) if isinstance(e, (RegFile, FrameProxy))]
         cvm = getattr(c, "vm", None) or vm
         # the same proto closed over at several sites (the walk visits a
         # closure op once per state, tail duplication copies code): lift once

@@ -49,7 +49,7 @@ def lua_unescape(s):
 
 
 def extract_blob(source_text):
-    m = re.search(r'x\("((?:[^"\\]|\\.)*)",\s*0[xX]5\)', source_text)
+    m = re.search(r'x\("([^"\\]*(?:\\.[^"\\]*)*)",\s*0[xX]5\)', source_text)
     if m:
         return lua_unescape(m.group(1))
 

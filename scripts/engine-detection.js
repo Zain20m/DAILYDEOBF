@@ -23,7 +23,7 @@
 const { detectIronBrewSuggestion } = require('./ironbrew-detection');
 
 const LURAPH_ENGINES = {
-  '14.3': ['luraph-v143', 'Luraph 14.3 static analysis'],
+  '14.3': ['luraph-v143', 'Luraph 14.3'],
   '14.7': ['luraph-v147', 'Luraph 14.7'],
   '14.8': ['luraph-v148', 'Luraph 14.8'],
   '14.9': ['luraph-v149', 'Luraph 14.9'],
@@ -64,7 +64,7 @@ function luraphFromVersion(version) {
       ['luraph-v148', 'luraph-v149', 'luraph-v143']);
   }
   if (major === 14 && minor < 4) {
-    return result('luraph-v143', 'Luraph 14.3 static analysis', 'medium',
+    return result('luraph-v143', 'Luraph 14.3', 'medium',
       'The header names Luraph v' + v + ', which has no dedicated engine; v14.3 is the closest.', ['luraph-v147']);
   }
   if (major === 15 || (major === 14 && minor > 9)) {

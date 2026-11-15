@@ -2136,8 +2136,10 @@ async function processLuraphV15(message, prompt, input, displayLabel = 'Luraph v
   return processLuraph151(message, prompt, input, gameId, '15');
 }
 
-async function processLuraph14x(message, prompt, input, version) {
+async function processLuraph14x(message, prompt, input, version, options = {}) {
   const versionTag = version.replace('.', '');
+  // 14.3 runs through the 14.7 devirtualizer (same VM family); see processLuraph143
+  const engineVersion = options.engineVersion || version;
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-luraph' + versionTag + '-'));
   const inputPath = path.join(tempRoot, 'input.lua');
   const outputPath = path.join(tempRoot, 'Luraph' + versionTag + '_deobfuscated.luau');
@@ -2154,6 +2156,7 @@ async function processLuraph14x(message, prompt, input, version) {
       'Using the separate v' + version + ' VM mapper, runtime harness and devirtualizer.'
     );
 
+    let engineError = null;
     const result = await runPythonEngine(
       ENGINE_V147_DIR,
       ENGINE_V147_CLI,
@@ -2161,7 +2164,7 @@ async function processLuraph14x(message, prompt, input, version) {
       outputPath,
       ENGINE_TIMEOUT_MS,
       [
-        '--engine', version,
+        '--engine', engineVersion,
         '--strings',
         // When the VM lift is incomplete, return the behaviour trace instead of
         // failing, and keep the work files so the other result can be attached.
@@ -2188,10 +2191,24 @@ async function processLuraph14x(message, prompt, input, version) {
           DEVIRT_ERRS: '1',
           DEVIRT_TB: '1',
           DEVIRT_WALK_LIMIT: '750000',
+          // Small hosts: skip the extra walks of variable-count copy modelling
+          // (fewer holes fixed, much less memory on big scripts)
+          ...(process.env.DEOB_LOW_MEMORY === '1' || Buffer.byteLength(input.source, 'utf8') > 400_000
+            ? { DEVIRT_SYMBOLIC_FOR: '0' } : {}),
+          ...(options.env || {}),
         },
         onProgress: progress.onLine,
       },
-    );
+    ).catch(async (error) => {
+      // Killed (out of memory / time) or crashed: send whatever the engine
+      // already saved instead of nothing. The engine writes the behaviour trace
+      // before lifting and the lift after every full round (see driver.py).
+      const saved = await findSavedEngineOutput(tempRoot);
+      if (!saved) throw error;
+      engineError = error;
+      await fs.copyFile(saved.path, outputPath);
+      return { stdout: error.stdout || '', stderr: (error.stderr || '') + '\n[!] engine stopped early: ' + String(error.message || error) + '\n[*] sending its saved ' + saved.kind };
+    });
 
     const stat = await fs.stat(outputPath).catch(() => null);
     if (!stat || !stat.isFile() || !stat.size) {
@@ -2214,7 +2231,7 @@ async function processLuraph14x(message, prompt, input, version) {
       const workDir = path.join(tempRoot, entry.name);
       for (const name of await fs.readdir(workDir).catch(() => [])) {
         let label = null;
-        if (name.endsWith('.devirt.partial.luau') || (isTrace && name.endsWith('.devirt.luau'))) {
+        if ((name.endsWith('.devirt.partial.luau') && !engineError) || (isTrace && name.endsWith('.devirt.luau'))) {
           label = 'Luraph' + versionTag + '_partial_vm_lift.luau';
         } else if (!isTrace && name.endsWith('.trace.luau')) {
           label = 'Luraph' + versionTag + '_behaviour_trace.luau';
@@ -2245,8 +2262,11 @@ async function processLuraph14x(message, prompt, input, version) {
     await fs.writeFile(reportPath, report, 'utf8');
 
     await message.reply({
-      content: (isTrace ? '⚠️' : '✅') + ' **DAILY DEOBF · Luraph v' + version + '**\n' +
-        (isTrace
+      content: (isTrace || engineError ? '⚠️' : '✅') + ' **DAILY DEOBF · Luraph v' + version + '**\n' +
+        (engineError
+          ? 'The engine stopped before finishing (' + (/SIGKILL|memory/i.test(String(engineError.message)) ? 'the server ran out of memory' : String(engineError.message || engineError).split('\n')[0].slice(0, 160)) +
+            '), so this is what it had recovered by then' + (isTrace ? ' (a behaviour trace).' : ' (a partial VM lift).')
+          : isTrace
           ? 'The VM lift was incomplete, so the main file is a behaviour trace (what the script did in the sandbox).'
           : 'Dedicated v' + version + ' engine finished.') +
         '\nOutput size: ' + formatBytes(stat.size) + '\nAttached: Luraph' + versionTag + '_deobfuscated.luau' +
@@ -2279,6 +2299,23 @@ async function processLuraph14x(message, prompt, input, version) {
 }
 
 
+// The newest result a killed 14.x engine run left in its work folder.
+async function findSavedEngineOutput(tempRoot) {
+  for (const entry of await fs.readdir(tempRoot, { withFileTypes: true }).catch(() => [])) {
+    if (!entry.isDirectory() || !entry.name.endsWith('_work')) continue;
+    const workDir = path.join(tempRoot, entry.name);
+    const names = await fs.readdir(workDir).catch(() => []);
+    for (const [suffix, kind] of [['.devirt.luau', 'VM lift'], ['.devirt.partial.luau', 'partial VM lift'], ['.trace.luau', 'behaviour trace']]) {
+      const name = names.find((n) => n.endsWith(suffix));
+      if (!name) continue;
+      const full = path.join(workDir, name);
+      const st = await fs.stat(full).catch(() => null);
+      if (st && st.isFile() && st.size > 0) return { path: full, kind };
+    }
+  }
+  return null;
+}
+
 async function processLuraph147(message, prompt, input) {
   return processLuraph14x(message, prompt, input, '14.7');
 }
@@ -2292,6 +2329,16 @@ async function processLuraph149(message, prompt, input) {
 }
 
 async function processLuraph143(message, prompt, input) {
+  // Full devirtualization: the 14.x engine handles the 14.3 VM. 14.3 does not
+  // encrypt functions until their first call, so functions that never ran in
+  // the sandbox are lifted too (DEVIRT_LIFT_UNRUN).
+  return processLuraph14x(message, prompt, input, '14.3', {
+    engineVersion: '14.7',
+    env: { DEVIRT_LIFT_UNRUN: '1' },
+  });
+}
+
+async function processLuraph143Static(message, prompt, input) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-luraph143-'));
   const inputPath = path.join(tempRoot, 'input.lua');
   const reportPath = path.join(tempRoot, 'Luraph143_static_report.txt');
@@ -5659,7 +5706,8 @@ async function startWorkflow(message, inlineText = null) {
   const luraphVersionRows = [
     new ActionRowBuilder().addComponents(
       ...[
-        ['14.3', 'luraph-v143', 'Luraph 14.3 (Static)'],
+        ['14.3', 'luraph-v143', 'Luraph 14.3'],
+        ['14.3s', 'luraph-v143-static', 'Luraph 14.3 (Static)'],
         ['14.7', 'luraph-v147', 'Luraph 14.7 (VIP)'],
         ['14.8', 'luraph-v148', 'Luraph 14.8'],
       ].map(([version, engine, label]) => engineButton(new ButtonBuilder()
@@ -5789,7 +5837,7 @@ async function startWorkflow(message, inlineText = null) {
       return;
     }
     const luraphVersionMatch = interaction.customId.match(
-      new RegExp('^deobf-luraph-version:(14\\.3|14\\.7|14\\.8|14\\.9|15|15\\.1):' + message.author.id + '$')
+      new RegExp('^deobf-luraph-version:(14\\.3s|14\\.3|14\\.7|14\\.8|14\\.9|15|15\\.1):' + message.author.id + '$')
     );
     if (luraphVersionMatch) {
       await interaction.deferUpdate();
@@ -5798,6 +5846,7 @@ async function startWorkflow(message, inlineText = null) {
       try {
         const selectedInput = await getWorkflowInput();
         if (version === '14.3') await processLuraph143(message, prompt, selectedInput);
+        else if (version === '14.3s') await processLuraph143Static(message, prompt, selectedInput);
         else if (version === '14.7') await processLuraph147(message, prompt, selectedInput);
         else if (version === '14.8') await processLuraph148(message, prompt, selectedInput);
         else if (version === '14.9') await processLuraph149(message, prompt, selectedInput);
@@ -5929,7 +5978,7 @@ async function startWorkflow(message, inlineText = null) {
       try {
         await processLuraph143(message, prompt, await getWorkflowInput());
       } catch (error) {
-        await showDeobfFailure(message, prompt, 'Luraph v14.3 static analysis failed', error);
+        await showDeobfFailure(message, prompt, 'Luraph v14.3 failed', error);
       }
       return;
     }

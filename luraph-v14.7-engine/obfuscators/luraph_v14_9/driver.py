@@ -19,7 +19,7 @@ import traceout as trace
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_RERUNS = 12
-SPIN_CHECKS = 24    # watchdog checks (2^20 VM steps each) without environment access = endless loop
+SPIN_CHECKS = int(os.environ.get("DEOB_SPIN_CHECKS") or 24)    # watchdog checks (2^20 VM steps each) without environment access = endless loop
 
 
 def patch_spin(src):
@@ -30,7 +30,8 @@ def patch_spin(src):
     """
     marker = "__SPIN.n=__SPIN.n+1;"
     def inject(match):
-        return match.group(0) + "\n" + marker + "if __SPIN.n>=__SPIN.step then __SPIN.f()end;"
+        # same line: Luraph checks the line numbers in its own error messages
+        return match.group(0) + " " + marker + "if __SPIN.n>=__SPIN.step then __SPIN.f()end;"
     # Stop at the first loop delimiter, including when the condition spans lines.
     patterns = (
         r"\bwhile\b(?:(?!\bdo\b)[\s\S])*\bdo\b",
@@ -283,7 +284,7 @@ def run(job):
     runner = harness.Runner(job)
     bridge = runner.bridge
 
-    skip = []
+    skip = [int(x) for x in os.environ.get("DEOB_SKIP_PROTOS", "").split(",") if x.strip()]
     # spin watchdog from the first run: a script ending in a pure-VM endless
     # loop (tamper response, wait for remote code) then stops after a few
     # seconds instead of running into the timeout. DEOB_SPIN_LATE=1: only

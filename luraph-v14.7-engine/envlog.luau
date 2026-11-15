@@ -2033,7 +2033,9 @@ end
 
 -- wraps a library so calls involving proxies become expressions
 local function wrapLib(libName, lib, tname)
-	local out = {}
+	-- a clone keeps the library's own hash layout, so pairs()/next() walk it
+	-- in the engine's order (Luraph 14.9 walks library tables with next())
+	local out = table.clone(lib)
 	for k, f in R.pairs(lib) do
 		if R.type(f) == "function" then
 			local label = libName .. "." .. k
@@ -3526,7 +3528,17 @@ if CFG.spin then
 		end
 		idle += 1
 		if idle >= CFG.spin then
-			ABORT_REASON = ABORT_REASON or "endless loop in the script's own code (no environment access)"
+			if not ABORT_REASON then
+				-- which VM functions were entered last: the loop is in (or under) them
+				local ent, seen, last = E.__ENT, {}, {}
+				for i = ent.n, R.max(1, ent.n - 63), -1 do
+					local q = ent[i % 64]
+					if q and not seen[q] and #last < 6 then seen[q] = true; last[#last + 1] = "#" .. R.tostring(q) end
+				end
+				ABORT_REASON = "endless loop in the script's own code (no environment access)"
+					.. (#last > 0 and ("; last VM functions entered: " .. R.concat(last, ", ") .. " of " .. R.tostring(E.__PID.n)) or "")
+					.. "; looping at script line " .. R.tostring(debug.info(2, "l"))
+			end
 			checkBudget()
 		end
 	end

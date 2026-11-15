@@ -19,7 +19,7 @@ import traceout as trace
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_RERUNS = 12
-SPIN_CHECKS = 24    # watchdog checks (2^20 VM steps each) without environment access = endless loop
+SPIN_CHECKS = int(os.environ.get("DEOB_SPIN_CHECKS") or 24)    # watchdog checks (2^20 VM steps each) without environment access = endless loop
 
 
 def patch_spin(src):

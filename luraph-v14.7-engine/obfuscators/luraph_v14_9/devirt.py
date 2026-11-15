@@ -2419,6 +2419,7 @@ class UpList:
 
 
 REGFILE = RegFile()
+SYMFOR_MAX_STATES = int(os.environ.get("DEVIRT_SYMFOR_MAX_STATES", "6000"))
 UNDECRYPTED_FN = "luraph_undecrypted_function"   # see call_symbolic (closure factory)
 CONST_POOL_NAME = "luraph_constants"   # Dump.const_pool_for, rendered by lift_program
 TEMP_REG_BASE = 1 << 20     # registers holding micro-instruction temporaries (Stepper._carried_temps)
@@ -4094,8 +4095,11 @@ class FunctionLifter:
             # keep them only if the function still structures (a whole-
             # function state machine is less readable than the holes)
             import copy as _copy
-            probe = _copy.copy(order)
-            if backend.needs_state_machine(s0.key(vm.kstack_link), probe, me, vm.kstack_link):
+            if len(order) > SYMFOR_MAX_STATES:
+                # (huge functions never structured with them on the samples,
+                # and the check alone cost ~20 s there)
+                lf, s0, order = walk(False)
+            elif backend.needs_state_machine(s0.key(vm.kstack_link), _copy.copy(order), me, vm.kstack_link):
                 lf, s0, order = walk(False)
         orphan_params = []
         if orphan:

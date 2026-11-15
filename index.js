@@ -3,10 +3,25 @@
 // Separate Python v15 and beta 15.1 pipelines with live analysis progress.
 
 const {
-  ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder,
+  ActionRowBuilder, AttachmentBuilder: DiscordAttachmentBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder,
   Client, Events, GatewayIntentBits, Partials, PermissionFlagsBits,
   REST, Routes, SlashCommandBuilder,
 } = require('discord.js');
+
+// Every Lua/Luau result the bot sends is named .lua (easier to open and run):
+// `x.luau`, `x.pureluau` and `x.part001.luau` all become `.lua`.
+function luaFileName(name) {
+  return typeof name === 'string' ? name.replace(/\.(?:pure)?luau$/i, '.lua') : name;
+}
+class AttachmentBuilder extends DiscordAttachmentBuilder {
+  constructor(attachment, data = {}) {
+    super(attachment, data && data.name ? { ...data, name: luaFileName(data.name) } : data);
+  }
+
+  setName(name) {
+    return super.setName(luaFileName(name));
+  }
+}
 const { spawn } = require('node:child_process');
 const dns = require('node:dns').promises;
 const net = require('node:net');
@@ -2078,10 +2093,10 @@ async function sendAnalysisOutput(message, input, config) {
       '\nFunctions lifted: ' + (liftedFunctions === null ? 'see report' : liftedFunctions) +
       ' · Unlifted blocks: ' + (unliftedBlocks === null ? 'see report' : unliftedBlocks) +
       '\nCaptured prototypes: ' + (prototypeCount || 'see report') + ' · Dynamic VM chunks: ' + chunkFiles.length +
-      '\nAttached: deobfuscated.luau';
+      '\nAttached: deobfuscated.lua';
   } else if (hasLiftCandidate) {
     summary = '**DAILY DEOBF · ' + config.label + '**\n⚠️ Partial VM lift only. Validation found unresolved VM output, so it is not labelled as recovered source.\nProcessed: ' + safeName +
-      '\nAttached: partial_result.luau';
+      '\nAttached: partial_result.lua';
   } else {
     summary = '**DAILY DEOBF · ' + config.label + '**\n⚠️ Trace-only result. The full VM lift did not complete.\nProcessed: ' + safeName +
       '\nAttached: runtime_trace.luau (trace only, not reconstructed source), analysis-report.txt, and ' +
@@ -2269,8 +2284,8 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
           : isTrace
           ? 'The VM lift was incomplete, so the main file is a behaviour trace (what the script did in the sandbox).'
           : 'Dedicated v' + version + ' engine finished.') +
-        '\nOutput size: ' + formatBytes(stat.size) + '\nAttached: Luraph' + versionTag + '_deobfuscated.luau' +
-        extraFiles.map((f) => ', ' + f.name).join('') + ' and engine report.',
+        '\nOutput size: ' + formatBytes(stat.size) + '\nAttached: Luraph' + versionTag + '_deobfuscated.lua' +
+        extraFiles.map((f) => ', ' + luaFileName(f.name)).join('') + ' and engine report.',
       files: [
         new AttachmentBuilder(outputPath, { name: 'Luraph' + versionTag + '_deobfuscated.luau' }),
         ...extraFiles.map((f) => new AttachmentBuilder(f.path, { name: f.name })),

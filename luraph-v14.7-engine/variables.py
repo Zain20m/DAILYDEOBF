@@ -319,7 +319,12 @@ def rename(entry, blocks, prefix, captured):
                 x.capnames = {}
                 for r in closure_regs(x):
                     w = use_web.get(("u", bid, i, r))
-                    x.capnames[r] = name_of(w, r) or "nil"
+                    nm = name_of(w, r)
+                    if nm is None and ("d", bid, i, r) in def_web:
+                        # `r = function() ... r ... end`: the closure captures the
+                        # register it is being stored into (a recursive local function)
+                        nm = name_of(def_web[("d", bid, i, r)], r)
+                    x.capnames[r] = nm or "nil"
                 return x
             return None
         return fn

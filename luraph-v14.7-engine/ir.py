@@ -171,6 +171,11 @@ def fmt_multi(m):
     return ", ".join(parts)
 
 
+# bytes -> printable text, one C-level str.translate instead of a Python
+# loop per byte (big encrypted buffers made this a lifter hot spot)
+_BYTE_ESCAPES = {c: "\\%d" % c for c in range(256) if not (32 <= c < 127 and c not in (34, 92))}
+
+
 def fmt_const(v):
     if v is None:
         return "nil"
@@ -179,7 +184,7 @@ def fmt_const(v):
     if v is False:
         return "false"
     if isinstance(v, bytes):
-        return '"%s"' % "".join(chr(c) if 32 <= c < 127 and c not in (34, 92) else "\%d" % c for c in v)
+        return '"%s"' % v.decode("latin-1").translate(_BYTE_ESCAPES)
     if isinstance(v, (int, float)):
         return S.fmt_num(v)
     return repr(v)

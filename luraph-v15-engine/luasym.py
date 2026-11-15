@@ -50,6 +50,10 @@ class LTable:
     def __repr__(self):
         return "LTable#%s" % (self.tid if self.tid is not None else id(self))
 
+    def __deepcopy__(self, memo):
+        # VM data a statement refers to: code copies share it
+        return self
+
 
 class Buf:
     __slots__ = ("data",)
@@ -191,6 +195,10 @@ class NewTable(Expr):
 class ClosureExpr(Expr):
     def __init__(self, proto, upvals):
         self.proto, self.upvals = proto, upvals
+
+    def __deepcopy__(self, memo):
+        # one closure, lifted once: copies of a statement share it
+        return self
 
 
 # multi-value tails (a variable number of values)

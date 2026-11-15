@@ -30,15 +30,19 @@ def lower(entry_key, order, D, link, prefix, upnames, closure):
     import variables as VR
     import idioms as IDI
     from luasym import ClosureExpr, Pseudo
-    entry, blocks = ST.build_cfg(entry_key, order, D, link)
-    if not os.environ.get("DEVIRT_NO_MERGE"):
-        entry, _ = ST.merge_equivalent(entry, blocks, D)
-    entry = ST.thread_empty(entry, blocks)
-    LP.recognize(entry, blocks, D)
-    # dropping the VM's loop bookkeeping leaves empty hops (e.g. `break` paths)
-    entry = ST.thread_empty(entry, blocks)
-    CG.simplify_blocks(blocks, D)
-    own = set(VR.rename(entry, blocks, prefix, set()).values())
+    def cfg(loops):
+        return _build(entry_key, order, D, link, loops)
+
+    entry, blocks = cfg(True)
+    pseudo_names = set()
+    if any(b.kind in ("for", "forin") for b in blocks.values()) and _needs_fallback(entry, blocks, ST):
+        # A recovered `for` the structurer cannot place would come out as
+        # error("devirt: unstructured jump") lines, and the always-correct
+        # state machine cannot hold a `for`: lift this function without loop
+        # recognition instead, keeping the VM's loop state as plain locals.
+        entry, blocks = cfg(False)
+        pseudo_names = _pseudo_to_locals(blocks, CG, Pseudo)
+    own = set(VR.rename(entry, blocks, prefix, set()).values()) | pseudo_names
     names = {("up", i): nm for i, nm in (upnames or {}).items()}
 
     # child closures, now that the captured variables have names
@@ -148,3 +152,143 @@ def run_big_stack(fn, *a):
     if "e" in res:
         raise res["e"]
     return res.get("v")
+
+
+def _drop_dead_temps(blocks, D):
+    """Drop stores to micro-instruction temp registers (devirt
+    TEMP_REG_BASE and up) that nothing reads: the VM's scratch values left
+    over at the end of an instruction (FORLOOP's `g = d >= o`). Left in,
+    they hide Luraph's for-loop protocol from loops.py."""
+    base = getattr(D, "TEMP_REG_BASE", None)
+    if base is None:
+        return
+    from luasym import Reg
+
+    def is_temp(e):
+        return isinstance(e, Reg) and isinstance(e.n, int) and e.n >= base
+
+    def temps_in(root):
+        out = []
+        todo = [root]
+        seen = set()
+        while todo:
+            x = todo.pop()
+            if x is None or isinstance(x, (str, bytes, int, float, bool)) or id(x) in seen:
+                continue
+            seen.add(id(x))
+            if is_temp(x):
+                out.append(x.n)
+            elif isinstance(x, (list, tuple)):
+                todo.extend(x)
+            elif isinstance(x, dict):
+                todo.extend(x.values())
+            elif hasattr(x, "__dict__") and not isinstance(x, type):
+                todo.extend(x.__dict__.values())
+        return out
+
+    uses = {}
+    defs = {}       # temp -> [(block, statement, temps its value reads)]
+    for b in blocks.values():
+        for n in temps_in([getattr(b, "cond", None), getattr(b, "values", None)]):
+            uses[n] = uses.get(n, 0) + 1
+        for s_ in b.stmts:
+            if isinstance(s_, D.Assign) and is_temp(s_.target):
+                rd = temps_in(s_.value)
+                defs.setdefault(s_.target.n, []).append((b, s_, rd))
+            else:
+                rd = temps_in(s_)
+            for n in rd:
+                uses[n] = uses.get(n, 0) + 1
+    dead = set()
+    work = [n for n in defs if not uses.get(n)]
+    while work:
+        n = work.pop()
+        if n in dead:
+            continue
+        dead.add(n)
+        for _, _, rd in defs[n]:
+            for m in rd:
+                uses[m] -= 1
+                if uses[m] == 0 and m in defs and m not in dead:
+                    work.append(m)
+    if not dead:
+        return
+    drop = {id(s_) for n in dead for _, s_, _ in defs[n]}
+    for b in blocks.values():
+        if any(id(s_) in drop for s_ in b.stmts):
+            b.stmts = [s_ for s_ in b.stmts if id(s_) not in drop]
+
+
+def _build(entry_key, order, D, link, loops):
+    """The function's CFG, simplified; loops: recognize numeric/generic for."""
+    import structure as ST
+    import codegen as CG
+    import loops as LP
+    entry, blocks = ST.build_cfg(entry_key, order, D, link)
+    _drop_dead_temps(blocks, D)
+    if not os.environ.get("DEVIRT_NO_MERGE"):
+        entry, _ = ST.merge_equivalent(entry, blocks, D)
+    entry = ST.thread_empty(entry, blocks)
+    if loops:
+        LP.recognize(entry, blocks, D)
+        # dropping the VM's loop bookkeeping leaves empty hops (e.g. `break` paths)
+        entry = ST.thread_empty(entry, blocks)
+    CG.simplify_blocks(blocks, D)
+    return entry, blocks
+
+
+def needs_state_machine(entry_key, order, D, link):
+    """Whether lower() would have to write this function as a state machine
+    (every structuring attempt leaves gotos). Does not change `order`."""
+    import structure as ST
+    entry, blocks = _build(entry_key, order, D, link, True)
+    if not _needs_fallback(entry, blocks, ST):
+        return False
+    if not any(b.kind in ("for", "forin") for b in blocks.values()):
+        return True
+    entry, blocks = _build(entry_key, order, D, link, False)
+    return _needs_fallback(entry, blocks, ST)
+
+
+def _shallow_copy(blocks, ST):
+    out = {}
+    for k, b in blocks.items():
+        c = ST.Block(b.id)
+        for a in ST.Block.__slots__:
+            v = getattr(b, a)
+            setattr(c, a, list(v) if isinstance(v, list) else v)
+        out[k] = c
+    return out
+
+
+def _needs_fallback(entry, blocks, ST):
+    """Whether structuring this graph leaves gotos (on a copy)."""
+    try:
+        _, _, sr = ST.structure(entry, _shallow_copy(blocks, ST), set())
+    except Exception:  # noqa: BLE001 - treat as unstructurable
+        return True
+    return bool(sr.fallbacks) or getattr(sr, "state_machine", False)
+
+
+def _pseudo_to_locals(blocks, CG, Pseudo):
+    """VM loop slots (Pseudo) as locals named like them (`Z_1`)."""
+    names = set()
+
+    def fn(x):
+        if isinstance(x, Pseudo):
+            nm = "%s_%d" % (x.name, x.depth)
+            names.add(nm)
+            return CG.LocalName(nm)
+        return None
+    for b in blocks.values():
+        for i, s_ in enumerate(b.stmts):
+            if isinstance(s_, CG.AssignS):
+                s_.values = CG.map_multi(s_.values, fn)
+                s_.targets = [fn(t) or CG.map_expr(t, fn) for t in s_.targets]
+            else:
+                b.stmts[i] = CG.map_stmt(s_, lambda e: CG.map_expr(e, fn), lambda m: CG.map_multi(m, fn))
+        if b.cond is not None:
+            b.cond = CG.map_expr(b.cond, fn)
+        if b.kind == "ret" and b.values is not None:
+            b.values = CG.map_multi(b.values, fn)
+    return names

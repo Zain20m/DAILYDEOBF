@@ -121,12 +121,25 @@ class _Deflattener:
         # declaration id -> spans of every reference to it, for the
         # "used outside the loop" check
         self.refs = {}
+        self.const_writes = set()   # spans of locals assigned a number (`n = 73`)
+        self.loop_sites = []        # (statement list, index) of every loop
         stack = [self.root]
         while stack:
             n = stack.pop()
-            if n.get("type") == "AstExprLocal":
+            t = n.get("type")
+            if t == "AstExprLocal":
                 self.refs.setdefault(self._lid(n), []).append(_loc(n["location"]))
+            elif t == "AstStatAssign" and len(n.get("vars", [])) == len(n.get("values", [])) and \
+                    all(self._num(v) is not None for v in n["values"]):
+                for x in n["vars"]:
+                    if self._lid(x) is not None:
+                        self.const_writes.add(_loc(x["location"]))
+            elif t == "AstStatBlock":
+                for k, st in enumerate(n.get("body", [])):
+                    if st.get("type") in ("AstStatWhile", "AstStatRepeat", "AstStatFor"):
+                        self.loop_sites.append((n["body"], k))
             stack.extend(_children(n))
+        self._seeded = None
 
     # ---- small AST helpers ------------------------------------------------
     @staticmethod
@@ -145,6 +158,10 @@ class _Deflattener:
         return isinstance(cond, dict) and cond.get("type") == "AstExprConstantBool" and cond.get("value") is True
 
     @staticmethod
+    def _is_false(cond):
+        return isinstance(cond, dict) and cond.get("type") == "AstExprConstantBool" and cond.get("value") is False
+
+    @staticmethod
     def _else_stmts(st):
         """Statements of an if's else part. An `elseif` is stored as a nested
         AstStatIf (not a block): it is one statement of the else part."""
@@ -156,22 +173,55 @@ class _Deflattener:
         return [e]
 
     def _is_ctrl_cond(self, e, ctrl):
-        """A boolean expression over control vars and numeric constants only."""
-        if not isinstance(e, dict):
+        """A boolean expression over control vars and numeric constants only
+        (each comparison: both sides a control var or a number, at least one
+        a control var). The expression's shape is summarised once per node, so
+        the control-var fixpoint re-checks it with set lookups only."""
+        summ = self._cond_summary(e)
+        if summ is None:
             return False
-        t = e.get("type")
-        if t == "AstExprGroup":
-            return self._is_ctrl_cond(e["expr"], ctrl)
-        if t == "AstExprUnary" and e.get("op") == "Not":
-            return self._is_ctrl_cond(e["expr"], ctrl)
-        if t == "AstExprBinary":
-            op = e.get("op")
-            if op in ("And", "Or"):
-                return self._is_ctrl_cond(e["left"], ctrl) and self._is_ctrl_cond(e["right"], ctrl)
-            if op in _CMP:
-                return self._cmp_side(e["left"], ctrl) and self._cmp_side(e["right"], ctrl) and (
-                    self._lid(self._ungroup(e["left"])) in ctrl or self._lid(self._ungroup(e["right"])) in ctrl)
-        return False
+        for l, r in summ:
+            lc = l[0] == "L" and l[1] in ctrl
+            rc = r[0] == "L" and r[1] in ctrl
+            if not (lc or rc):
+                return False
+            if not (lc or l[0] == "N") or not (rc or r[0] == "N"):
+                return False
+        return True
+
+    def _cond_summary(self, e):
+        """[(left kind, right kind)] for every comparison of a condition made
+        only of comparisons, not/and/or and parentheses, else None. A kind is
+        ("L", declaration id), ("N",) for a number, or ("X",) otherwise."""
+        cache = self.__dict__.setdefault("_summary_cache", {})
+        key = id(e)
+        if key in cache:
+            return cache[key]
+        out = None
+        if isinstance(e, dict):
+            t = e.get("type")
+            if t == "AstExprGroup":
+                out = self._cond_summary(e["expr"])
+            elif t == "AstExprUnary" and e.get("op") == "Not":
+                out = self._cond_summary(e["expr"])
+            elif t == "AstExprBinary":
+                op = e.get("op")
+                if op in ("And", "Or"):
+                    a, b = self._cond_summary(e["left"]), self._cond_summary(e["right"])
+                    out = None if a is None or b is None else a + b
+                elif op in _CMP:
+                    out = [(self._side_kind(e["left"]), self._side_kind(e["right"]))]
+        cache[key] = out
+        return out
+
+    def _side_kind(self, e):
+        e = self._ungroup(e)
+        lid = self._lid(e)
+        if lid is not None:
+            return ("L", lid)
+        if self._num(e) is not None:
+            return ("N",)
+        return ("X",)
 
     @staticmethod
     def _ungroup(e):
@@ -184,7 +234,7 @@ class _Deflattener:
         return self._lid(e) in ctrl or self._num(e) is not None
 
     # ---- control variables -------------------------------------------------
-    def _control_vars(self, while_node, setup_spans):
+    def _control_vars(self, while_node, setup_spans, safe_after=None):
         """Declaration ids that (a) are only ever assigned numeric constants in
         the loop, (b) are only read inside pure control conditions, (c) are not
         captured by a nested function, and (d) are not referenced anywhere
@@ -262,11 +312,17 @@ class _Deflattener:
         for st in body:
             captures(st, None)
 
-        # (d) referenced outside the loop (other than its setup statements)
+        # (d) referenced outside the loop (other than its setup statements).
+        # Codegen reuses one local for several dispatchers: a number written
+        # to it elsewhere, or a read inside another loop that sets it up
+        # itself first, cannot see this loop's final value.
         wspan = _loc(while_node["location"])
         for lid in list(cand):
             for sp in self.refs.get(lid, ()):
-                if not _within(sp, wspan) and not any(_within(sp, s) for s in setup_spans):
+                if not _within(sp, wspan) and not any(_within(sp, s) for s in setup_spans) and \
+                        sp not in self.const_writes and \
+                        not any(_within(sp, ls) for ls in (safe_after or {}).get(lid, ())) and \
+                        not any(_within(sp, ls) for ls in self._seeded_loops().get(lid, ())):
                     cand.discard(lid)
                     break
 
@@ -279,6 +335,21 @@ class _Deflattener:
                     cand.discard(lid)
                     changed = True
         return cand
+
+    def _seeded_loops(self):
+        """local id -> spans of the loops whose setup statements give it a
+        number before the loop starts (see _setup)."""
+        if self._seeded is None:
+            self._seeded = {}
+            for body, k in self.loop_sites:
+                span = _loc(body[k]["location"])
+                for j in self._setup(body, k):
+                    st = body[j]
+                    ids = [l.get("location") for l in st.get("vars", [])] if st.get("type") == "AstStatLocal" \
+                        else [self._lid(x) for x in st.get("vars", [])]
+                    for lid in ids:
+                        self._seeded.setdefault(lid, []).append(span)
+        return self._seeded
 
     def _writes_ctrl(self, node, ctrl):
         if isinstance(node, list):
@@ -432,7 +503,7 @@ class _Deflattener:
                     scope[l.get("name")] = l.get("location")
             elif t == "AstStatLocalFunction" and isinstance(st.get("name"), dict):
                 scope[st["name"].get("name")] = st["name"].get("location")
-            items.append(("s", _loc(st["location"])))
+            items.append(("s", _loc(st["location"]), t == "AstStatReturn"))
             budget[0] -= 1
             if budget[0] < 0:
                 raise _Bail("budget")
@@ -469,6 +540,7 @@ class _Deflattener:
 
     def _finish(self, r, vals, items, onpath, budget, loops, scope):
         if r == "end":
+            self._for_step(vals)
             items += self._structure(vals, onpath, budget, loops, scope=scope)
         elif r == "break":
             items += self._exit(loops)
@@ -511,7 +583,12 @@ class _Deflattener:
                     raise _Revisit(key)
                 entered[key] = (len(items), dict(vals), onpath, dict(scope))
                 onpath = onpath | {key}
-                r = self._iter([[self._body, 0]], vals, items, onpath, budget, loops, scope)
+                if self._wcond is not None and not self._truth(self._eval(self._wcond, vals)):
+                    r = "break"     # the loop test failed: leave the dispatcher
+                elif self._for is not None and not self._for_in_range(vals):
+                    r = "break"     # the counter ran past the limit
+                else:
+                    r = self._iter([[self._body, 0]], vals, items, onpath, budget, loops, scope)
             except _Revisit as rv:
                 if rv.key not in entered:
                     raise
@@ -523,30 +600,103 @@ class _Deflattener:
                 items.append(("loop", body))
                 return items
             if r == "end":
+                self._for_step(vals)
                 continue
             if r == "break":
                 items += self._exit(loops)
             return items
 
+    def _for_step(self, vals):
+        if self._for is not None:
+            lv, _, _, step = self._for
+            vals[lv] = vals[lv] + step
+
+    def _for_in_range(self, vals):
+        lv, _, stop, step = self._for
+        v = vals[lv]
+        return v <= stop if step > 0 else v >= stop
+
+    def _for_range(self, w):
+        """(start, stop, step) of a numeric for with constant bounds and a
+        short (<= 256 passes) non-zero step, else None."""
+        def num(e):
+            e = self._ungroup(e)
+            if self._num(e) is not None:
+                return e["value"]
+            if isinstance(e, dict) and e.get("type") == "AstExprUnary" and e.get("op") == "Minus":
+                x = num(e["expr"])
+                return None if x is None else -x
+            return None
+        a, b = num(w.get("from")), num(w.get("to"))
+        c = num(w["step"]) if w.get("step") else 1
+        if a is None or b is None or c is None or c == 0:
+            return None
+        if not all(float(x).is_integer() for x in (a, b, c)):
+            return None
+        a, b, c = int(a), int(b), int(c)
+        if (b - a) // c + 1 > 256:
+            return None
+        return a, b, c
+
+    def _only_ctrl_reads(self, body, lv, ctrl):
+        """Every read of the loop counter is inside a pure control test."""
+        ok = [True]
+
+        def walk(node, in_cond):
+            if isinstance(node, list):
+                for x in node:
+                    walk(x, in_cond)
+                return
+            if not isinstance(node, dict) or not ok[0]:
+                return
+            t = node.get("type")
+            if t == "AstExprLocal" and self._lid(node) == lv and not in_cond:
+                ok[0] = False
+                return
+            if t == "AstStatIf":
+                c = node.get("condition")
+                walk(c, self._is_ctrl_cond(c, ctrl))
+                walk(node.get("thenbody"), False)
+                walk(node.get("elsebody"), False)
+                return
+            for ch in _children(node):
+                walk(ch, in_cond if t not in FUNCS else False)
+
+        walk(body, False)
+        return ok[0]
+
     # ---- discovery --------------------------------------------------------
     def _setup(self, body, i):
-        """Indices of the statements right before the loop that only set up
-        locals with constants (`local state = 1`, `local n`, `local i = 0`,
-        `state = 1`). Their constant values seed the replay."""
+        """Indices of the statements before the loop that only set up locals
+        with constants (`local state = 1`, `local n`, `local i = 0`,
+        `state = 1`). Their constant values seed the replay. Other statements
+        may sit in between (`n = 73; f(x); while n ~= 20 do`) as long as
+        they do not mention the variable being set up."""
+        cands, others = [], []
         j = i - 1
-        idxs = []
-        while j >= 0:
+        while j >= 0 and i - j <= 12:
             st = body[j]
             t = st.get("type")
             vals = st.get("values", [])
             if t == "AstStatLocal" and all(self._num(v) is not None or (v or {}).get("type") == "AstExprConstantNil" for v in vals):
-                idxs.append(j)
+                cands.append(j)
             elif t == "AstStatAssign" and len(st.get("vars", [])) == len(vals) and \
                     all(self._lid(x) is not None for x in st["vars"]) and all(self._num(v) is not None for v in vals):
-                idxs.append(j)
+                cands.append(j)
+            elif t in ("AstStatLocal", "AstStatLocalFunction", "AstStatReturn", "AstStatBreak", "AstStatContinue"):
+                break       # a new scope entry or a jump: no setup above it
             else:
-                break
+                others.append(j)
             j -= 1
+        idxs = []
+        for j in cands:
+            st = body[j]
+            ids = [l.get("location") for l in st.get("vars", [])] if st.get("type") == "AstStatLocal" \
+                else [self._lid(x) for x in st.get("vars", [])]
+            spans = [_loc(body[k]["location"]) for k in others if k > j]
+            if any(_within(sp, osp) for lid in ids for sp in self.refs.get(lid, ()) for osp in spans):
+                continue
+            idxs.append(j)
         return sorted(idxs)
 
     def _try_loop(self, body, i, edits):
@@ -556,12 +706,45 @@ class _Deflattener:
             return False
         setup = self._setup(body, i)
         spans = [_loc(body[j]["location"]) for j in setup]
-        self._ctrl = self._control_vars(w, spans)
+        # statements after `n = K` (later in this same list) cannot see the
+        # loop's final value of n: it was overwritten on every path to them
+        safe_after = {}
+        killed = set()
+        for k in range(i + 1, len(body)):
+            st = body[k]
+            for lid in killed:
+                safe_after.setdefault(lid, []).append(_loc(st["location"]))
+            if st.get("type") == "AstStatAssign" and len(st.get("vars", [])) == len(st.get("values", [])) and \
+                    all(self._num(v) is not None for v in st["values"]):
+                killed |= {self._lid(x) for x in st["vars"] if self._lid(x) is not None}
+        self._ctrl = self._control_vars(w, spans, safe_after)
+        self._for = None
+        if w.get("type") == "AstStatFor":
+            # `for i = 37, 427, 78 do if i < 115 then ... end end`: Luraph's
+            # flattening with the counter as the state. Unrolled when the
+            # counter is only ever tested, and the bounds are constants.
+            rng = self._for_range(w)
+            lv = (w.get("var") or {}).get("location")
+            if rng is None or lv is None:
+                return False
+            self._ctrl = set(self._ctrl) | {lv}
+            if not self._only_ctrl_reads(b, lv, self._ctrl):
+                return False
+            self._for = (lv,) + rng
         if not self._ctrl or not self._is_ctrl_cond(b[0].get("condition"), self._ctrl):
             return False            # not a dispatcher
+        # `while state ~= EXIT do` / `while not (n < 24) do`: the loop test is
+        # one more dispatch test, checked before every pass over the body
+        self._wcond = None
+        if w.get("type") == "AstStatWhile" and not self._is_true(w.get("condition")):
+            if not self._is_ctrl_cond(w["condition"], self._ctrl):
+                return False
+            self._wcond = w["condition"]
         self._free_cache = {}
         # seed values from the setup statements
         vals = {}
+        if self._for is not None:
+            vals[self._for[0]] = self._for[1]
         for j in setup:
             st = body[j]
             if st.get("type") == "AstStatLocal":
@@ -575,15 +758,28 @@ class _Deflattener:
                     if self._lid(x) in self._ctrl:
                         vals[self._lid(x)] = v["value"]
         self._body = b
-        items = self._structure(vals, frozenset(), [_MAXSTEPS])
+        # Budget proportional to the loop's own size: the rebuilt code is
+        # rejected anyway once it is clearly longer than the loop, so a replay
+        # that copies branches far past that point is stopped early instead of
+        # running to completion first (that was most of the pass's time).
+        nstmts = 0
+        stack = list(b)
+        while stack:
+            n = stack.pop()
+            if n.get("type", "").startswith("AstStat"):
+                nstmts += 1
+            stack.extend(_children(n))
+        items = self._structure(vals, frozenset(), [min(_MAXSTEPS, 1000 + 8 * nstmts)])
         wl = _loc(w["location"])
         indent = re.match(r"[\t ]*", self.text.split("\n")[wl[0]]).group(0)
         lines = self._render_items(items, indent)
         if self._max_block_locals(items) > 120:
             raise _Bail("too many locals in one block")      # Luau allows 200 per function
         top_locals = any(it[0] == "s" and self._is_local_decl(it[1]) for it in items)
-        if top_locals:
-            # the arms' locals were scoped inside the loop: keep them there
+        ends_in_return = bool(items) and items[-1][0] == "s" and len(items[-1]) > 2 and items[-1][2]
+        if top_locals or ends_in_return:
+            # the arms' locals were scoped inside the loop: keep them there;
+            # a `return` must end its block (code may follow the loop)
             lines = [indent + "do"] + ["\t" + ln for ln in lines] + [indent + "end"]
         rep = "\n".join(lines) if lines else indent + "-- (flattened block with no observable statements)"
         # Branches that later meet are laid out once per path. When that
@@ -671,7 +867,9 @@ class _Deflattener:
     def _scan(self, body, edits):
         for i, st in enumerate(body):
             done = False
-            if st.get("type") == "AstStatWhile" and self._is_true(st.get("condition")):
+            if (st.get("type") == "AstStatWhile" and st.get("condition")) or \
+                    (st.get("type") == "AstStatRepeat" and self._is_false(st.get("condition"))) or \
+                    st.get("type") == "AstStatFor":
                 try:
                     done = self._try_loop(body, i, edits)
                 except _Bail:
@@ -720,6 +918,16 @@ class _Deflattener:
             kind = it[0]
             if kind == "s":
                 txt = self.src.slice(it[1])
+                if txt.startswith("elseif"):
+                    # an `elseif` arm copied on its own is a plain `if`
+                    # (luau-ast stores it as a nested if spanning to `end`)
+                    txt = txt[len("else"):]
+                if txt.startswith("(") and out and not re.search(r"(\bthen|\bdo|\belse|\brepeat|;)\s*$", out[-1]) \
+                        and out[-1].strip():
+                    # `(f)(x)` right after another statement reads as a call
+                    # of it: end that statement with `;` (Luau has no empty
+                    # statement, so it cannot start this one)
+                    out[-1] += ";"
                 first = True
                 for ln in txt.split("\n"):
                     out.append(indent + ln if first else ln)
@@ -734,6 +942,14 @@ class _Deflattener:
                 out.append(indent + "break")
             elif kind == "if":
                 _, cond_loc, then_items, else_items = it
+                if not then_items and not else_items:
+                    out.append(indent + "local _ = " + self.src.slice(cond_loc))    # (evaluated for effect)
+                    continue
+                if not then_items:
+                    out.append(indent + "if not (" + self.src.slice(cond_loc) + ") then")
+                    out += self._render_items(else_items, indent + "\t")
+                    out.append(indent + "end")
+                    continue
                 out.append(indent + "if " + self.src.slice(cond_loc) + " then")
                 out += self._render_items(then_items, indent + "\t")
                 if else_items:

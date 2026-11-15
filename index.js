@@ -2400,7 +2400,7 @@ async function processIronbrew1(message, prompt, input) {
       python,
       [
         ENGINE_V15_CLI, inputPath, '--obfuscator', 'ironbrew1',
-        '--debug', '--strings', '--no-pypy', '--timeout', '120',
+        '--debug', '--strings', ...(process.env.DEOB_USE_PYPY === '1' ? [] : ['--no-pypy']), '--timeout', '120',
         '-o', tracePath,
       ],
       ENGINE_V15_DIR,
@@ -2975,7 +2975,7 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
             ? { DEOB_PY_CANDIDATES: 'python:1' } : {}),
           DEOB_CANDIDATE_IDLE_TIMEOUT_MS: '75000',
           DEVIRT_LOADERS: '1',
-          DEVIRT_FULL_ROUNDS: '1',
+          DEVIRT_FULL_ROUNDS: '', // fast rounds: walk only, one full lift at the end (same result, ~2x faster)
           DEVIRT_TIMING: '1',
           DEVIRT_ERRS: '1',
           DEVIRT_TB: '1',
@@ -3040,14 +3040,14 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
             '--devirt-rounds', '200',
             '--budget', '60',
             '--timeout', '120',
-            '--no-pypy',
+            ...(process.env.DEOB_USE_PYPY === '1' ? [] : ['--no-pypy']),
             ...(gameId ? ['--cfg', '__superz_game_id=' + gameId] : []),
           ],
           {
             env: {
               DEVIRT_LOADERS: '1',
               DEVIRT_ALL_PROTOS: '1',
-              DEVIRT_FULL_ROUNDS: '1',
+              DEVIRT_FULL_ROUNDS: '', // fast rounds: walk only, one full lift at the end (same result, ~2x faster)
               DEVIRT_TIMING: '1',
               DEVIRT_ERRS: '1',
               DEVIRT_TB: '1',

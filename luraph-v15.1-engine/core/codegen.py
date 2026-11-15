@@ -1057,6 +1057,23 @@ def map_stmt(st, fe, fm):
         return st
     return st
 
+def block_temp_uses(b):
+    cnt = {}
+    for st in b.stmts:
+        _, ts = stmt_uses(st)
+        for t in ts:
+            cnt[t] = cnt.get(t, 0) + 1
+    _, ts = term_uses(b)
+    for t in ts:
+        cnt[t] = cnt.get(t, 0) + 1
+    return cnt
+
+
+def _add_counts(total, part, sign):
+    for t, n in part.items():
+        total[t] = total.get(t, 0) + sign * n
+
+
 def count_temp_uses(blocks):
     cnt = {}
     for b in blocks.values():
@@ -1228,10 +1245,17 @@ def simplify_blocks(blocks, D):
             changed |= fold_tables(b)
         live_out = liveness(blocks)
         opened = open_registers(blocks)
+        # the function's temp use counts, kept exact by updating only the
+        # block being changed (recounting every block per block was quadratic)
         tu = count_temp_uses(blocks)
         for b in blocks.values():
+            _add_counts(tu, block_temp_uses(b), -1)
             copy_propagate(b, live_out[b.id], opened[b.id])
+            _add_counts(tu, block_temp_uses(b), 1)
+            before = block_temp_uses(b)
             simplify_block(b, live_out[b.id], tu, opened[b.id])
+            _add_counts(tu, before, -1)
+            _add_counts(tu, block_temp_uses(b), 1)
         if not changed:
             break
 

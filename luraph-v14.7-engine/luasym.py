@@ -13,6 +13,8 @@ Values:
   and symbolic IR expressions (Expr subclasses, see below).
 """
 import math
+import os
+import sys
 import struct
 
 
@@ -49,6 +51,11 @@ class LTable:
 
     def __repr__(self):
         return "LTable#%s" % (self.tid if self.tid is not None else id(self))
+
+    def __deepcopy__(self, memo):
+        # VM data a statement refers to (a proto, a constant table): code
+        # copies (structure.terminal_tail) share it; copying it cost seconds
+        return self
 
 
 class Buf:
@@ -191,6 +198,11 @@ class NewTable(Expr):
 class ClosureExpr(Expr):
     def __init__(self, proto, upvals):
         self.proto, self.upvals = proto, upvals
+
+    def __deepcopy__(self, memo):
+        # one closure, lifted once: copies of a statement share it (it also
+        # refers to the whole VM model, which made copies cost seconds)
+        return self
 
 
 # multi-value tails (a variable number of values)
@@ -414,7 +426,14 @@ def arith(op, a, b):
             r += b
         return fix_int(r)
     if op == "Pow":
-        return fix_int(float(a) ** float(b))
+        try:
+            return fix_int(float(a) ** float(b))
+        except OverflowError:
+            # IEEE pow overflows to +-inf (Lua/Luau semantics)
+            neg = a < 0 and float(b).is_integer() and int(b) % 2 == 1
+            return float("-inf") if neg else float("inf")
+        except ZeroDivisionError:
+            return float("inf")
     raise Unsupported(op)
 
 
@@ -529,6 +548,57 @@ def _str_byte(s, i=1, j=None):
     return Multi(list(s[i - 1:j]))
 
 
+def _str_unpack(fmt, s, pos=1):
+    """string.unpack (Lua 5.4 / Luau formats: < > = ! b B h H i[n] I[n] l L
+    j J T f d n s[n] z x, spaces). Returns Multi(values..., next position)."""
+    import re as _re
+    if not isinstance(fmt, bytes) or not isinstance(s, bytes):
+        raise TypeError("string.unpack needs strings")
+    i = int(pos) - 1
+    if i < 0:
+        i = len(s) + i + 1
+    little = True
+    out = []
+    for m in _re.finditer(rb"([<>=!])(\d*)|([bBhHlLjJTfdnzx])|([iIs])(\d*)|( )", fmt):
+        if m.group(1):
+            if m.group(1) == b"<" or m.group(1) == b"=":
+                little = True
+            elif m.group(1) == b">":
+                little = False
+            continue
+        if m.group(6):
+            continue
+        c = (m.group(3) or m.group(4)).decode()
+        n = m.group(5)
+        size = {"b": 1, "B": 1, "h": 2, "H": 2, "l": 8, "L": 8, "j": 8, "J": 8, "T": 8,
+                "f": 4, "d": 8, "n": 8, "i": 4, "I": 4, "s": 8}.get(c)
+        if c in "iIs" and n:
+            size = int(n)
+        order = "little" if little else "big"
+        if c == "x":
+            i += 1
+        elif c == "z":
+            e = s.index(b"\0", i)
+            out.append(s[i:e])
+            i = e + 1
+        elif c == "s":
+            ln = int.from_bytes(s[i:i + size], order)
+            i += size
+            out.append(s[i:i + ln])
+            i += ln
+        elif c in "fdn":
+            if i + size > len(s):
+                raise ValueError("data string too short")
+            out.append(struct.unpack(("<" if little else ">") + ("f" if c == "f" else "d"), s[i:i + size])[0])
+            i += size
+        else:
+            if i + size > len(s):
+                raise ValueError("data string too short")
+            out.append(int.from_bytes(s[i:i + size], order, signed=c in "bhilj"))
+            i += size
+    return Multi(out + [i + 1])
+
+
 def _str_sub(s, i=1, j=-1):
     n = len(s)
     i, j = int(i), int(j)
@@ -544,6 +614,7 @@ def _str_sub(s, i=1, j=-1):
 
 
 CONCRETE = {"string.byte": _str_byte, "string.sub": _str_sub, "string.len": lambda s: len(s),
+            "string.unpack": _str_unpack,
             "string.char": lambda *a: bytes(int(x) for x in a),
             "string.rep": lambda s, n, sep=b"": sep.join([s] * int(n)),
             "math.floor": lambda x: fix_int(math.floor(x)), "math.ceil": lambda x: fix_int(math.ceil(x)),
@@ -719,6 +790,13 @@ class Interp:
             b = self.eval(st["to"], scope)
             c = self.eval(st["step"], scope) if st.get("step") else 1
             if is_sym(a) or is_sym(b) or is_sym(c):
+                # a copy of a variable number of values into the registers
+                # (call results / varargs): the lifter models it (devirt)
+                # (per function: FunctionLifter.lift turns it off where the
+                # result would only structure as a state machine)
+                sf = getattr(self.L, "symbolic_for", None) if getattr(self.L, "use_symbolic_for", False) else None
+                if sf is not None and sf(st, scope, a, b, c, self):
+                    return
                 if hasattr(self.L, "_need_jreg"):
                     self.L._need_jreg(a, b, c)
                 raise Unsupported("numeric for with symbolic bounds")
@@ -918,6 +996,9 @@ class Interp:
         items = node["items"]
         # {...} and {f()} build SymLists when a tail is involved
         tb = LTable()
+        nt = getattr(self.L, "new_tables", None)
+        if nt is not None:
+            nt.add(id(tb))
         pos = 1
         symbolic = False
         for i, it in enumerate(items):

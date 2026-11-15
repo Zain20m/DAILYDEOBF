@@ -3753,6 +3753,15 @@ do
 			local t = R.rawget(E, lib)
 			if R.type(t) == "table" then stop[t] = lib end
 		end
+		-- other global tables (Vector3, CFrame, UDim, ... in the offline
+		-- Roblox model) by name, so a script's constant pool holding them
+		-- reads `Vector3`, not an anonymous engine table
+		for k, v in R.next, E do
+			if R.type(k) == "string" and R.type(v) == "table" and not stop[v]
+				and R.match(k, "^[%a_][%w_]*$") and k ~= "_G" and k ~= "shared" then
+				stop[v] = k
+			end
+		end
 		local ids, queue, fids = {}, {}, {}
 		local nfid = 0
 		local function hex(s)

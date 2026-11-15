@@ -26,7 +26,9 @@ def build(finished, stats):
 
     runtime_stubs = len(re.findall(r"^local function luraph_runtime\d+\(", finished, re.M))
     orphan_protos = int(stats.get("orphan_protos", 0) or 0)
-    recovered_fns = len(re.findall(r"^\s*(?:local\s+)?function\b", finished, re.M)) - runtime_stubs
+    undecrypted_refs = finished.count("luraph_undecrypted_function") - (1 if "local function luraph_undecrypted_function" in finished else 0)
+    recovered_fns = len(re.findall(r"^\s*(?:local\s+)?function\b", finished, re.M)) - runtime_stubs \
+        - (1 if "local function luraph_undecrypted_function" in finished else 0)
     if recovered_fns < 0:
         recovered_fns = 0
     unlifted = int(stats.get("errors", 0) or 0)
@@ -44,6 +46,9 @@ def build(finished, stats):
     if runtime_stubs:
         out.append("--  Luraph runtime stubs : %d (luraph_runtime1..%d -- Luraph's own VM" % (runtime_stubs, runtime_stubs))
         out.append("--                         helpers, not your script; they return nil)")
+    if undecrypted_refs > 0:
+        out.append("--  never-run functions  : %d (luraph_undecrypted_function: Luraph decrypts" % undecrypted_refs)
+        out.append("--                         a function on its first call; these never ran)")
     if unlifted:
         out.append("--  unlifted VM blocks   : %d (shown as error(\"devirt: ...\") lines)" % unlifted)
     out.append("-- ------------------------------------------------------------")

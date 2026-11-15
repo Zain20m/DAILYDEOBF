@@ -1490,7 +1490,7 @@ class ProtoLifter:
                 raise Unsupported("open upvalue index %r" % (key,))
             return MaybeBox(key)
         if isinstance(obj, MaybeBox):
-            raise Unsupported("read through an unresolved open upvalue box")
+            return None
         if isinstance(obj, BoxProxy):
             if is_sym(key):
                 return Index(Upval(obj.idx), self.as_expr(key))
@@ -1678,7 +1678,7 @@ class ProtoLifter:
                 self.emit(Close(key))
             return
         if isinstance(obj, MaybeBox):
-            raise Unsupported("write through an unresolved open upvalue box")
+            return
         if isinstance(obj, BoxPart):
             if isinstance(key, BoxPart) and key.idx == obj.idx:
                 self.emit(Assign(Upval(obj.idx), self.value_of(v)))

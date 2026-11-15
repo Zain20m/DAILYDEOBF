@@ -143,13 +143,41 @@ function lib.new(...)
 	end
 	return unsupported()
 end
-function lib.Angles(a, b, c)
-	return fromMat(O, mm(mm(rx(num(a or 0)), ry(num(b or 0))), rz(num(c or 0))))
+-- Euler constructors, bit-exact with the engine (checked against real
+-- Studio 0.747 answers, 24/24 matrices): the angle is rounded to float32,
+-- cos/sin are correctly rounded from it, and the per-axis rotations are
+-- multiplied in float32, left to right, in the order of the letters.
+local function cs32(a)
+	a = f32(num(a or 0))
+	return f32(math.cos(a)), f32(math.sin(a))
 end
+local function axisRot(axis, a)
+	local c, s = cs32(a)
+	if axis == "X" then return { 1, 0, 0, 0, c, -s, 0, s, c } end
+	if axis == "Y" then return { c, 0, s, 0, 1, 0, -s, 0, c } end
+	return { c, -s, 0, s, c, 0, 0, 0, 1 }
+end
+local function mm32(a, b)
+	local r = {}
+	for i = 0, 2 do
+		for j = 0, 2 do
+			r[i * 3 + j + 1] = f32(f32(f32(a[i * 3 + 1] * b[j + 1]) + f32(a[i * 3 + 2] * b[j + 4]))
+				+ f32(a[i * 3 + 3] * b[j + 7]))
+		end
+	end
+	return r
+end
+local ORDERS = { [0] = "XYZ", "XZY", "YZX", "YXZ", "ZXY", "ZYX" }
+local function eulerOrdered(order, a, b, c)
+	local ang = { X = a, Y = b, Z = c }
+	local m1 = axisRot(string.sub(order, 1, 1), ang[string.sub(order, 1, 1)])
+	local m2 = axisRot(string.sub(order, 2, 2), ang[string.sub(order, 2, 2)])
+	local m3 = axisRot(string.sub(order, 3, 3), ang[string.sub(order, 3, 3)])
+	return fromMat(O, mm32(mm32(m1, m2), m3))
+end
+function lib.Angles(a, b, c) return eulerOrdered("XYZ", a, b, c) end
 lib.fromEulerAnglesXYZ = lib.Angles
-function lib.fromEulerAnglesYXZ(a, b, c)
-	return fromMat(O, mm(mm(ry(num(b or 0)), rx(num(a or 0))), rz(num(c or 0))))
-end
+function lib.fromEulerAnglesYXZ(a, b, c) return eulerOrdered("YXZ", a, b, c) end
 lib.fromOrientation = lib.fromEulerAnglesYXZ
 function lib.fromAxisAngle(axis, angle)
 	if not isVec(axis) then unsupported() end
@@ -181,8 +209,17 @@ function lib.fromRotationBetweenVectors(u, v)
 	local s = math.sqrt((1 + d) * 2)
 	return fromQuat(O, c.x / s, c.y / s, c.z / s, s / 2)
 end
-function lib.fromEulerAngles(a, b, c, _order)
-	return lib.fromEulerAnglesXYZ(a, b, c)
+function lib.fromEulerAngles(a, b, c, order)
+	-- Enum.RotationOrder item (or its value); XYZ when omitted
+	local name = "XYZ"
+	if type(order) == "number" then
+		name = ORDERS[order] or unsupported()
+	elseif order ~= nil then
+		-- an EnumItem (a sandbox proxy here): its Value names the order
+		local ok, v = pcall(function() return order.Value end)
+		name = ok and type(v) == "number" and ORDERS[v] or unsupported()
+	end
+	return eulerOrdered(name, a, b, c)
 end
 function lib.fromMatrix(p, vx, vy, vz)
 	if not isVec(p) or not isVec(vx) or not isVec(vy) or (vz ~= nil and not isVec(vz)) then unsupported() end

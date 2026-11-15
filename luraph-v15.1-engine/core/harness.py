@@ -445,12 +445,17 @@ def trace_text(body):
     that use random values trace differently every run; a wrong key
     changes what runs, not just literals)."""
     body = re.sub(r"\x00[0-9a-f]{8,32}CHUNK \S+\n[0-9a-f]*\n", "", body)
+    body = re.sub(r"\x00[0-9a-f]{8,32}CHUNK \S+ \d+ \d+\n", "", body)
+    body = re.sub(r"\x00[0-9a-f]{8,32}CHUNKDATA [^\n]*\n", "", body)
     body = re.sub(r"\x00[0-9a-f]{8,32}(PROTOS|FORCE|P2D|TRIGGER)[^\n]*\n?", "", body)
 
     body = re.sub(r"(?<=[ \t])(?=\S)(?:[A-Za-z]:)?[^:\n]*?\.luau:", "harness:", body)
     body = re.sub(r"harness:\d+: ", "", body)
     body = re.sub(r'"(?:[^"\\\n]|\\.)*"', '""', body)
-    return re.sub(r"\d+(?:\.\d+)?(?:e[-+]?\d+)?", "0", body)
+    # the sign too: random offsets trace as "-3" in one run and "5" in the next
+    # (must match src/harness.js traceText: the long-lived harness compares
+    # both, and a mismatch silently drops the live constant decryption)
+    return re.sub(r"-?\d+(?:\.\d+)?(?:e[-+]?\d+)?", "0", body)
 
 def same_trace(a, b):
     """trace_text(a) == trace_text(b), ignoring words only one of the two

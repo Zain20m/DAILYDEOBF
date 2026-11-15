@@ -177,38 +177,56 @@ def _drop_dead_temps(blocks, D):
     def is_temp(e):
         return isinstance(e, Reg) and isinstance(e.n, int) and e.n >= base
 
-    while True:
-        read = set()
-        for b in blocks.values():
-            todo = [getattr(b, "cond", None), getattr(b, "values", None)]
-            for s_ in b.stmts:
-                todo.append(s_.value if isinstance(s_, D.Assign) and is_temp(s_.target) else s_)
-            seen = set()
-            while todo:
-                x = todo.pop()
-                if x is None or isinstance(x, (str, bytes, int, float, bool)) or id(x) in seen:
-                    continue
-                seen.add(id(x))
-                if is_temp(x):
-                    read.add(x.n)
-                elif isinstance(x, (list, tuple)):
-                    todo.extend(x)
-                elif isinstance(x, dict):
-                    todo.extend(x.values())
-                elif hasattr(x, "__dict__") and not isinstance(x, type):
-                    todo.extend(x.__dict__.values())
-        dropped = False
-        for b in blocks.values():
-            keep = [s_ for s_ in b.stmts if not (isinstance(s_, D.Assign) and is_temp(s_.target)
-                                                 and s_.target.n not in read)]
-            if len(keep) != len(b.stmts):
-                b.stmts = keep
-                dropped = True
-        if not dropped:
-            return
+    def temps_in(root):
+        out = []
+        todo = [root]
+        seen = set()
+        while todo:
+            x = todo.pop()
+            if x is None or isinstance(x, (str, bytes, int, float, bool)) or id(x) in seen:
+                continue
+            seen.add(id(x))
+            if is_temp(x):
+                out.append(x.n)
+            elif isinstance(x, (list, tuple)):
+                todo.extend(x)
+            elif isinstance(x, dict):
+                todo.extend(x.values())
+            elif hasattr(x, "__dict__") and not isinstance(x, type):
+                todo.extend(x.__dict__.values())
+        return out
 
-
-PROBE_ROUNDS = int(os.environ.get("DEVIRT_PROBE_ROUNDS", "60"))
+    uses = {}
+    defs = {}       # temp -> [(block, statement, temps its value reads)]
+    for b in blocks.values():
+        for n in temps_in([getattr(b, "cond", None), getattr(b, "values", None)]):
+            uses[n] = uses.get(n, 0) + 1
+        for s_ in b.stmts:
+            if isinstance(s_, D.Assign) and is_temp(s_.target):
+                rd = temps_in(s_.value)
+                defs.setdefault(s_.target.n, []).append((b, s_, rd))
+            else:
+                rd = temps_in(s_)
+            for n in rd:
+                uses[n] = uses.get(n, 0) + 1
+    dead = set()
+    work = [n for n in defs if not uses.get(n)]
+    while work:
+        n = work.pop()
+        if n in dead:
+            continue
+        dead.add(n)
+        for _, _, rd in defs[n]:
+            for m in rd:
+                uses[m] -= 1
+                if uses[m] == 0 and m in defs and m not in dead:
+                    work.append(m)
+    if not dead:
+        return
+    drop = {id(s_) for n in dead for _, s_, _ in defs[n]}
+    for b in blocks.values():
+        if any(id(s_) in drop for s_ in b.stmts):
+            b.stmts = [s_ for s_ in b.stmts if id(s_) not in drop]
 
 
 def _shallow_copy(blocks, ST):
@@ -225,7 +243,7 @@ def _shallow_copy(blocks, ST):
 def _needs_fallback(entry, blocks, ST):
     """Whether structuring this graph leaves gotos (on a copy)."""
     try:
-        _, _, sr = ST.structure(entry, _shallow_copy(blocks, ST), set(), rounds=PROBE_ROUNDS)
+        _, _, sr = ST.structure(entry, _shallow_copy(blocks, ST), set())
     except Exception:  # noqa: BLE001 - treat as unstructurable
         return True
     return bool(sr.fallbacks)

@@ -148,6 +148,48 @@ def _rename_temps(x, m, seen):
             st += [v for v in d.values() if v is not None and not isinstance(v, (str, int, float, bytes, bool))]
 
 
+def _refine(blocks, cls):
+    """Coarsest partition refining `cls` in which blocks of one class have
+    successors of the same classes (partition refinement). Each round signs
+    only the blocks whose successors changed class; a class that does not
+    split keeps its id, so the result is the same as re-signing every block
+    every round (which was quadratic on big functions)."""
+    preds = {}
+    for bid, b in blocks.items():
+        for t in b.succ:
+            preds.setdefault(t, set()).add(bid)
+    members = {}
+    for bid, c in cls.items():
+        members.setdefault(c, set()).add(bid)
+    nxt = max(cls.values(), default=-1) + 1
+    work = set(blocks)
+    while work:
+        sigs = {bid: tuple(cls.get(t) for t in blocks[bid].succ) for bid in work}
+        by_class = {}
+        for bid in work:
+            by_class.setdefault(cls[bid], {}).setdefault(sigs[bid], []).append(bid)
+        changed = []
+        for c, parts in by_class.items():
+            signed = sum(len(v) for v in parts.values())
+            if len(parts) == 1 and signed == len(members[c]):
+                continue        # every member signed alike: no split
+            # members not signed this round keep c (their signature did not
+            # change); each signed group becomes a class of its own
+            for grp in parts.values():
+                if len(grp) == len(members[c]):
+                    continue
+                for bid in grp:
+                    members[c].discard(bid)
+                    cls[bid] = nxt
+                    changed.append(bid)
+                members[nxt] = set(grp)
+                nxt += 1
+        work = set()
+        for bid in changed:
+            work |= preds.get(bid, set())
+    return cls
+
+
 def merge_equivalent(entry, blocks, D):
     """Merge blocks that behave identically (same statements up to call-temp
     names, same kind/condition, equivalent successors): the walk keys nodes by
@@ -197,16 +239,7 @@ def merge_equivalent(entry, blocks, D):
             for bid in blocks:
                 sig = ("forced", bid) if bid in forced else texts[bid]
                 cls[bid] = ids.setdefault(sig, len(ids))
-            n = len(ids)
-            while True:
-                ids2 = {}
-                new = {}
-                for bid, b in blocks.items():
-                    new[bid] = ids2.setdefault((cls[bid], tuple(cls.get(s) for s in b.succ)), len(ids2))
-                cls = new
-                if len(ids2) == n:
-                    break
-                n = len(ids2)
+            cls = _refine(blocks, cls)
             groups = {}
             for bid in sorted(blocks):
                 groups.setdefault(cls[bid], []).append(bid)
@@ -854,10 +887,10 @@ class Structurer:
 # goto elimination: what the structurer cannot express is rewritten in the
 # CFG (semantics-preserving) and the function is structured again
 
-SPLIT_LIMIT = 3000      # statements node splitting may copy per function
+SPLIT_LIMIT = int(os.environ.get("DEVIRT_SPLIT_LIMIT", "3000"))     # statements node splitting may copy per function
 
 
-def structure(entry, blocks, own=None, rounds=60):
+def structure(entry, blocks, own=None, rounds=None):
     """Structurer.run, with its goto fallbacks resolved by CFG rewrites:
     - a jump out of a loop to somewhere other than the loop's exit (a
       multi-level break/continue, a second exit): every exit edge sets a
@@ -877,6 +910,10 @@ def structure(entry, blocks, own=None, rounds=60):
     make_reducible(entry, blocks)
     copied = 0
     nflag = 0
+    if rounds is None:
+        # (one multi-exit loop is unified per round; more rounds did not
+        # save any function on the 14.x samples, only cost time)
+        rounds = int(os.environ.get("DEVIRT_STRUCT_ROUNDS", "60"))
     for _ in range(rounds):
         sr = Structurer(entry, blocks)
         body = sr.run()
@@ -943,11 +980,19 @@ def state_machine(entry, blocks, name):
         else:
             out.append(SReturn(None))
         cases.append((num[bid], out))
-    chain = SBlock()
-    for k, out in reversed(cases):
-        test = Bin("CompareEq", CG.LocalName(name), Const(k))
-        chain = SBlock([SIf(test, out, chain)])
-    return SBlock([_set_stmt(name, 1), SLoop(chain)])
+    def tree(cs):
+        # a long `elseif` chain nests one level per state: past a few
+        # hundred, Luau refuses to compile it. Split the range in halves.
+        if len(cs) <= 16:
+            chain = SBlock()
+            for k, out in reversed(cs):
+                test = Bin("CompareEq", CG.LocalName(name), Const(k))
+                chain = SBlock([SIf(test, out, chain)])
+            return chain
+        mid = len(cs) // 2
+        test = Bin("CompareLt", CG.LocalName(name), Const(cs[mid][0]))
+        return SBlock([SIf(test, tree(cs[:mid]), tree(cs[mid:]))])
+    return SBlock([_set_stmt(name, 1), SLoop(tree(cases))])
 
 
 def sccs(nodes, succ):

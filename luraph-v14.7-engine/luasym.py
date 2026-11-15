@@ -199,6 +199,11 @@ class ClosureExpr(Expr):
     def __init__(self, proto, upvals):
         self.proto, self.upvals = proto, upvals
 
+    def __deepcopy__(self, memo):
+        # one closure, lifted once: copies of a statement share it (it also
+        # refers to the whole VM model, which made copies cost seconds)
+        return self
+
 
 # multi-value tails (a variable number of values)
 class Multi:

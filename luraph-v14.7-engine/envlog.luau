@@ -1091,6 +1091,7 @@ local function descendants(p, out)
 	end
 	return out
 end
+DESTROYING = {}     -- instance proxy -> { {conn, fn} } of its Destroying handlers
 local function destroyInst(p)
 	local info = INFO[p]
 	if info.destroyed then return end
@@ -1100,6 +1101,12 @@ local function destroyInst(p)
 	info.destroyed = true
 	local r = REALV[p]
 	if r ~= nil and R.typeof(r) == "Instance" then R.pcall(r.Destroy, r) end
+	-- its Destroying handlers that are still connected run now (once)
+	local hs = DESTROYING[p]
+	DESTROYING[p] = nil
+	for _, h in R.ipairs(hs or {}) do
+		if INFO[h.conn].props.Connected then R.pcall(h.fn) end
+	end
 end
 local RUNSERVICE_BOOL = { IsStudio = false, IsServer = false, IsClient = true, IsRunning = true,
 	IsRunMode = false, IsEdit = false }
@@ -1443,6 +1450,18 @@ local function onCall(p, ...)
 					if rb ~= nil then R.pcall(function() rb.Text = CFG.input_text end) end
 				end
 			end
+		end
+		if sigName == "Destroying" and R.type(a1) == "function" and sig and isP(sig.parent) then
+			-- a Destroying handler runs only when that instance is destroyed
+			-- (and never once disconnected): running it now, like other handlers
+			-- are run for the trace, is visible to environment checks (JNKIE's
+			-- connect / disconnect / destroy probe). destroyInst runs it.
+			local conn = callP(calleeText .. "(function(...) --[[ runs when destroyed ]] end)",
+				"connection", "RBXScriptConnection")
+			INFO[conn].props.Connected = true
+			DESTROYING[sig.parent] = DESTROYING[sig.parent] or {}
+			R.insert(DESTROYING[sig.parent], { conn = conn, fn = a1 })
+			return conn
 		end
 		local fnTok = R.type(a1) == "function" and captureFunction(a1, SIGNAL_PARAMS[sigName] or { "..." }, nil, "handler") or fmt(a1)
 		local conn = callP(calleeText .. "(" .. fnTok .. ")", "connection", "RBXScriptConnection")

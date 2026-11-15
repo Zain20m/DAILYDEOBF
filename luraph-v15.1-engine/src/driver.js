@@ -196,9 +196,29 @@ async function run(job) {
             executor: args.executor || 'Wave',
           },
         };
-        // Python stage: several candidates in parallel (PyPy + fixed hash seeds),
-        // best result kept -- see src/parallel.js. DEOB_KEEP_CFG=1 keeps the inputs.
-        await require('./parallel').runCandidates(cfgData, job);
+        // Python stage, run directly (not through src/parallel.js): this
+        // pipeline keeps a live harness for decrypting Luraph's lazy constants
+        // on demand, which the parallel candidates do not have (a 1.5 MB
+        // sample lifted 665 functions this way, 70 through the candidates).
+        // DEOB_PARALLEL=1 uses the candidates anyway.
+        if (process.env.DEOB_PARALLEL === '1') {
+          await require('./parallel').runCandidates(cfgData, job);
+        } else {
+          const cfgPath = job.path('.cfg.json');
+          fs.writeFileSync(cfgPath, JSON.stringify(cfgData), 'utf8');
+          const { execFileSync } = require('child_process');
+          const { getPythonBin } = require('./pyenv');
+          const bridgePy = path.join(__dirname, 'devirt_bridge.py');
+          const coreDir = path.join(__dirname, '..', 'core');
+          try {
+            execFileSync(getPythonBin(), [bridgePy, 'pipeline', cfgPath], {
+              env: Object.assign({}, process.env, { PYTHONPATH: coreDir }),
+              stdio: 'inherit',
+            });
+          } finally {
+            try { fs.unlinkSync(cfgPath); } catch {}
+          }
+        }
       }
     }
   }

@@ -1306,6 +1306,7 @@ local function descendants(p, out)
         end
         return out
 end
+DESTROYING = {}     -- instance proxy -> { {conn, fn} } of its Destroying handlers
 local function destroyInst(p)
         local info = INFO[p]
         if info.destroyed then return end
@@ -1315,6 +1316,12 @@ local function destroyInst(p)
         info.destroyed = true
         local r = REALV[p]
         if r ~= nil and R.typeof(r) == "Instance" then R.pcall(r.Destroy, r) end
+        -- its Destroying handlers that are still connected run now (once)
+        local hs = DESTROYING[p]
+        DESTROYING[p] = nil
+        for _, h in R.ipairs(hs or {}) do
+                if INFO[h.conn].props.Connected then R.pcall(h.fn) end
+        end
 end
 function CHAIN.isClassA(cls, want)
         local c = cls
@@ -1499,9 +1506,23 @@ do
                 return nil
         end
         -- the Frame a Path2D sits in: absolute size from offset-only sizes
+        -- --cfg p2d_unlaid=true: a Path2D whose parent chain is outside the
+        -- DataModel has a parent of NO size (real Studio 0.747 headless client);
+        -- off by default (a rendered client may lay it out)
+        function M.outsideDataModel(p)
+                for _ = 1, 64 do
+                        if not isP(p) then return false end
+                        local inf = INFO[p]
+                        local up = inf.props and inf.props.Parent
+                        if not isP(up) then return inf.created == true end
+                        p = up
+                end
+                return false
+        end
         function M.frameSize(path)
                 local parent = INFO[path].props and INFO[path].props.Parent
                 if not isP(parent) then return nil end
+                if CFG.p2d_unlaid and M.outsideDataModel(parent) then return 0, 0 end
                 local sz = INFO[parent].props and INFO[parent].props.Size
                 local u = sz and M.udim2(sz)
                 if not u then return nil end
@@ -1694,6 +1715,12 @@ do
                 if not c then return nil end
                 if R.find(name, "Position", 1, true) then
                         local x, y = M.eval(c, u)
+                        if W == 0 or H == 0 then
+                                -- a parent with no size on an axis: whole offsets, truncated
+                                -- toward zero (real Studio answers)
+                                local function off(v) if v >= 0 then return R.floor(v) end return -R.floor(-v) end
+                                return R.fmt("u:0,%.17g,0,%.17g", off(x), off(y))
+                        end
                         return R.fmt("u:%.17g,0,%.17g,0", f32(x / W), f32(y / H))
                 end
                 local x, y = M.tangent(c, u)
@@ -1751,6 +1778,18 @@ local function onCall(p, ...)
                                         if rb ~= nil then R.pcall(function() rb.Text = CFG.input_text end) end
                                 end
                         end
+                end
+                if sigName == "Destroying" and R.type(a1) == "function" and sig and isP(sig.parent) then
+                        -- a Destroying handler runs only when that instance is destroyed
+                        -- (and never once disconnected): running it now, like other handlers
+                        -- are run for the trace, is visible to environment checks (JNKIE's
+                        -- connect / disconnect / destroy probe). destroyInst runs it.
+                        local conn = callP(calleeText .. "(function(...) --[[ runs when destroyed ]] end)",
+                                "connection", "RBXScriptConnection")
+                        INFO[conn].props.Connected = true
+                        DESTROYING[sig.parent] = DESTROYING[sig.parent] or {}
+                        R.insert(DESTROYING[sig.parent], { conn = conn, fn = a1 })
+                        return conn
                 end
                 local fnTok = R.type(a1) == "function" and captureFunction(a1, SIGNAL_PARAMS[sigName] or { "..." }, nil, "handler") or fmt(a1)
                 local conn = callP(calleeText .. "(" .. fnTok .. ")", "connection", "RBXScriptConnection")

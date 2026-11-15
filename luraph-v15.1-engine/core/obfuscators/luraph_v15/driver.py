@@ -117,10 +117,14 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
     cache = devirt.WalkCache()
     t0 = time.time()
     last_errors = None
+    full_lifts = 0
+    prefix_partial = "-- partial result: saved after a full lift (the run may not have finished)\n"
     for rnd in range(1, rounds + 1):
         t1 = time.time()
 
-        if quick and (last_errors == 0 or (rnd == 1 and (live and live()) is not None)):
+        # round 1 is always a full lift: in this engine a walk-only round finds
+        # far fewer functions than a lift (93 vs 665 on a 1.5 MB sample)
+        if quick and (last_errors == 0 or rnd == 1):
             full = True
         else:
             full = not quick
@@ -148,7 +152,19 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
             print("[*]   %d functions, %d unlifted blocks, %d unstructured jumps, %d new constant requests (%.1fs)"
                   % (stats["functions"], stats["errors"], stats["fallbacks"], len(new), time.time() - t1),
                   file=sys.stderr)
+            full_lifts += 1
+            # a killed run (time / memory) still has this lift to send
+            try:
+                job.write(dpath + ".partial", prefix_partial + devirt.finish_text(text) + "\n")
+            except Exception:  # noqa: BLE001
+                pass
             if (not new and (not (requested | reqs) or devirt.same_patches(last_bufs, bufs))) or rnd == rounds:
+                break
+            if full_lifts >= MAX_FULL_LIFTS:
+                # a long chain of constants each full lift only meets one
+                # link of (3-4 min per lift on a 1.5 MB file): keep this one
+                print("[*]   the full lift still asks for %d constants; keeping it (%d full lifts)"
+                      % (len(new), full_lifts), file=sys.stderr)
                 break
             if quick:
                 print("[*]   the full lift needs more constants: continuing with full lifts", file=sys.stderr)
@@ -182,6 +198,9 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
                  "before the first full lift (see the error above); re-run with "
                  "DEVIRT_FULL_ROUNDS=1 to lift the first round without extra constant runs")
     job.write(dpath, prefix + devirt.finish_text(text) + "\n")
+
+MAX_FULL_LIFTS = int(os.environ.get("DEVIRT_MAX_FULL_LIFTS", "4"))
+
 
 def run(job):
     """The whole Luraph pipeline; returns the result file's path."""

@@ -5232,8 +5232,8 @@ def _walk_one(prog, vm, vmobj, proto, pkey, init_facts=None):
     try:
         lf = ProtoLifter(vm, dump, vmobj, proto, UpList(), prog.globals,
                          cap=dump.cap_by_self.get(proto.tid))
-        if init_facts:
-            lf.init_facts.update(init_facts)
+        # (lift() sets init_facts; a walk-only lifter starts without it)
+        lf.init_facts = dict(init_facts or {})
         lf.walk_only = True
         st = make_stepper(vm, lf)
         for _ in range(WALK_RESTARTS):

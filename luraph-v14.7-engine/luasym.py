@@ -52,6 +52,11 @@ class LTable:
     def __repr__(self):
         return "LTable#%s" % (self.tid if self.tid is not None else id(self))
 
+    def __deepcopy__(self, memo):
+        # VM data a statement refers to (a proto, a constant table): code
+        # copies (structure.terminal_tail) share it; copying it cost seconds
+        return self
+
 
 class Buf:
     __slots__ = ("data",)

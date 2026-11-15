@@ -311,6 +311,95 @@ local function run(a, b)
 end
 """
 
+# Luraph's for-loop flattening: the counter is the state
+FOR_FLAT = """
+local function run(a, b)
+	local r, t = 0, {}
+	for state = 37, 427, 78 do
+		if not (state < 115) then
+			if not (state > 193) then
+				if state < 193 then
+					r = r + a
+				else
+					t[1] = r * b
+				end
+			elseif state > 349 then
+				if a > b then break end
+				r = r - 1
+			else
+				r = r + #t
+			end
+		else
+			r = b
+		end
+	end
+	return r, t[1]
+end
+"""
+
+# an `elseif` arm copied on its own, and a `return` ending the rebuilt code
+FOR_ELSEIF_RETURN = """
+local function run(a, b)
+	local r = 0
+	for state = 43, 177, 67 do
+		if not (state > 110) then
+			if not (state < 110) then
+				r = r + 1
+			elseif a > b then
+				r = r + 10
+			end
+		else
+			if b > 3 then
+				for k = 88, 107, 19 do
+					if not (k < 107) then
+						return r * 100
+					end
+					r = r + 5
+				end
+				r = r + 1000
+			end
+			r = r - 1
+		end
+	end
+	return r
+end
+"""
+
+# one hoisted local reused by several dispatchers, set up with other
+# statements in between (codegen's shape); the last loop's value is read after
+SHARED_STATE = """
+local function run(a, b)
+	local n, r = nil, 0
+	n = 73
+	r = r + a
+	while n ~= 20 do
+		if n ~= 18 then
+			if n == 73 then
+				n = 20
+				r = r * 2
+			end
+		else
+			r = -1
+			break
+		end
+	end
+	n = 5
+	while n ~= 9 do
+		if n == 5 then
+			if a > b then n = 9 else n = 7 end
+		elseif n == 7 then
+			r = r + b
+			n = 9
+		end
+	end
+	n = 1
+	while n < 3 do
+		if n == 1 then n = 2 r = r + 1 else n = 3 end
+	end
+	return r, n
+end
+"""
+
 HARNESS = "for _,p in ipairs({{1,2},{5,3},{3,3},{-4,9},{10,10},{0,0}}) do print(run(p[1],p[2])) end"
 
 
@@ -325,13 +414,14 @@ def main():
                       ("keeps-locals", KEEP_LOCAL), ("loop-exit", LOOP_EXIT),
                       ("loop-with-branch", LOOP_BRANCH), ("elseif-fork", ELSEIF_FORK),
                       ("break-shape", BREAK_SHAPE), ("while-condition", WHILE_COND),
-                      ("repeat-until-false", REPEAT_FALSE)):
+                      ("repeat-until-false", REPEAT_FALSE), ("for-counter-state", FOR_FLAT),
+                      ("for-elseif-return", FOR_ELSEIF_RETURN), ("shared-state-local", SHARED_STATE)):
         defl = unflatten.deflatten_text(src, astexe)
         if defl == src:
             print("FAIL %s: de-flattener made no change" % name)
             failures += 1
             continue
-        if "state ==" in defl or "state2 ==" in defl or "state <" in defl:
+        if "state ==" in defl or "state2 ==" in defl or "state <" in defl or "for state" in defl:
             print("FAIL %s: a dispatch loop survived" % name)
             failures += 1
         o1 = _run(luau, src, HARNESS)

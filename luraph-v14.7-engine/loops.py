@@ -15,7 +15,7 @@ Both become a block of kind "for"/"forin" whose successors are [BODY, EXIT];
 the structurer turns it into a `for` statement. Pseudo loop-state
 assignments left over (saving/restoring the VM's loop stack) are dropped.
 """
-from luasym import Const, Reg, Pseudo, Bin, TempVal
+from luasym import Const, Reg, Pseudo, Bin, Un, TempVal
 
 
 def is_pseudo(e, name=None, depth=None):
@@ -117,11 +117,15 @@ def try_numeric(h, blocks, D):
         if sb.kind != "cond" or sb.stmts:
             return False
         cc = sb.cond
+        t, e = [blocks[x] for x in sb.succ]
+        if isinstance(cc, Un) and cc.op == "Not":
+            # 14.x: `g = d >= o; if not g then <exit> else <body> end`
+            cc = cc.a
+            t, e = e, t
         if not (isinstance(cc, Bin) and cc.op in ("CompareGe", "CompareLe") and is_pseudo(cc.a, a.name, d)
                 and is_pseudo(cc.b)):
             return False
         lim = cc.b
-        t, e = [blocks[x] for x in sb.succ]
         if not (t.kind == "goto" and len(t.stmts) == 1 and isinstance(t.stmts[0], D.Assign)
                 and isinstance(t.stmts[0].target, Reg) and is_pseudo(t.stmts[0].value, a.name, d)):
             return False

@@ -950,6 +950,7 @@ def structure(entry, blocks, own=None, rounds=None):
             own.add("state")
         body = state_machine(*first, "state")
         sr.fallbacks = 0
+        sr.state_machine = True
     return entry, body, sr
 
 

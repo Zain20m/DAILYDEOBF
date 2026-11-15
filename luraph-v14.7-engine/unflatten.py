@@ -922,6 +922,12 @@ class _Deflattener:
                     # an `elseif` arm copied on its own is a plain `if`
                     # (luau-ast stores it as a nested if spanning to `end`)
                     txt = txt[len("else"):]
+                if txt.startswith("(") and out and not re.search(r"(\bthen|\bdo|\belse|\brepeat|;)\s*$", out[-1]) \
+                        and out[-1].strip():
+                    # `(f)(x)` right after another statement reads as a call
+                    # of it: end that statement with `;` (Luau has no empty
+                    # statement, so it cannot start this one)
+                    out[-1] += ";"
                 first = True
                 for ln in txt.split("\n"):
                     out.append(indent + ln if first else ln)

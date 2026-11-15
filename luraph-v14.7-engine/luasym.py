@@ -740,9 +740,9 @@ class Interp:
             if is_sym(a) or is_sym(b) or is_sym(c):
                 # a copy of a variable number of values into the registers
                 # (call results / varargs): the lifter models it (devirt)
-                # (opt-in: on the 14.7 sample it lifts the copies but the
-                # structurer cannot place the variable-result tails yet)
-                sf = getattr(self.L, "symbolic_for", None) if os.environ.get("DEVIRT_SYMBOLIC_FOR") == "1" else None
+                # (per function: FunctionLifter.lift turns it off where the
+                # result would only structure as a state machine)
+                sf = getattr(self.L, "symbolic_for", None) if getattr(self.L, "use_symbolic_for", False) else None
                 if sf is not None and sf(st, scope, a, b, c, self):
                     return
                 if hasattr(self.L, "_need_jreg"):

@@ -943,6 +943,10 @@ class ProtoLifter:
             if isinstance(v, LTable):
                 self.proto_arrays.add(id(v))
         self.const_pool = dump.const_pool_for(proto) if hasattr(dump, "const_pool_for") else None
+        # variable-count register copies (symbolic_for): on unless lift() finds
+        # the function only structures as a state machine with them
+        self.use_symbolic_for = os.environ.get("DEVIRT_SYMBOLIC_FOR", "1") != "0"
+        self.used_symbolic_for = False
         self.making = False
         if isinstance(proto, JitProto):
             # a function an LPH_JIT function defines: its environment is
@@ -2027,6 +2031,7 @@ class ProtoLifter:
         if skip:
             tail = tail.drop(skip)
         self.rtail_new = (a + len(known), tail, b)
+        self.used_symbolic_for = True
         return True
 
     def _as_pack(self, t, bound):
@@ -3978,10 +3983,24 @@ class FunctionLifter:
     def lift(self, vm, vmobj, proto, upvals, upnames, depth=0, orphan=False):
         self.stats["functions"] += 1
         self.lifted.add(id(proto))
-        lf = ProtoLifter(vm, self.prog.dump, vmobj, proto, upvals, self.prog.globals)
-        st = make_stepper(vm, lf)
-        s0, order = self.prog.walk_stable(vm, lf, st, 400000, purpose="final")
-        self.prog.requests |= lf.requests
+        me = sys.modules[__name__]
+
+        def walk(symbolic):
+            lf = ProtoLifter(vm, self.prog.dump, vmobj, proto, upvals, self.prog.globals)
+            lf.use_symbolic_for = lf.use_symbolic_for and symbolic
+            st = make_stepper(vm, lf)
+            s0, order = self.prog.walk_stable(vm, lf, st, 400000, purpose="final")
+            self.prog.requests |= lf.requests
+            return lf, s0, order
+        lf, s0, order = walk(True)
+        if lf.used_symbolic_for and os.environ.get("DEVIRT_SYMBOLIC_FOR") != "force":
+            # the copies of a variable number of values make bigger graphs:
+            # keep them only if the function still structures (a whole-
+            # function state machine is less readable than the holes)
+            import copy as _copy
+            probe = _copy.copy(order)
+            if backend.needs_state_machine(s0.key(vm.kstack_link), probe, me, vm.kstack_link):
+                lf, s0, order = walk(False)
         orphan_params = []
         if orphan:
             idxs = _unbound_upvalue_indexes(order)

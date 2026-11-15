@@ -31,17 +31,7 @@ def lower(entry_key, order, D, link, prefix, upnames, closure):
     import idioms as IDI
     from luasym import ClosureExpr, Pseudo
     def cfg(loops):
-        entry, blocks = ST.build_cfg(entry_key, order, D, link)
-        _drop_dead_temps(blocks, D)
-        if not os.environ.get("DEVIRT_NO_MERGE"):
-            entry, _ = ST.merge_equivalent(entry, blocks, D)
-        entry = ST.thread_empty(entry, blocks)
-        if loops:
-            LP.recognize(entry, blocks, D)
-            # dropping the VM's loop bookkeeping leaves empty hops (e.g. `break` paths)
-            entry = ST.thread_empty(entry, blocks)
-        CG.simplify_blocks(blocks, D)
-        return entry, blocks
+        return _build(entry_key, order, D, link, loops)
 
     entry, blocks = cfg(True)
     pseudo_names = set()
@@ -229,6 +219,37 @@ def _drop_dead_temps(blocks, D):
             b.stmts = [s_ for s_ in b.stmts if id(s_) not in drop]
 
 
+def _build(entry_key, order, D, link, loops):
+    """The function's CFG, simplified; loops: recognize numeric/generic for."""
+    import structure as ST
+    import codegen as CG
+    import loops as LP
+    entry, blocks = ST.build_cfg(entry_key, order, D, link)
+    _drop_dead_temps(blocks, D)
+    if not os.environ.get("DEVIRT_NO_MERGE"):
+        entry, _ = ST.merge_equivalent(entry, blocks, D)
+    entry = ST.thread_empty(entry, blocks)
+    if loops:
+        LP.recognize(entry, blocks, D)
+        # dropping the VM's loop bookkeeping leaves empty hops (e.g. `break` paths)
+        entry = ST.thread_empty(entry, blocks)
+    CG.simplify_blocks(blocks, D)
+    return entry, blocks
+
+
+def needs_state_machine(entry_key, order, D, link):
+    """Whether lower() would have to write this function as a state machine
+    (every structuring attempt leaves gotos). Does not change `order`."""
+    import structure as ST
+    entry, blocks = _build(entry_key, order, D, link, True)
+    if not _needs_fallback(entry, blocks, ST):
+        return False
+    if not any(b.kind in ("for", "forin") for b in blocks.values()):
+        return True
+    entry, blocks = _build(entry_key, order, D, link, False)
+    return _needs_fallback(entry, blocks, ST)
+
+
 def _shallow_copy(blocks, ST):
     out = {}
     for k, b in blocks.items():
@@ -246,7 +267,7 @@ def _needs_fallback(entry, blocks, ST):
         _, _, sr = ST.structure(entry, _shallow_copy(blocks, ST), set())
     except Exception:  # noqa: BLE001 - treat as unstructurable
         return True
-    return bool(sr.fallbacks)
+    return bool(sr.fallbacks) or getattr(sr, "state_machine", False)
 
 
 def _pseudo_to_locals(blocks, CG, Pseudo):

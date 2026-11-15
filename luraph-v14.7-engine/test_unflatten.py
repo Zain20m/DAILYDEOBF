@@ -400,6 +400,24 @@ local function run(a, b)
 end
 """
 
+# a copied statement that starts with `(` needs its `;`
+PAREN_STMT = """
+local function run(a, b)
+	local r = {}
+	local f = function(x) r[#r + 1] = x end
+	local state = 1
+	while true do
+		if state == 1 then
+			r[1] = a
+			;(f)(b)
+			state = 2
+		elseif state == 2 then
+			return #r, r[1], r[2]
+		end
+	end
+end
+"""
+
 HARNESS = "for _,p in ipairs({{1,2},{5,3},{3,3},{-4,9},{10,10},{0,0}}) do print(run(p[1],p[2])) end"
 
 
@@ -415,7 +433,8 @@ def main():
                       ("loop-with-branch", LOOP_BRANCH), ("elseif-fork", ELSEIF_FORK),
                       ("break-shape", BREAK_SHAPE), ("while-condition", WHILE_COND),
                       ("repeat-until-false", REPEAT_FALSE), ("for-counter-state", FOR_FLAT),
-                      ("for-elseif-return", FOR_ELSEIF_RETURN), ("shared-state-local", SHARED_STATE)):
+                      ("for-elseif-return", FOR_ELSEIF_RETURN), ("shared-state-local", SHARED_STATE),
+                      ("paren-statement", PAREN_STMT)):
         defl = unflatten.deflatten_text(src, astexe)
         if defl == src:
             print("FAIL %s: de-flattener made no change" % name)

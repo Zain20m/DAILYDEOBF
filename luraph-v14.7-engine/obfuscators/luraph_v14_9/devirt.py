@@ -1006,6 +1006,16 @@ class ProtoLifter:
                         break
                 except Exception:
                     pass
+        if cap is None and vm.info.get("outer_env"):
+            # a proto that never ran (no capture of its own): the maker's
+            # outer locals belong to the VM, so any capture of a proto made
+            # by the same VM has them
+            fields = [env.get("field") for env in vm.info.get("outer_env", ())]
+            tag = getattr(vm, "tag", None)
+            for _cap in dump.protos.values():
+                if (tag is None or _cap.get("__maker") == tag) and all(f in _cap for f in fields):
+                    cap = _cap
+                    break
         if cap is not None:
             for env in vm.info.get("outer_env", ()):
                 field = env.get("field")
@@ -2196,10 +2206,11 @@ class ProtoLifter:
             # emitting a stub call that expands the Luraph bootstrap.
             vals = list(args.items)
             for i, proto in enumerate(vals):
-                if not isinstance(proto, LTable) or proto.tid not in self.dump.pid_of_table:
-                    continue
+                if not isinstance(proto, LTable) or not (proto.tid in self.dump.pid_of_table or (
+                        self._is_proto_table(proto) and self._proto_pid(proto) is not None)):
+                    continue        # (a proto that never ran has no known environment)
                 ups = vals[i + 1] if i + 1 < len(vals) else None
-                if not isinstance(ups, LTable):
+                if not isinstance(ups, LTable) and ups not in (None, False):
                     continue
                 # (`Y = W > 0 and {}`: false when the proto has no upvalues)
                 c = self._closure_value(proto, [], self.vm)

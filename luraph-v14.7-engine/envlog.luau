@@ -1091,6 +1091,7 @@ local function descendants(p, out)
 	end
 	return out
 end
+DESTROYING = {}     -- instance proxy -> { {conn, fn} } of its Destroying handlers
 local function destroyInst(p)
 	local info = INFO[p]
 	if info.destroyed then return end
@@ -1100,6 +1101,12 @@ local function destroyInst(p)
 	info.destroyed = true
 	local r = REALV[p]
 	if r ~= nil and R.typeof(r) == "Instance" then R.pcall(r.Destroy, r) end
+	-- its Destroying handlers that are still connected run now (once)
+	local hs = DESTROYING[p]
+	DESTROYING[p] = nil
+	for _, h in R.ipairs(hs or {}) do
+		if INFO[h.conn].props.Connected then R.pcall(h.fn) end
+	end
 end
 local RUNSERVICE_BOOL = { IsStudio = false, IsServer = false, IsClient = true, IsRunning = true,
 	IsRunMode = false, IsEdit = false }
@@ -1164,9 +1171,26 @@ do
 		return nil
 	end
 	-- the Frame a Path2D sits in: absolute size from offset-only sizes
+	-- --cfg p2d_unlaid=true: a parent chain that ends at an instance the script
+	-- made and never parented is outside the DataModel, which a headless
+	-- client never lays out: the parent has NO size (scale counts as 0,
+	-- positions come back in offsets). Real Studio 0.747 headless answers
+	-- (research/test_path2d_parity.py). Off by default: a rendered client may
+	-- differ, and a Luraph 14.9 check only went on with the sized answers.
+	function M.outsideDataModel(p)
+		for _ = 1, 64 do
+			if not isP(p) then return false end
+			local inf = INFO[p]
+			local up = inf.props and inf.props.Parent
+			if not isP(up) then return inf.created == true end
+			p = up
+		end
+		return false
+	end
 	function M.frameSize(path)
 		local parent = INFO[path].props and INFO[path].props.Parent
 		if not isP(parent) then return nil end
+		if CFG.p2d_unlaid and M.outsideDataModel(parent) then return 0, 0 end
 		local sz = INFO[parent].props and INFO[parent].props.Size
 		local u = sz and M.udim2(sz)
 		if not u then return nil end
@@ -1339,6 +1363,12 @@ do
 		return segs[1], 0
 	end
 	-- the engine's answer as a replay-cache record (p2dEncode format), or nil
+	-- UDim offsets are integers: the engine truncates toward zero (checked
+	-- against real Studio answers: 198.9 -> 198, 0.6 -> 0)
+	function M.offset(x)
+		if x >= 0 then return R.floor(x) end
+		return -R.floor(-x)
+	end
 	function M.answer(path, name, t)
 		local inf = INFO[path]
 		local segs = inf.p2dSegs
@@ -1357,6 +1387,12 @@ do
 		if not c then return nil end
 		if R.find(name, "Position", 1, true) then
 			local x, y = M.eval(c, u)
+			if W == 0 or H == 0 then
+				-- a parent with no size on an axis: the answer is in (whole)
+				-- offsets (real Studio; the parent's own screen position, which
+				-- the engine adds there, is not modelled)
+				return R.fmt("u:0,%.17g,0,%.17g", M.offset(x), M.offset(y))
+			end
 			return R.fmt("u:%.17g,0,%.17g,0", f32(x / W), f32(y / H))
 		end
 		local x, y = M.tangent(c, u)
@@ -1414,6 +1450,18 @@ local function onCall(p, ...)
 					if rb ~= nil then R.pcall(function() rb.Text = CFG.input_text end) end
 				end
 			end
+		end
+		if sigName == "Destroying" and R.type(a1) == "function" and sig and isP(sig.parent) then
+			-- a Destroying handler runs only when that instance is destroyed
+			-- (and never once disconnected): running it now, like other handlers
+			-- are run for the trace, is visible to environment checks (JNKIE's
+			-- connect / disconnect / destroy probe). destroyInst runs it.
+			local conn = callP(calleeText .. "(function(...) --[[ runs when destroyed ]] end)",
+				"connection", "RBXScriptConnection")
+			INFO[conn].props.Connected = true
+			DESTROYING[sig.parent] = DESTROYING[sig.parent] or {}
+			R.insert(DESTROYING[sig.parent], { conn = conn, fn = a1 })
+			return conn
 		end
 		local fnTok = R.type(a1) == "function" and captureFunction(a1, SIGNAL_PARAMS[sigName] or { "..." }, nil, "handler") or fmt(a1)
 		local conn = callP(calleeText .. "(" .. fnTok .. ")", "connection", "RBXScriptConnection")
@@ -2033,7 +2081,9 @@ end
 
 -- wraps a library so calls involving proxies become expressions
 local function wrapLib(libName, lib, tname)
-	local out = {}
+	-- a clone keeps the library's own hash layout, so pairs()/next() walk it
+	-- in the engine's order (Luraph 14.9 walks library tables with next())
+	local out = table.clone(lib)
 	for k, f in R.pairs(lib) do
 		if R.type(f) == "function" then
 			local label = libName .. "." .. k
@@ -3526,7 +3576,17 @@ if CFG.spin then
 		end
 		idle += 1
 		if idle >= CFG.spin then
-			ABORT_REASON = ABORT_REASON or "endless loop in the script's own code (no environment access)"
+			if not ABORT_REASON then
+				-- which VM functions were entered last: the loop is in (or under) them
+				local ent, seen, last = E.__ENT, {}, {}
+				for i = ent.n, R.max(1, ent.n - 63), -1 do
+					local q = ent[i % 64]
+					if q and not seen[q] and #last < 6 then seen[q] = true; last[#last + 1] = "#" .. R.tostring(q) end
+				end
+				ABORT_REASON = "endless loop in the script's own code (no environment access)"
+					.. (#last > 0 and ("; last VM functions entered: " .. R.concat(last, ", ") .. " of " .. R.tostring(E.__PID.n)) or "")
+					.. "; looping at script line " .. R.tostring(debug.info(2, "l"))
+			end
 			checkBudget()
 		end
 	end

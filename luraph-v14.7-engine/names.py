@@ -155,6 +155,10 @@ class Namer:
             self.root = json.loads(result.stdout.decode("latin-1"))["root"]
         finally:
             os.remove(path)
+        self.signal_ctx = []    # signals whose :Connect callback is being visited
+        self.method_ctx = []    # field names of `x.Name = function` being visited
+        self.pending_roles = []  # (decl location, name) for locals made from a param role
+        self.self_candidates = []  # first params of functions stored in a field
         self.locals = {}        # decl location -> info
         self.globals = set()
         self.order = []
@@ -184,6 +188,21 @@ class Namer:
                 self.visit_expr(v)
             stend = loc(st["location"])[1]
             vals = st.get("values", [])
+            for var, v in zip(st["vars"], vals):
+                # `local cb = param or function() end`: param is a callback;
+                # `local s = param or "Toggle"` inside x.Toggle = function: a title
+                if v.get("type") == "AstExprBinary" and v.get("op") == "Or" \
+                        and v["left"].get("type") == "AstExprLocal":
+                    pinfo = self.locals.get(v["left"]["local"]["location"])
+                    if pinfo is None or pinfo["hint"] != "arg":
+                        continue
+                    if v["right"].get("type") == "AstExprFunction":
+                        pinfo["role"], role = "userCallback", "callback"
+                    elif self.method_ctx and const_str(v["right"]) == self.method_ctx[-1]:
+                        pinfo["role"], role = "text", "title"
+                    else:
+                        continue
+                    self.pending_roles.append((var["location"], role))
             for i, var in enumerate(st["vars"]):
                 # `local f = function` becomes `local function f` later (localfuncs.py):
                 # its scope then covers the body too
@@ -204,8 +223,19 @@ class Namer:
             for v in st["vars"]:
                 self.visit_expr(v)
             vals = st["values"]
-            for v in vals:
-                self.visit_expr(v)
+            for i, v in enumerate(vals):
+                var = st["vars"][i] if i < len(st["vars"]) else {}
+                method = var.get("type") == "AstExprIndexName" and v.get("type") == "AstExprFunction"
+                if method:
+                    self.method_ctx.append(var["index"])
+                    if len(v.get("args") or []) >= 2:
+                        # x.Name = function(a, ...): a is self if it is never used
+                        self.self_candidates.append(v["args"][0]["location"])
+                try:
+                    self.visit_expr(v)
+                finally:
+                    if method:
+                        self.method_ctx.pop()
             for var, v in zip(st["vars"], vals):
                 # obj.Text = x / obj.BackgroundColor3 = x or default: x is a text / color
                 if v.get("type") == "AstExprBinary" and v.get("op") == "Or":
@@ -214,9 +244,18 @@ class Namer:
                     info = self.locals.get(v["local"]["location"])
                     if info is not None:
                         info.setdefault("prop", camel(var["index"]))
+            for var, v in zip(st["vars"], vals):
+                if var.get("type") == "AstExprIndexName" and var["expr"].get("type") == "AstExprLocal" \
+                        and v.get("type") == "AstExprFunction":
+                    info = self.locals.get(var["expr"]["local"]["location"])
+                    if info is not None:
+                        info["methods"] = info.get("methods", 0) + 1
             for i, var in enumerate(st["vars"]):
                 if var["type"] == "AstExprLocal":
                     info = self.locals.get(var["local"]["location"])
+                    if info is not None and i < len(vals) and vals[i].get("type") == "AstExprConstantBool" \
+                            and self.signal_ctx:
+                        info.setdefault("boolsets", set()).add((self.signal_ctx[-1], bool(vals[i].get("value"))))
                     if info is not None:
                         if i < len(vals):
                             info["hints"].append((vals[i], 0))
@@ -264,6 +303,12 @@ class Namer:
             self.visit_expr(st["condition"])
             return
         if t == "AstStatCompoundAssign":
+            var = st["var"]
+            if var.get("type") == "AstExprLocal" and st.get("op") in ("Add", "Sub") \
+                    and st["value"].get("type") == "AstExprConstantNumber" and st["value"].get("value") == 1:
+                info = self.locals.get(var["local"]["location"])
+                if info is not None:
+                    info["counter"] = True
             self.visit_expr(st["var"])
             self.visit_expr(st["value"])
             return
@@ -288,9 +333,48 @@ class Namer:
         if t == "AstExprGlobal":
             self.globals.add(e["global"])
             return
+        if t == "AstExprIndexName" and e["expr"].get("type") == "AstExprLocal":
+            # x.Field / x:Method(): how a local is used names it (use_name)
+            info = self.locals.get(e["expr"]["local"]["location"])
+            if info is not None:
+                info.setdefault("fields", set()).add(e["index"])
         if t == "AstExprCall":
             f = e.get("func", {})
+            if f.get("type") == "AstExprIndexName" and f.get("index") in ("Connect", "Once") \
+                    and f["expr"].get("type") == "AstExprIndexName" and not getattr(self, "_in_connect", False):
+                # remember which signal's callback a flag is set in (use_name)
+                self.signal_ctx.append(f["expr"]["index"])
+                self._in_connect = True
+                try:
+                    self.visit_expr(e)
+                finally:
+                    self._in_connect = False
+                    self.signal_ctx.pop()
+                return
+            self._in_connect = False
             # t[k](...) with a computed key: t is a dispatch table
+            # a parameter passed straight to a known API is named after that
+            # API's argument (TweenInfo.new(p) -> duration, x:Create(_, _, p) -> goal)
+            d0 = dotted(f)
+            roles = {}
+            if d0 == "TweenInfo.new":
+                roles = {0: "duration"}
+            elif d0 == "Instance.new":
+                roles = {0: "className", 1: "parent"}
+            elif d0 in ("task.wait", "wait", "task.delay", "delay"):
+                roles = {0: "seconds"}
+            elif f.get("type") == "AstExprIndexName" and f.get("index") == "Create" and len(e.get("args") or []) == 3:
+                roles = {0: "target", 2: "goal"}
+            for i, nm in roles.items():
+                args = e.get("args") or []
+                if i < len(args) and args[i].get("type") == "AstExprLocal":
+                    pinfo = self.locals.get(args[i]["local"]["location"])
+                    if pinfo is not None and pinfo["hint"] == "arg" and not pinfo.get("role"):
+                        pinfo["role"] = nm
+            if dotted(f) == "table.insert" and e.get("args") and e["args"][0].get("type") == "AstExprLocal":
+                info = self.locals.get(e["args"][0]["local"]["location"])
+                if info is not None:
+                    info["list"] = True
             if f.get("type") == "AstExprIndexExpr" and f["expr"].get("type") == "AstExprLocal"                     and const_str(f.get("index")) is None:
                 info = self.locals.get(f["expr"]["local"]["location"])
                 if info is not None:
@@ -429,6 +513,9 @@ class Namer:
                     if nm and re.match(r"^[A-Za-z_]\w*$", nm):
                         return nm
                 return "module"
+            if d == "table.pack" and len(e.get("args") or []) == 1 and e["args"][0].get("type") == "AstExprCall" \
+                    and re.match(r"^o_\d+$", dotted(e["args"][0].get("func", {})) or ""):
+                return "step"       # one step of a lowered generic for: {more, key, value}
             if d in ("Instance.new", "Drawing.new") and e["args"] and const_str(e["args"][0]):
                 return camel(const_str(e["args"][0]))
             if d and "." in d and d.split(".")[0] in DATATYPES:
@@ -506,7 +593,63 @@ class Namer:
             return self.infer(e["expr"], idx)
         return None
 
+    GUI_MEMBERS = {"AbsolutePosition", "AbsoluteSize", "AbsoluteRotation", "BackgroundColor3",
+                   "BackgroundTransparency", "BorderSizePixel", "TextColor3", "TextSize", "TextTransparency",
+                   "InputBegan", "InputEnded", "MouseEnter", "MouseLeave", "MouseButton1Click",
+                   "MouseButton1Down", "Activated", "ZIndex", "AnchorPoint", "ClipsDescendants",
+                   "AutoButtonColor", "CanvasSize", "CanvasPosition", "ImageColor3", "Image"}
+    OPTION_FIELDS = {"Callback", "Default", "Title", "Min", "Max", "Options", "Threshold", "Cutoff",
+                     "Placeholder", "Description", "TweenTime", "Multi", "Increment", "Rounding",
+                     "Keybind", "MinSize", "MaxSize", "Step", "Precision", "MinItemCount", "MaxItemCount",
+                     "Items", "Values", "Value", "Suffix", "Prefix", "Format", "Decimals", "Range"}
+
+    def use_name(self, info):
+        """A name from how the local is used (fields read or written, methods
+        called on it, what is done to it), or None. Facts only: each rule
+        needs members no other kind of value has."""
+        sets = info.get("boolsets") or set()
+        if all(h.get("type") == "AstExprConstantBool" for h, _ in info["hints"]) and sets:
+            if ("MouseEnter", True) in sets and ("MouseLeave", False) in sets:
+                return "hovering"
+            if ("InputBegan", True) in sets and ("InputEnded", False) in sets:
+                return "dragging"
+        if len(info["hints"]) > 1:
+            # assigned again later: the lifter reuses one local (a VM register)
+            # for unrelated values, so its uses do not describe one value
+            return None
+        f = info.get("fields") or set()
+        if f & {"UserInputType", "KeyCode", "UserInputState"}:
+            return "input"
+        if f & self.GUI_MEMBERS:
+            return "button" if f & {"MouseButton1Click", "MouseButton1Down", "Activated", "AutoButtonColor"} \
+                else "guiObject"
+        if f & {"Character", "UserId", "DisplayName", "Backpack", "PlayerGui"}:
+            return "player"
+        if f & {"Health", "MaxHealth", "WalkSpeed", "JumpPower", "MoveDirection"}:
+            return "humanoid"
+        if info.get("methods", 0) >= 2:
+            return "object"
+        if f & self.OPTION_FIELDS and not (f - self.OPTION_FIELDS - {"Name", "Text", "Type", "Flag"}):
+            return "options"
+        if "Disconnect" in f and f <= {"Disconnect", "Connected"}:
+            return "connection"
+        if info.get("list"):
+            return "list"
+        if info.get("counter"):
+            return "count"
+        return None
+
     def base_name(self, info):
+        if info.get("role") and len(info["hints"]) <= 1:
+            return info["role"]
+        nm = self._base_name(info)
+        if nm in WEAK or nm in ("arg", "v", "fn") or nm is None:
+            better = self.use_name(info)
+            if better:
+                return better
+        return nm
+
+    def _base_name(self, info):
         h = info["hint"]
         if h == "arg" and (info.get("label") or info.get("prop")):
             return info.get("label") or info["prop"]      # a parameter: named from use
@@ -538,6 +681,14 @@ class Namer:
     # ---- naming
     def run(self):
         self.collect()
+        for key in self.self_candidates:
+            info = self.locals.get(key)
+            if info is not None and len(info["refs"]) == 1 and not info["hints"]:
+                info["role"] = "self"
+        for key, role in self.pending_roles:
+            info = self.locals.get(key)
+            if info is not None and len(info["hints"]) <= 1:
+                info["role"] = role
         taken = {}          # name -> [infos]
         reserved = self.globals | KEYWORDS
         for key in self.order:
@@ -551,14 +702,15 @@ class Namer:
             if "new" in info:
                 continue
             base = self.base_name(info)
-            if not base or not re.match(r"^[A-Za-z_]\w*$", base) or base in reserved:
+            if not base or not re.match(r"^[A-Za-z_]\w*$", base) or (base in reserved and info.get("role") != "self"):
                 base = (base or "v") + "_"
                 if not re.match(r"^[A-Za-z_]\w*$", base):
                     base = "v"
             n = 1
             while True:
                 cand = base if n == 1 else "%s%d" % (base, n)
-                if cand not in reserved and self.fits(cand, info, taken):
+                if (cand not in reserved or (cand == "self" and info.get("role") == "self")) \
+                        and self.fits(cand, info, taken):
                     break
                 n += 1
             info["new"] = cand
@@ -570,6 +722,11 @@ class Namer:
         generated name never shadows (Luau lint: LocalShadow), even where it
         would be legal because the outer one isn't referenced inside."""
         s0, s1 = info["scope"]
+        if cand == "self" and info.get("role") == "self" and not any(
+                s0 < r < s1 for o in taken.get(cand, ()) for r in o["refs"][1:]):
+            # an unused self parameter: shadowing changes no reference (no
+            # other self is used inside this function)
+            return True
         for other in taken.get(cand, ()):
             o0, o1 = other["scope"]
             if s0 < o1 and o0 < s1:

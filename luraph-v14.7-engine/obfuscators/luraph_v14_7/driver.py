@@ -19,7 +19,7 @@ import traceout as trace
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_RERUNS = 12
-SPIN_CHECKS = 24    # watchdog checks (2^20 VM steps each) without environment access = endless loop
+SPIN_CHECKS = int(os.environ.get("DEOB_SPIN_CHECKS") or 24)    # watchdog checks (2^20 VM steps each) without environment access = endless loop
 
 
 def patch_spin(src):
@@ -202,6 +202,16 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
                       % (rep["bootstrap_lines"], len(rep["functions"])), file=sys.stderr)
         except Exception as _ex:  # noqa: BLE001 - keep the full output
             print("[!] Luraph runtime strip failed: %s" % _ex, file=sys.stderr)
+        # names from evidence in each function's body (DEOB_NO_NAMING=1: off)
+        try:
+            import namefuncs
+            from obfuscators.luraph_v14_9.vmmap import luau_ast_executable
+            finished, named = namefuncs.rename(finished, luau_ast_executable())
+            if named:
+                print("[*] named %d function(s) from their bodies: %s"
+                      % (len(named), ", ".join("%s -> %s" % kv for kv in named[:12])), file=sys.stderr)
+        except Exception as _ex:  # noqa: BLE001 - keep the unnamed output
+            print("[!] function naming failed: %s" % _ex, file=sys.stderr)
     if not finished:
         print("[!] v14.x lifter captured no liftable VM functions; falling back to the behavior trace",
               file=sys.stderr)

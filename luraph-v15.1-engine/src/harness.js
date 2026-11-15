@@ -502,6 +502,8 @@ class HarnessServer {
 
 function traceText(body) {
   body = body.replace(/\x00[0-9a-f]{8,32}CHUNK \S+\n[0-9a-f]*\n/g, '');
+  body = body.replace(/\x00[0-9a-f]{8,32}CHUNK \S+ \d+ \d+\n/g, '');
+  body = body.replace(/\x00[0-9a-f]{8,32}CHUNKDATA [^\n]*\n/g, '');
   body = body.replace(/\x00[0-9a-f]{8,32}(PROTOS|FORCE|P2D|TRIGGER)[^\n]*\n?/g, '');
   body = body.replace(/(?<=[ \t])(?=\S)(?:[A-Za-z]:)?[^:\n]*?\.luau:/g, 'harness:');
   body = body.replace(/harness:\d+: /g, '');

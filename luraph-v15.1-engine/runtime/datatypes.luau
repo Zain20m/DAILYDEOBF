@@ -126,13 +126,43 @@ local function lookAt(at, target, up)
 	return make(at, right, up2, -look)
 end
 
+-- float32 vector helpers on {x, y, z} tables (the engine's G3D-derived
+-- maths: unit vectors via a float32 reciprocal length, Vector3.Unit too)
+local function t3(v) return { v.x, v.y, v.z } end
+local function dot32(a, b) return f32(f32(f32(a[1] * b[1]) + f32(a[2] * b[2])) + f32(a[3] * b[3])) end
+local function unit32(a)
+	local inv = f32(1 / f32(math.sqrt(dot32(a, a))))
+	return { f32(a[1] * inv), f32(a[2] * inv), f32(a[3] * inv) }
+end
+local function cross32(a, b)
+	return { f32(f32(a[2] * b[3]) - f32(a[3] * b[2])), f32(f32(a[3] * b[1]) - f32(a[1] * b[3])),
+		f32(f32(a[1] * b[2]) - f32(a[2] * b[1])) }
+end
+local function v3of(a) return vec(a[1], a[2], a[3]) end
 local lib = {}
 function lib.new(...)
 	local n = select("#", ...)
 	local a = { ... }
 	if n == 0 then return wrap(IDENTITY) end
 	if n == 1 and isVec(a[1]) then return make(a[1], X, Y, Z) end
-	if n == 2 and isVec(a[1]) and isVec(a[2]) then return lookAt(a[1], a[2], Y) end
+	if n == 2 and isVec(a[1]) and isVec(a[2]) then
+		-- the old CFrame.new(pos, target): G3D's CoordinateFrame::lookAt
+		-- (bit-exact with real Studio answers, 8/8), not CFrame.lookAt
+		local p = a[1]
+		local look = unit32({ f32(a[2].x - p.x), f32(a[2].y - p.y), f32(a[2].z - p.z) })
+		local up = { 0, 1, 0 }
+		if math.abs(dot32(look, up)) > 0.99 then
+			up = { 1, 0, 0 }
+			if math.abs(dot32(look, up)) > 0.99 then up = { 0, 1, 0 } end
+		end
+		local d = dot32(look, up)
+		up = unit32({ f32(up[1] - f32(look[1] * d)), f32(up[2] - f32(look[2] * d)), f32(up[3] - f32(look[3] * d)) })
+		local z = { f32(-look[1]), f32(-look[2]), f32(-look[3]) }
+		local zx = cross32(z, up)
+		local x = unit32({ f32(-zx[1]), f32(-zx[2]), f32(-zx[3]) })
+		local y = cross32(z, x)
+		return make(p, v3of(x), v3of(y), v3of(z))
+	end
 	if n == 3 then return make(vec(num(a[1]), num(a[2]), num(a[3])), X, Y, Z) end
 	if n == 7 then
 		return fromQuat(vec(num(a[1]), num(a[2]), num(a[3])), num(a[4]), num(a[5]), num(a[6]), num(a[7]))
@@ -143,20 +173,56 @@ function lib.new(...)
 	end
 	return unsupported()
 end
-function lib.Angles(a, b, c)
-	return fromMat(O, mm(mm(rx(num(a or 0)), ry(num(b or 0))), rz(num(c or 0))))
+-- Euler constructors, bit-exact with the engine (checked against real
+-- Studio 0.747 answers, 24/24 matrices): the angle is rounded to float32,
+-- cos/sin are correctly rounded from it, and the per-axis rotations are
+-- multiplied in float32, left to right, in the order of the letters.
+local function cs32(a)
+	a = f32(num(a or 0))
+	return f32(math.cos(a)), f32(math.sin(a))
 end
+local function axisRot(axis, a)
+	local c, s = cs32(a)
+	if axis == "X" then return { 1, 0, 0, 0, c, -s, 0, s, c } end
+	if axis == "Y" then return { c, 0, s, 0, 1, 0, -s, 0, c } end
+	return { c, -s, 0, s, c, 0, 0, 0, 1 }
+end
+local function mm32(a, b)
+	local r = {}
+	for i = 0, 2 do
+		for j = 0, 2 do
+			r[i * 3 + j + 1] = f32(f32(f32(a[i * 3 + 1] * b[j + 1]) + f32(a[i * 3 + 2] * b[j + 4]))
+				+ f32(a[i * 3 + 3] * b[j + 7]))
+		end
+	end
+	return r
+end
+local ORDERS = { [0] = "XYZ", "XZY", "YZX", "YXZ", "ZXY", "ZYX" }
+local function eulerOrdered(order, a, b, c)
+	local ang = { X = a, Y = b, Z = c }
+	local m1 = axisRot(string.sub(order, 1, 1), ang[string.sub(order, 1, 1)])
+	local m2 = axisRot(string.sub(order, 2, 2), ang[string.sub(order, 2, 2)])
+	local m3 = axisRot(string.sub(order, 3, 3), ang[string.sub(order, 3, 3)])
+	return fromMat(O, mm32(mm32(m1, m2), m3))
+end
+function lib.Angles(a, b, c) return eulerOrdered("XYZ", a, b, c) end
 lib.fromEulerAnglesXYZ = lib.Angles
-function lib.fromEulerAnglesYXZ(a, b, c)
-	return fromMat(O, mm(mm(ry(num(b or 0)), rx(num(a or 0))), rz(num(c or 0))))
-end
+function lib.fromEulerAnglesYXZ(a, b, c) return eulerOrdered("YXZ", a, b, c) end
 lib.fromOrientation = lib.fromEulerAnglesYXZ
 function lib.fromAxisAngle(axis, angle)
+	-- G3D's Matrix3::fromAxisAngle in float32, axis unitised again
+	-- (bit-exact with real Studio answers, 8/8)
 	if not isVec(axis) then unsupported() end
-	local u = vnorm(axis)
-	local h = num(angle) / 2
-	local s = math.sin(h)
-	return fromQuat(O, u.x * s, u.y * s, u.z * s, math.cos(h))
+	local u = unit32(t3(axis))
+	local x, y, z = u[1], u[2], u[3]
+	local c, s = cs32(angle)
+	local t = f32(1 - c)
+	local xym, xzm, yzm = f32(f32(x * y) * t), f32(f32(x * z) * t), f32(f32(y * z) * t)
+	local xs, ys, zs = f32(x * s), f32(y * s), f32(z * s)
+	return fromRows(O,
+		f32(f32(f32(x * x) * t) + c), f32(xym - zs), f32(xzm + ys),
+		f32(xym + zs), f32(f32(f32(y * y) * t) + c), f32(yzm - xs),
+		f32(xzm - ys), f32(yzm + xs), f32(f32(f32(z * z) * t) + c))
 end
 function lib.lookAt(at, target, up)
 	if not isVec(at) or not isVec(target) or (up ~= nil and not isVec(up)) then unsupported() end
@@ -181,13 +247,23 @@ function lib.fromRotationBetweenVectors(u, v)
 	local s = math.sqrt((1 + d) * 2)
 	return fromQuat(O, c.x / s, c.y / s, c.z / s, s / 2)
 end
-function lib.fromEulerAngles(a, b, c, _order)
-	return lib.fromEulerAnglesXYZ(a, b, c)
+function lib.fromEulerAngles(a, b, c, order)
+	-- Enum.RotationOrder item (or its value); XYZ when omitted
+	local name = "XYZ"
+	if type(order) == "number" then
+		name = ORDERS[order] or unsupported()
+	elseif order ~= nil then
+		-- an EnumItem (a sandbox proxy here): its Value names the order
+		local ok, v = pcall(function() return order.Value end)
+		name = ok and type(v) == "number" and ORDERS[v] or unsupported()
+	end
+	return eulerOrdered(name, a, b, c)
 end
 function lib.fromMatrix(p, vx, vy, vz)
 	if not isVec(p) or not isVec(vx) or not isVec(vy) or (vz ~= nil and not isVec(vz)) then unsupported() end
 	return make(p, vx, vy, vz or vnorm(vcross(vx, vy)))
 end
+lib.identity = wrap(IDENTITY)
 
 local function components(c)
 	return c.p.x, c.p.y, c.p.z, c.x.x, c.y.x, c.z.x, c.x.y, c.y.y, c.z.y, c.x.z, c.y.z, c.z.z
@@ -218,11 +294,23 @@ end
 local METHODS = {
 	Inverse = function(self) return wrap(inverse(get(self))) end,
 	Orthonormalize = function(self)
+		-- Gram-Schmidt over X, Y, Z in float32, each normalised by a float32
+		-- reciprocal length (bit-exact with real Studio 0.747 answers)
 		local c = get(self)
-		local z = vnorm(c.z)
-		local y = vnorm(c.y - z * vdot(c.y, z))
-		local x = vcross(y, z)
-		return make(c.p, x, y, z)
+		local function dot3(a, b) return f32(f32(f32(a[1] * b[1]) + f32(a[2] * b[2])) + f32(a[3] * b[3])) end
+		local function nrm(a)
+			local inv = f32(1 / f32(math.sqrt(dot3(a, a))))
+			return { f32(a[1] * inv), f32(a[2] * inv), f32(a[3] * inv) }
+		end
+		local function minus(a, b, k) return { f32(a[1] - f32(b[1] * k)), f32(a[2] - f32(b[2] * k)), f32(a[3] - f32(b[3] * k)) } end
+		local X0 = { c.x.x, c.x.y, c.x.z }
+		local Y0 = { c.y.x, c.y.y, c.y.z }
+		local Z0 = { c.z.x, c.z.y, c.z.z }
+		local x = nrm(X0)
+		local y = nrm(minus(Y0, x, dot3(Y0, x)))
+		local zt = minus(Z0, x, dot3(Z0, x))
+		local z = nrm(minus(zt, y, dot3(zt, y)))
+		return make(c.p, vec(x[1], x[2], x[3]), vec(y[1], y[2], y[3]), vec(z[1], z[2], z[3]))
 	end,
 	GetComponents = function(self) return components(get(self)) end,
 	ToWorldSpace = each(function(c, o) return wrap(mul(c, get(o))) end),
@@ -233,7 +321,36 @@ local METHODS = {
 	VectorToObjectSpace = each(function(c, v) return rotT(c, vecArg(v)) end),
 	ToEulerAnglesXYZ = function(self) return eulerXYZ(get(self)) end,
 	ToEulerAnglesYXZ = function(self) return eulerYXZ(get(self)) end,
-	ToEulerAngles = function(self, _order) return eulerXYZ(get(self)) end,
+	ToEulerAngles = function(self, order)
+		-- the decomposition matching fromEulerAngles(x, y, z, order); ZXY
+		-- checked against real Studio answers (7/8, the 8th one bit off)
+		local name = "XYZ"
+		if type(order) == "number" then
+			name = ORDERS[order] or unsupported()
+		elseif order ~= nil then
+			local ok, v = pcall(function() return order.Value end)
+			name = ok and type(v) == "number" and ORDERS[v] or unsupported()
+		end
+		local c = get(self)
+		-- m[r][col]: rows of the rotation
+		local m = { { c.x.x, c.y.x, c.z.x }, { c.x.y, c.y.y, c.z.y }, { c.x.z, c.y.z, c.z.z } }
+		local function as(v) return math.asin(math.clamp(v, -1, 1)) end
+		local x, y, z
+		if name == "XYZ" then return eulerXYZ(c)
+		elseif name == "YXZ" then return eulerYXZ(c)
+		elseif name == "ZXY" then
+			x = as(m[3][2]); z = math.atan2(-m[1][2], m[2][2]); y = math.atan2(-m[3][1], m[3][3])
+		elseif name == "ZYX" then
+			y = as(-m[3][1]); z = math.atan2(m[2][1], m[1][1]); x = math.atan2(m[3][2], m[3][3])
+		elseif name == "XZY" then
+			z = as(-m[1][2]); x = math.atan2(m[3][2], m[2][2]); y = math.atan2(m[1][3], m[1][1])
+		elseif name == "YZX" then
+			z = as(m[2][1]); y = math.atan2(-m[3][1], m[1][1]); x = math.atan2(-m[2][3], m[2][2])
+		else
+			return unsupported()
+		end
+		return f32(x), f32(y), f32(z)
+	end,
 	ToOrientation = function(self) return eulerYXZ(get(self)) end,
 	FuzzyEq = function(self, other, eps)
 		local a, b = get(self), get(other)
@@ -256,7 +373,17 @@ local METHODS = {
 		return f32(2 * math.acos(d))
 	end,
 	ToAxisAngle = function(self)
-		local qx, qy, qz, qw = toQuat(get(self))
+		-- G3D's Matrix3::toAxisAngle in float32 (bit-exact with real Studio
+		-- answers, 40/40 values); the near-0 / near-pi cases keep the old model
+		local c = get(self)
+		local tr = f32(f32(c.x.x + c.y.y) + c.z.z)
+		local cosv = math.clamp(f32(f32(0.5) * f32(tr - 1)), -1, 1)
+		local ang = f32(math.acos(cosv))
+		if ang > 1e-6 and ang < math.pi - 1e-4 then
+			local a = unit32({ f32(c.y.z - c.z.y), f32(c.z.x - c.x.z), f32(c.x.y - c.y.x) })
+			return v3of(a), ang
+		end
+		local qx, qy, qz, qw = toQuat(c)
 		if qw < 0 then qx, qy, qz, qw = -qx, -qy, -qz, -qw end
 		local s = math.sqrt(math.max(0, 1 - qw * qw))
 		if s < 1e-9 then return X, 0 end
@@ -265,6 +392,9 @@ local METHODS = {
 	Lerp = function(self, other, t)
 		local a, b = get(self), get(other)
 		t = num(t)
+		-- the engine returns the ends unchanged (real Studio answers 20/20)
+		if t == 0 then return wrap(a) end
+		if t == 1 then return wrap(b) end
 		local ax, ay, az, aw = toQuat(a)
 		local bx, by, bz, bw = toQuat(b)
 		local d = ax * bx + ay * by + az * bz + aw * bw
@@ -344,11 +474,6 @@ CFMT.__tostring = function(self)
 	return table.concat(t, ", ")
 end
 CFMT.__metatable = "The metatable is locked"
--- Create the identity CFrame only now: make() snapshots CFMT into each proxy's
--- metatable, so a CFrame built before CFMT was populated (the old position of
--- this line, up with the constructors) had an empty metatable -> tostring/index/
--- operators silently failed on CFrame.identity. Build it after CFMT is complete.
-lib.identity = wrap(IDENTITY)
 
 -- UDim / UDim2 / Path2DControlPoint (verified against Studio: tostring,
 -- int32 offsets truncated toward zero, float32 scales, + - unary -, ==,
@@ -790,278 +915,120 @@ local CSLib = sequence("ColorSequence", "ColorSequenceKeypoint", function(a, b)
 	return { CSKLib.new(0, a), CSKLib.new(1, b) }
 end)
 
+local newRegion3
+newRegion3 = valueType("Region3", function(f, k)
+	if k == "CFrame" then return f.cf end
+	if k == "Size" then return f.sz end
+	if k == "ExpandToGrid" then
+		return function(self, res)
+			local r = VAL[self]
+			if not r then unsupported() end
+			res = f32(num(res))
+			if not (res > 0) then unsupported() end
+			local cf, sz = r.cf, r.sz
+			local hx, hy, hz = f32(sz.X * 0.5), f32(sz.Y * 0.5), f32(sz.Z * 0.5)
+			local mnx, mny, mnz = f32(cf.X - hx), f32(cf.Y - hy), f32(cf.Z - hz)
+			local mxx, mxy, mxz = f32(cf.X + hx), f32(cf.Y + hy), f32(cf.Z + hz)
+			local gmn = vec(math.floor(mnx / res) * res, math.floor(mny / res) * res, math.floor(mnz / res) * res)
+			local gmx = vec(math.ceil(mxx / res) * res, math.ceil(mxy / res) * res, math.ceil(mxz / res) * res)
+			return newRegion3({
+				cf = lib.new(f32((gmn.X + gmx.X) * 0.5), f32((gmn.Y + gmx.Y) * 0.5), f32((gmn.Z + gmx.Z) * 0.5)),
+				sz = vec(gmx.X - gmn.X, gmx.Y - gmn.Y, gmx.Z - gmn.Z),
+			})
+		end
+	end
+	return nil
+end, {
+	__eq = function(a, b)
+		return TYPE[a] == "Region3" and TYPE[b] == "Region3" and VAL[a].cf == VAL[b].cf and VAL[a].sz == VAL[b].sz
+	end,
+	__tostring = function(a)
+		local r = VAL[a]
+		return tostring(r.cf) .. "; " .. tostring(r.sz)
+	end,
+})
+local R3Lib = {
+	new = function(mn, mx)
+		mn, mx = vecArg(mn), vecArg(mx)
+		return newRegion3({
+			cf = lib.new(f32((mn.X + mx.X) * 0.5), f32((mn.Y + mx.Y) * 0.5), f32((mn.Z + mx.Z) * 0.5)),
+			sz = vec(mx.X - mn.X, mx.Y - mn.Y, mx.Z - mn.Z),
+		})
+	end,
+}
+
+local newPP = valueType("PhysicalProperties", function(f, k)
+	if k == "Density" then return f.d end
+	if k == "Friction" then return f.fr end
+	if k == "Elasticity" then return f.el end
+	if k == "FrictionWeight" then return f.fw end
+	if k == "ElasticityWeight" then return f.ew end
+	return nil
+end, {
+	__eq = function(a, b)
+		if TYPE[a] ~= "PhysicalProperties" or TYPE[b] ~= "PhysicalProperties" then return false end
+		local x, y = VAL[a], VAL[b]
+		return x.d == y.d and x.fr == y.fr and x.el == y.el and x.fw == y.fw and x.ew == y.ew
+	end,
+	__tostring = function(a)
+		local x = VAL[a]
+		return string.format("%g, %g, %g, %g, %g", x.d, x.fr, x.el, x.fw, x.ew)
+	end,
+})
+local PPLib = {
+	new = function(d, fr, el, fw, ew)
+		if type(d) ~= "number" then unsupported() end
+		return newPP({
+			d = f32(num(d)),
+			fr = f32(num(fr or 0.3)),
+			el = f32(num(el or 0.5)),
+			fw = f32(num(fw == nil and 1 or fw)),
+			ew = f32(num(ew == nil and 1 or ew)),
+		})
+	end,
+}
+
+local newTI = valueType("TweenInfo", function(f, k)
+	if k == "Time" then return f.t end
+	if k == "EasingStyle" then return f.es end
+	if k == "EasingDirection" then return f.ed end
+	if k == "RepeatCount" then return f.rc end
+	if k == "Reverses" then return f.rev end
+	if k == "DelayTime" then return f.dt end
+	return nil
+end, {
+	__eq = function(a, b)
+		if TYPE[a] ~= "TweenInfo" or TYPE[b] ~= "TweenInfo" then return false end
+		local x, y = VAL[a], VAL[b]
+		return x.t == y.t and x.es == y.es and x.ed == y.ed and x.rc == y.rc and x.rev == y.rev and x.dt == y.dt
+	end,
+	__tostring = function(a)
+		local x = VAL[a]
+		return string.format("Time:%g DelayTime:%g RepeatCount:%d Reverses:%s EasingDirection:%s EasingStyle:%s",
+			x.t, x.dt, x.rc, tostring(x.rev), tostring(x.ed), tostring(x.es))
+	end,
+})
+local TILib = {
+	new = function(t, es, ed, rc, rev, dt)
+		return newTI({
+			t = f32(t == nil and 1 or num(t)),
+			es = es,
+			ed = ed,
+			rc = math.floor(rc == nil and 0 or num(rc)),
+			rev = not not rev,
+			dt = f32(dt == nil and 0 or num(dt)),
+		})
+	end,
+}
+
 -- typeof() ignores __type on newproxy userdata: envlog asks here instead
 local function typeOf(v)
 	if CF[v] then return "CFrame" end
 	return TYPE[v]
 end
 
-local BC_PALETTE = {
-	[1]={"White",242,243,243},
-	[2]={"Grey",161,165,162},
-	[3]={"Light yellow",249,233,153},
-	[5]={"Brick yellow",215,197,154},
-	[6]={"Light green (Mint)",194,218,184},
-	[9]={"Light reddish violet",232,186,200},
-	[11]={"Pastel Blue",128,187,219},
-	[12]={"Light orange brown",203,132,66},
-	[18]={"Nougat",204,142,105},
-	[21]={"Bright red",196,40,28},
-	[22]={"Med. reddish violet",196,112,160},
-	[23]={"Bright blue",13,105,172},
-	[24]={"Bright yellow",245,205,48},
-	[25]={"Earth orange",98,71,50},
-	[26]={"Black",27,42,53},
-	[27]={"Dark grey",109,110,108},
-	[28]={"Dark green",40,127,71},
-	[29]={"Medium green",161,196,140},
-	[36]={"Lig. Yellowich orange",243,207,155},
-	[37]={"Bright green",75,151,75},
-	[38]={"Dark orange",160,95,53},
-	[39]={"Light bluish violet",193,202,222},
-	[40]={"Transparent",236,236,236},
-	[41]={"Tr. Red",205,84,75},
-	[42]={"Tr. Lg blue",193,223,240},
-	[43]={"Tr. Blue",123,182,232},
-	[44]={"Tr. Yellow",247,241,141},
-	[45]={"Light blue",180,210,228},
-	[47]={"Tr. Flu. Reddish orange",217,133,108},
-	[48]={"Tr. Green",132,182,141},
-	[49]={"Tr. Flu. Green",248,241,132},
-	[50]={"Phosph. White",236,232,222},
-	[100]={"Light red",238,196,182},
-	[101]={"Medium red",218,134,122},
-	[102]={"Medium blue",110,153,202},
-	[103]={"Light grey",199,193,183},
-	[104]={"Bright violet",107,50,124},
-	[105]={"Br. yellowish orange",226,155,64},
-	[106]={"Bright orange",218,133,65},
-	[107]={"Bright bluish green",0,143,156},
-	[108]={"Earth yellow",104,92,67},
-	[110]={"Bright bluish violet",67,84,147},
-	[111]={"Tr. Brown",191,183,177},
-	[112]={"Medium bluish violet",104,116,172},
-	[113]={"Tr. Medi. reddish violet",229,173,200},
-	[115]={"Med. yellowish green",199,210,60},
-	[116]={"Med. bluish green",85,165,175},
-	[118]={"Light bluish green",183,215,213},
-	[119]={"Br. yellowish green",164,189,71},
-	[120]={"Lig. yellowish green",217,228,167},
-	[121]={"Med. yellowish orange",231,172,88},
-	[123]={"Br. reddish orange",211,111,76},
-	[124]={"Bright reddish violet",146,57,120},
-	[125]={"Light orange",234,184,146},
-	[126]={"Tr. Bright bluish violet",165,165,203},
-	[127]={"Gold",220,188,129},
-	[128]={"Dark nougat",174,122,89},
-	[131]={"Silver",156,163,168},
-	[133]={"Neon orange",213,115,61},
-	[134]={"Neon green",216,221,86},
-	[135]={"Sand blue",116,134,157},
-	[136]={"Sand violet",135,124,144},
-	[137]={"Medium orange",224,152,100},
-	[138]={"Sand yellow",149,138,115},
-	[140]={"Earth blue",32,58,86},
-	[141]={"Earth green",39,70,45},
-	[143]={"Tr. Flu. Blue",207,226,247},
-	[145]={"Sand blue metallic",121,136,161},
-	[146]={"Sand violet metallic",149,142,163},
-	[147]={"Sand yellow metallic",147,135,103},
-	[148]={"Dark grey metallic",87,88,87},
-	[149]={"Black metallic",22,29,50},
-	[150]={"Light grey metallic",171,173,172},
-	[151]={"Sand green",120,144,130},
-	[153]={"Sand red",149,121,119},
-	[154]={"Dark red",123,46,47},
-	[157]={"Tr. Flu. Yellow",255,246,123},
-	[158]={"Tr. Flu. Red",225,164,194},
-	[168]={"Gun metallic",117,108,98},
-	[176]={"Red flip/flop",151,105,91},
-	[178]={"Yellow flip/flop",180,132,85},
-	[179]={"Silver flip/flop",137,135,136},
-	[180]={"Curry",215,169,75},
-	[190]={"Fire Yellow",249,214,46},
-	[191]={"Flame yellowish orange",232,171,45},
-	[192]={"Reddish brown",105,64,40},
-	[193]={"Flame reddish orange",207,96,36},
-	[194]={"Medium stone grey",163,162,165},
-	[195]={"Royal blue",70,103,164},
-	[196]={"Dark Royal blue",35,71,139},
-	[198]={"Bright reddish lilac",142,66,133},
-	[199]={"Dark stone grey",99,95,98},
-	[200]={"Lemon metalic",130,138,93},
-	[208]={"Light stone grey",229,228,223},
-	[209]={"Dark Curry",176,142,68},
-	[210]={"Faded green",112,149,120},
-	[211]={"Turquoise",121,181,181},
-	[212]={"Light Royal blue",159,195,233},
-	[213]={"Medium Royal blue",108,129,183},
-	[216]={"Rust",144,76,42},
-	[217]={"Brown",124,92,70},
-	[218]={"Reddish lilac",150,112,159},
-	[219]={"Lilac",107,98,155},
-	[220]={"Light lilac",167,169,206},
-	[221]={"Bright purple",205,98,152},
-	[222]={"Light purple",228,173,200},
-	[223]={"Light pink",220,144,149},
-	[224]={"Light brick yellow",240,213,160},
-	[225]={"Warm yellowish orange",235,184,127},
-	[226]={"Cool yellow",253,234,141},
-	[232]={"Dove blue",125,187,221},
-	[268]={"Medium lilac",52,43,117},
-	[301]={"Slime green",80,109,84},
-	[302]={"Smoky grey",91,93,105},
-	[303]={"Dark blue",0,16,176},
-	[304]={"Parsley green",44,101,29},
-	[305]={"Steel blue",82,124,174},
-	[306]={"Storm blue",51,88,130},
-	[307]={"Lapis",16,42,220},
-	[308]={"Dark indigo",61,21,133},
-	[309]={"Sea green",52,142,64},
-	[310]={"Shamrock",91,154,76},
-	[311]={"Fossil",159,161,172},
-	[312]={"Mulberry",89,34,89},
-	[313]={"Forest green",31,128,29},
-	[314]={"Cadet blue",159,173,192},
-	[315]={"Electric blue",9,137,207},
-	[316]={"Eggplant",123,0,123},
-	[317]={"Moss",124,156,107},
-	[318]={"Artichoke",138,171,133},
-	[319]={"Sage green",185,196,177},
-	[320]={"Ghost grey",202,203,209},
-	[321]={"Lilac",167,94,155},
-	[322]={"Plum",123,47,123},
-	[323]={"Olivine",148,190,129},
-	[324]={"Laurel green",168,189,153},
-	[325]={"Quill grey",223,223,222},
-	[327]={"Crimson",151,0,0},
-	[328]={"Mint",177,229,166},
-	[329]={"Baby blue",152,194,219},
-	[330]={"Carnation pink",255,152,220},
-	[331]={"Persimmon",255,89,89},
-	[332]={"Maroon",117,0,0},
-	[333]={"Gold",239,184,56},
-	[334]={"Daisy orange",248,217,109},
-	[335]={"Pearl",231,231,236},
-	[336]={"Fog",199,212,228},
-	[337]={"Salmon",255,148,148},
-	[338]={"Terra Cotta",190,104,98},
-	[339]={"Cocoa",86,36,36},
-	[340]={"Wheat",241,231,199},
-	[341]={"Buttermilk",254,243,187},
-	[342]={"Mauve",224,178,208},
-	[343]={"Sunrise",212,144,189},
-	[344]={"Tawny",150,85,85},
-	[345]={"Rust",143,76,42},
-	[346]={"Cashmere",211,190,150},
-	[347]={"Khaki",226,220,188},
-	[348]={"Lily white",237,234,234},
-	[349]={"Seashell",233,218,218},
-	[350]={"Burgundy",136,62,62},
-	[351]={"Cork",188,155,93},
-	[352]={"Burlap",199,172,120},
-	[353]={"Beige",202,191,163},
-	[354]={"Oyster",187,179,178},
-	[355]={"Pine Cone",108,88,75},
-	[356]={"Fawn brown",160,132,79},
-	[357]={"Hurricane grey",149,137,136},
-	[358]={"Cloudy grey",171,168,158},
-	[359]={"Linen",175,148,131},
-	[360]={"Copper",150,103,102},
-	[361]={"Medium brown",86,66,54},
-	[362]={"Bronze",126,104,63},
-	[363]={"Flint",105,102,92},
-	[364]={"Dark taupe",90,76,66},
-	[365]={"Burnt Sienna",106,57,9},
-	[1001]={"Institutional white",248,248,248},
-	[1002]={"Mid gray",205,205,205},
-	[1003]={"Really black",17,17,17},
-	[1004]={"Really red",255,0,0},
-	[1005]={"Deep orange",255,176,0},
-	[1006]={"Alder",180,128,255},
-	[1007]={"Dusty Rose",163,75,75},
-	[1008]={"Olive",193,190,66},
-	[1009]={"New Yeller",255,255,0},
-	[1010]={"Really blue",0,0,255},
-	[1011]={"Navy blue",0,32,96},
-	[1012]={"Deep blue",33,84,185},
-	[1013]={"Cyan",4,175,236},
-	[1014]={"CGA brown",170,85,0},
-	[1015]={"Magenta",170,0,170},
-	[1016]={"Pink",255,102,204},
-	[1017]={"Deep orange",255,175,0},
-	[1018]={"Teal",18,238,212},
-	[1019]={"Toothpaste",0,255,255},
-	[1020]={"Lime green",0,255,0},
-	[1021]={"Camo",58,125,21},
-	[1022]={"Grime",127,142,100},
-	[1023]={"Lavender",140,91,159},
-	[1024]={"Pastel light blue",175,221,255},
-	[1025]={"Pastel orange",255,201,201},
-	[1026]={"Pastel violet",177,167,255},
-	[1027]={"Pastel blue-green",159,243,233},
-	[1028]={"Pastel green",204,255,204},
-	[1029]={"Pastel yellow",255,255,204},
-	[1030]={"Pastel brown",255,204,153},
-	[1031]={"Royal purple",98,37,209},
-	[1032]={"Hot pink",255,0,191},
-}
-local BC_BYNAME = {}
-for __n, __e in BC_PALETTE do if BC_BYNAME[__e[1]] == nil then BC_BYNAME[__e[1]] = __n end end
-local newBC
-newBC = valueType("BrickColor", function(f, k)
-	if k == "Number" then return f.n end
-	if k == "Name" then return f.name end
-	if k == "Color" then return c3(f.r / 255, f.g / 255, f.b / 255) end
-	if k == "r" then return f32(f.r / 255) end
-	if k == "g" then return f32(f.g / 255) end
-	if k == "b" then return f32(f.b / 255) end
-	return nil
-end, {
-	__eq = function(a, b) return TYPE[a] == TYPE[b] and VAL[a].n == VAL[b].n end,
-	__tostring = function(a) return VAL[a].name end,
-})
-local function bcNum(n)
-	local e = BC_PALETTE[n]
-	if not e then n = 194; e = BC_PALETTE[194] end
-	return newBC({ n = n, name = e[1], r = e[2], g = e[3], b = e[4] })
-end
-local function bcName(nm)
-	local n = BC_BYNAME[nm]
-	if not n then return bcNum(194) end
-	return bcNum(n)
-end
-local function bcRGB(r, g_, b)
-	r, g_, b = num(r) * 255, num(g_) * 255, num(b) * 255
-	local best, bestd
-	for n, e in BC_PALETTE do
-		local dr, dg, db = e[2] - r, e[3] - g_, e[4] - b
-		local d = dr * dr + dg * dg + db * db
-		if not bestd or d < bestd or (d == bestd and n < best) then bestd, best = d, n end
-	end
-	return bcNum(best)
-end
-local BCLib = {
-	new = function(a, b, c)
-		if type(a) == "string" then return bcName(a) end
-		if b ~= nil then return bcRGB(a, b, c) end
-		return bcNum(num(a))
-	end,
-	White = function() return bcNum(1) end,
-	Gray = function() return bcNum(194) end,
-	DarkGray = function() return bcNum(199) end,
-	Black = function() return bcNum(26) end,
-	Red = function() return bcNum(21) end,
-	Yellow = function() return bcNum(24) end,
-	Green = function() return bcNum(28) end,
-	Blue = function() return bcNum(23) end,
-	palette = function(i) i = num(i); local keys = {}; for n in BC_PALETTE do keys[#keys+1]=n end; table.sort(keys); local e = keys[(i % #keys) + 1]; return bcNum(e) end,
-	random = function() return bcNum(1) end,
-}
-
 return {
 	UNSUPPORTED = UNSUPPORTED,
-	BrickColor = BCLib,
 	typeOf = typeOf,
 	CFrame = lib,
 	UDim = UDimLib,
@@ -1078,4 +1045,7 @@ return {
 	ColorSequenceKeypoint = CSKLib,
 	NumberSequence = NSLib,
 	ColorSequence = CSLib,
+	Region3 = R3Lib,
+	PhysicalProperties = PPLib,
+	TweenInfo = TILib,
 }

@@ -4563,12 +4563,39 @@ def _vm_roots(prog):
     return vms, payload
 
 
+def _code_part(ln):
+    """A line without its "..." / '...' strings and -- comment. A linear
+    scan: a regex over a multi-megabyte string literal (Luraph's buffer
+    blobs) needs memory per character and got the engine OOM-killed."""
+    if '"' not in ln and "'" not in ln and "--" not in ln:
+        return ln
+    out = []
+    i = 0
+    n = len(ln)
+    start = 0
+    while i < n:
+        c = ln[i]
+        if c == '"' or c == "'":
+            out.append(ln[start:i])
+            i += 1
+            while i < n and ln[i] != c:
+                i += 2 if ln[i] == "\\" else 1
+            i += 1
+            start = i
+        elif c == "-" and ln.startswith("--", i):
+            break
+        else:
+            i += 1
+    out.append(ln[start:i] if i <= n else "")
+    return "".join(out)
+
+
 def _uses_own_vararg(lines):
     """Whether a function body (indented one level) reads `...` itself,
     outside nested functions (which may be vararg on their own)."""
     depth = 0
     for ln in lines:
-        code = re.sub(r'"(?:[^"\\]|\\.)*"|--.*$', "", ln)
+        code = _code_part(ln)
         if depth == 0 and "..." in code.replace("function(...)", ""):
             return True
         depth += len(re.findall(r"\bfunction\b", code))

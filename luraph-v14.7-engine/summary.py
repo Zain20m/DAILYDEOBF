@@ -41,7 +41,7 @@ def build(finished, stats):
     out.append("-- ------------------------------------------------------------")
     out.append("--  recovered functions : %d" % recovered_fns)
     if orphan_protos:
-        out.append("--  runtime-built funcs : %d (lifted separately, named recovered_proto_*)" % orphan_protos)
+        out.append("--  runtime-built funcs : %d (lifted separately: named from what they do, else recovered_proto_*)" % orphan_protos)
     out.append("--  output lines         : %d" % total)
     out.append("--  Roblox API calls     : %d" % api_hits)
     if runtime_stubs:

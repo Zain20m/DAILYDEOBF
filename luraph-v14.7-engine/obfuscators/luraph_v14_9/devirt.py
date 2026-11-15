@@ -815,32 +815,46 @@ def _loc_key(v):
 
 
 def _is_reg_unpack(node):
-    """Luraph's register-range unpack: `function(x, K, n) n = n or 1;
-    x = x or #K; if x - n + 1 <= LIMIT then return unpack(K, n, x) else
-    return helper(x, n, K) end end` (the helper does the same for huge
-    ranges): unpack(K, n, x)."""
+    """Luraph's register-range unpack, in any parameter order:
+    `function(a, b, c) start = start or 1; stop = stop or #t; if stop - start
+    + 1 > LIMIT then return helper(...) else return unpack(t, start, stop) end end`.
+    -> (index of t, index of start, index of stop) among the parameters, or None."""
     try:
         args = node.get("args") or []
         if len(args) != 3 or node.get("vararg"):
-            return False
-        x, k, n = (a["location"] for a in args)
+            return None
+        locs = [a["location"] for a in args]
         body = node["body"]["body"]
         if not 3 <= len(body) <= 4:
-            return False
-        first = [st for st in body[:2] if st["type"] == "AstStatAssign"]
-        assigned = {vmmap.unwrap(v).get("local", {}).get("location") for st in first for v in st["vars"]}
-        if assigned != {x, n}:
-            return False
-        want = [k, n, x]
+            return None
+        start = stop = tab = None
+        for st in body[:2]:
+            if st["type"] != "AstStatAssign" or len(st["vars"]) != 1 or len(st["values"]) != 1:
+                return None
+            tgt = vmmap.unwrap(st["vars"][0]).get("local", {}).get("location")
+            v = vmmap.unwrap(st["values"][0])
+            if v.get("type") != "AstExprBinary" or v.get("op") != "Or" or tgt not in locs:
+                return None
+            dflt = vmmap.unwrap(v["right"])
+            if dflt.get("type") == "AstExprConstantNumber" and dflt.get("value") == 1:
+                start = tgt
+            elif dflt.get("type") == "AstExprUnary" and dflt.get("op") == "Len":
+                stop = tgt
+                tab = vmmap.unwrap(dflt["expr"]).get("local", {}).get("location")
+            else:
+                return None
+        if None in (start, stop, tab) or tab not in locs:
+            return None
+        want = [tab, start, stop]
         for nd in iter_nodes({"type": "AstStatBlock", "body": body[2:]}):
             if nd.get("type") == "AstStatReturn" and len(nd.get("list", [])) == 1:
                 c = vmmap.unwrap(nd["list"][0])
                 if c.get("type") == "AstExprCall" and \
                         [vmmap.unwrap(a).get("local", {}).get("location") for a in c.get("args", [])] == want:
-                    return True
-        return False
-    except (KeyError, IndexError, TypeError, AttributeError):
-        return False
+                    return (locs.index(tab), locs.index(start), locs.index(stop))
+        return None
+    except (KeyError, IndexError, TypeError, AttributeError, ValueError):
+        return None
 
 
 def _is_vararg_pack(node):
@@ -2241,9 +2255,10 @@ class ProtoLifter:
                 # environment state that the VM interpreter does not model,
                 # preserve the function as native source and emit the call
                 # instead of treating it as a broken VM function.
-                if _is_reg_unpack(node):
+                roles = _is_reg_unpack(node)
+                if roles:
                     vals = it.adjust(args, 3)
-                    x, k, n = vals[0], vals[1], vals[2]
+                    k, n, x = vals[roles[0]], vals[roles[1]], vals[roles[2]]
                     if n is None:
                         n = 1
                     return self.unpack(Multi([k, n] + ([x] if x is not None else [])))

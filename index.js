@@ -4791,6 +4791,111 @@ async function handlePureLuauPrefixCommand(message, pastedSource = null) {
   await handlePureLuauCommand(adapter);
 }
 
+// .l - environment log: run the script in the offline sandbox (the v15
+// engine's envlog.luau model of Roblox; nothing touches the network or a real
+// game) and send back what it did: services, instances, remotes fired, URLs
+// requested, values printed. No devirtualization, so it is fast.
+async function startEnvLogWorkflow(message, inlineText = null) {
+  const prompt = await message.reply({
+    embeds: [dailyEmbed('Environment log', 'Preparing...', DAILY_COLORS.primary)],
+    allowedMentions: { repliedUser: false },
+  });
+  let input;
+  try {
+    const attachment = message.attachments.first();
+    if (attachment) {
+      input = await inputFromAttachment(attachment);
+    } else if (inlineText && /https?:\/\//i.test(inlineText) && !/[\r\n]/.test(inlineText.trim()) &&
+        !inlineText.includes('```') && inlineText.length < 600) {
+      // a link, or a loadstring(game:HttpGet("URL"))() one-liner: fetch it
+      input = await inputFromUrlText(inlineText);
+    } else if (inlineText) {
+      // pasted source (``` code blocks are unwrapped)
+      const code = inlineText.replace(/^```(?:lua|luau)?\s*/i, '').replace(/```\s*$/, '');
+      input = { source: code, filename: 'pasted.lua' };
+    } else {
+      input = await collectInput(message, prompt);
+    }
+  } catch (error) {
+    await prompt.edit({ embeds: [dailyEmbed('Environment log', String(error.message || error).slice(0, 1500), DAILY_COLORS.danger)] }).catch(() => {});
+    return;
+  }
+
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-envlog-'));
+  const base = (input.filename || 'script.lua').replace(/[^A-Za-z0-9_.-]/g, '_').replace(/\.(?:lua|luau|pureluau|txt)$/i, '') || 'script';
+  const inputPath = path.join(tempRoot, base + '.lua');
+  const outputPath = path.join(tempRoot, base + '.envlog.lua');
+  const started = Date.now();
+  try {
+    await fs.writeFile(inputPath, input.source, 'utf8');
+    await prompt.edit({
+      embeds: [dailyEmbed('Environment log', 'Running **' + base + '** in the offline sandbox (' + formatBytes(Buffer.byteLength(input.source, 'utf8')) + ')...', DAILY_COLORS.primary)],
+    }).catch(() => {});
+    let result;
+    try {
+      result = await runPythonEngine(ENGINE_V15_DIR, ENGINE_V15_CLI, inputPath, outputPath, 240_000, [
+        '--debug',           // write the trace itself to the output path (also
+                             // when the run stops in an endless loop)
+        '--no-devirt',       // behaviour only: fast
+        '--strings',
+        '--budget', '30',
+        '--timeout', '120',
+        ...(process.env.DEOB_USE_PYPY === '1' ? [] : ['--no-pypy']),
+      ]);
+    } catch (error) {
+      result = { failed: error };
+    }
+    let log = '';
+    try {
+      log = await fs.readFile(outputPath, 'utf8');
+    } catch {
+      const why = result && result.failed ? String(result.failed.message || result.failed) : 'the sandbox produced no log';
+      throw new Error('Environment log failed: ' + why.slice(0, 800));
+    }
+    const header = log.split('\n').filter((line) => line.startsWith('--')).slice(0, 40);
+    const pick = (re) => { const m = header.find((line) => re.test(line)); return m ? m.replace(/^--\s*/, '') : null; };
+    const listAfter = (title) => {
+      const i = header.findIndex((line) => line.toLowerCase().startsWith('-- ' + title));
+      if (i < 0) return [];
+      const out = [];
+      for (let j = i + 1; j < header.length && /^--\s{2,}/.test(header[j]); j++) out.push(header[j].replace(/^--\s+/, ''));
+      return out;
+    };
+    const urls = listAfter('urls requested');
+    const remotes = listAfter('remotes fired');
+    const lines = [
+      '**Status:** ' + (pick(/run status:/) || 'unknown').replace(/^run status:\s*/, ''),
+      '**Recorded:** ' + (pick(/statements recorded/) || 'n/a'),
+      '**Time:** ' + formatDuration(Date.now() - started),
+    ];
+    if (urls.length) lines.push('', '**URLs requested (' + urls.length + '):**', ...urls.slice(0, 8).map((u) => '`' + u.slice(0, 180) + '`'));
+    if (remotes.length) lines.push('', '**Remotes fired/invoked (' + remotes.length + '):**', remotes.slice(0, 20).map((r) => '`' + r.slice(0, 60) + '`').join(', '));
+    lines.push('', 'Offline sandbox: the script never touched the network or a real game. Branches it did not take are not in the log.');
+    const buffer = Buffer.from(log, 'utf8');
+    const files = buffer.length <= MAX_ATTACHMENT_PART_BYTES
+      ? [new AttachmentBuilder(buffer, { name: base + '_envlog.lua' })]
+      : makeSourceParts(buffer, base + '_envlog.lua').slice(0, 1)
+        .map((part) => new AttachmentBuilder(part.data, { name: part.name }));
+    // every string the script built (--strings), when there are any
+    try {
+      const strings = await fs.readFile(outputPath + '.strings.txt');
+      if (strings.length > 0 && strings.length <= 8 * 1024 * 1024) {
+        files.push(new AttachmentBuilder(strings, { name: base + '_strings.txt' }));
+      }
+    } catch {
+      // no strings file
+    }
+    await prompt.edit({
+      embeds: [dailyEmbed('Environment log · ' + base, lines.join('\n'), DAILY_COLORS.success)],
+      files,
+    });
+  } catch (error) {
+    await prompt.edit({ embeds: [dailyEmbed('Environment log', String(error.message || error).slice(0, 1500), DAILY_COLORS.danger)] }).catch(() => {});
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 async function sendRobloxEnvironmentLogger(message) {
   const loggerPath = path.join(__dirname, 'scripts', 'roblox-environment-logger.lua');
   const file = await fs.readFile(loggerPath);
@@ -4813,7 +4918,8 @@ function helpText() {
     '.deobf [URL/file] - analyze protected Lua/Luau; direct HTTP/HTTPS links are supported',
     '.get [URL/file] - scan source and fetch discovered links; direct HTTP/HTTPS links are supported',
     '.purelua',
-    '.l - generate a Roblox Studio environment diagnostic script',
+    '.l [URL/file/code] - environment log: run the script in the offline sandbox and log what it does',
+    '.l studio - Roblox Studio environment diagnostic script',
     '.help',
     '',
     'SLASH COMMANDS',
@@ -6047,15 +6153,27 @@ client.on(Events.MessageCreate, async (message) => {
   }
 
   if (command === '.l') {
-    if (parts.length > 1) {
-      await message.reply('Usage: .l');
+    if (subcommand === 'studio') {
+      // the old .l: a read-only Studio diagnostic script
+      try {
+        await sendRobloxEnvironmentLogger(message);
+      } catch (error) {
+        await message.reply('Roblox environment logger failed: ' + String(error && error.message || error).slice(0, 500))
+          .catch(() => {});
+      }
       return;
     }
+    if (activeUsers.has(message.author.id)) {
+      await message.reply('You already have an active job. Finish it or wait for it to expire.');
+      return;
+    }
+    activeUsers.add(message.author.id);
     try {
-      await sendRobloxEnvironmentLogger(message);
+      await startEnvLogWorkflow(message, content.slice(parts[0].length).trim() || null);
     } catch (error) {
-      await message.reply('Roblox environment logger failed: ' + String(error && error.message || error).slice(0, 500))
-        .catch(() => {});
+      await message.reply('Environment log failed: ' + String(error && error.message || error).slice(0, 500)).catch(() => {});
+    } finally {
+      activeUsers.delete(message.author.id);
     }
     return;
   }

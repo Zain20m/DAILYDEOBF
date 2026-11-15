@@ -701,6 +701,144 @@ def find_ctor_funcs(root):
     return out
 
 
+_LIB_FUNCS = {
+    "string": "byte char find format gmatch gsub len lower match pack packsize rep reverse split sub unpack upper".split(),
+    "table": "clear clone concat create find foreach foreachi freeze getn insert isfrozen maxn move pack remove sort unpack".split(),
+    "math": "abs acos asin atan atan2 ceil clamp cos cosh deg exp floor fmod frexp ldexp log log10 max min modf noise pow rad random randomseed round sign sin sinh sqrt tan tanh".split(),
+    "bit32": "arshift band bnot bor btest bxor byteswap countlz countrz extract lrotate lshift replace rrotate rshift".split(),
+    "coroutine": "close create isyieldable resume running status wrap yield".split(),
+    "buffer": "copy create fill fromstring len readf32 readf64 readi16 readi32 readi8 readstring readu16 readu32 readu8 tostring writef32 writef64 writei16 writei32 writei8 writestring writeu16 writeu32 writeu8".split(),
+    "utf8": "char codepoint codes graphemes len nfcnormalize nfdnormalize offset".split(),
+    "task": "cancel defer delay desynchronize spawn synchronize wait".split(),
+    "os": "clock date difftime time".split(),
+    "debug": "info traceback profilebegin profileend".split(),
+}
+
+
+_MODELLED_BUILTINS = {"coroutine.wrap", "table.pack", "table.unpack", "table.move", "table.create"}
+
+
+def _loc_start(loc):
+    a = loc.split(" - ")[0].split(",")
+    return (int(a[0]), int(a[1]))
+
+
+def wrapper_constants(root):
+    """Luraph 14.3 wraps everything in `return (function(a, b, ...) ... end)(
+    6, string.sub, 32749, type, ...)`: the wrapper's parameters that are never
+    assigned, with the literal / global each one is called with.
+    -> {declaration id: value}."""
+    out = {}
+    try:
+        body = root.get("body", root)
+        stmts = body.get("body", []) if isinstance(body, dict) else body if isinstance(body, list) else []
+        call = None
+        for st in stmts:
+            if st.get("type") == "AstStatReturn" and len(st.get("list", [])) == 1:
+                call = vmmap.unwrap(st["list"][0])
+        if call is None or call.get("type") != "AstExprCall":
+            return out
+        # `(function(...) ... end)(args)(...)`: the innermost call
+        while vmmap.unwrap(call["func"]).get("type") == "AstExprCall":
+            call = vmmap.unwrap(call["func"])
+        fn = vmmap.unwrap(call["func"])
+        if fn.get("type") != "AstExprFunction":
+            return out
+        params = [a["location"] for a in fn.get("args", [])]
+        assigned = set()
+        for n in iter_nodes(fn["body"]):
+            if n.get("type") in ("AstStatAssign", "AstStatCompoundAssign"):
+                for v in (n.get("vars") or [n.get("var")]):
+                    v = vmmap.unwrap(v) if v else {}
+                    if v.get("type") == "AstExprLocal":
+                        assigned.add(v["local"]["location"])
+
+        def global_path(e):
+            e = vmmap.unwrap(e)
+            if e.get("type") == "AstExprGlobal":
+                return e["global"]
+            if e.get("type") == "AstExprIndexName":
+                base = global_path(e["expr"])
+                return base + "." + e["index"] if base else None
+            return None
+        first_write = {}
+        for n in iter_nodes(fn["body"]):
+            if n.get("type") in ("AstStatAssign", "AstStatCompoundAssign"):
+                for v in (n.get("vars") or [n.get("var")]):
+                    v = vmmap.unwrap(v) if v else {}
+                    if v.get("type") == "AstExprLocal":
+                        pos = _loc_start(n["location"])
+                        k = v["local"]["location"]
+                        first_write[k] = min(first_write.get(k, pos), pos)
+        initial = {}        # every parameter's value on entry (reassigned or not)
+        for loc, arg in zip(params, call.get("args", [])):
+            a = vmmap.unwrap(arg)
+            t = a.get("type")
+            if t == "AstExprConstantNumber":
+                out[loc] = S.fix_int(a["value"])
+            elif t == "AstExprConstantString":
+                out[loc] = a["value"].encode("latin-1", "replace")
+            elif t == "AstExprConstantBool":
+                out[loc] = bool(a["value"])
+            else:
+                g = global_path(a)
+                if g in _LIB_FUNCS:
+                    # a whole library: its functions as builtins
+                    lib = LTable()
+                    for fname in _LIB_FUNCS[g]:
+                        lib.set(fname.encode(), Builtin(g + "." + fname))
+                    out[loc] = lib
+                elif g and g not in ("_G", "shared"):
+                    out[loc] = EnvTable() if g == "_ENV" else Builtin(g)
+            if loc in out:
+                initial[loc] = out[loc]
+                if loc in assigned:
+                    del out[loc]
+        # `local tb = jb.wrap` (jb: the coroutine parameter) at the top level of
+        # the wrapper, before anything reassigns jb; tb itself never reassigned
+        for n in fn["body"].get("body", []):
+            if n.get("type") != "AstStatLocal":
+                continue
+            for var, val in zip(n["vars"], n.get("values") or []):
+                if var["location"] in assigned:
+                    continue
+                v = vmmap.unwrap(val)
+                if v.get("type") != "AstExprIndexName":
+                    continue
+                base = vmmap.unwrap(v["expr"])
+                if base.get("type") != "AstExprLocal":
+                    continue
+                bloc = base["local"]["location"]
+                if bloc in first_write and first_write[bloc] <= _loc_start(n["location"]):
+                    continue
+                lib = initial.get(bloc)
+                if isinstance(lib, LTable):
+                    f = lib.get(v["index"].encode("latin-1"))
+                    if f is not None:
+                        out[var["location"]] = f
+    except (KeyError, TypeError, AttributeError):
+        return {}
+    return out
+
+
+def find_local_funcs(root):
+    """local declaration id -> [functions assigned to that local]."""
+    out = {}
+    for n in iter_nodes(root):
+        t = n.get("type")
+        if t == "AstStatAssign":
+            for var, val in zip(n["vars"], n["values"]):
+                val = vmmap.unwrap(val)
+                if var.get("type") == "AstExprLocal" and val.get("type") == "AstExprFunction":
+                    out.setdefault(var["local"]["location"], []).append(val)
+        elif t == "AstStatLocal":
+            for var, val in zip(n["vars"], n.get("values") or []):
+                val = vmmap.unwrap(val)
+                if val.get("type") == "AstExprFunction":
+                    out.setdefault(var["location"], []).append(val)
+    return out
+
+
 def find_assigned_funcs(root):
     """14.x also fills the VM object after its constructor, inside flattened
     setup code (`M[56] = function(...) ... end`): key -> function, from the
@@ -825,28 +963,30 @@ def _is_reg_unpack(node):
             return None
         locs = [a["location"] for a in args]
         body = node["body"]["body"]
-        if not 3 <= len(body) <= 4:
-            return None
+        whole = {"type": "AstStatBlock", "body": body}
         start = stop = tab = None
-        for st in body[:2]:
-            if st["type"] != "AstStatAssign" or len(st["vars"]) != 1 or len(st["values"]) != 1:
+        # the defaults `start = start or 1`, `stop = stop or #t`, anywhere
+        # (14.3 wraps them in a little state loop)
+        for st in iter_nodes(whole):
+            if st.get("type") == "AstExprFunction":
                 return None
+            if st.get("type") != "AstStatAssign" or len(st["vars"]) != 1 or len(st["values"]) != 1:
+                continue
             tgt = vmmap.unwrap(st["vars"][0]).get("local", {}).get("location")
             v = vmmap.unwrap(st["values"][0])
-            if v.get("type") != "AstExprBinary" or v.get("op") != "Or" or tgt not in locs:
-                return None
+            if v.get("type") != "AstExprBinary" or v.get("op") != "Or" or tgt not in locs or \
+                    vmmap.unwrap(v["left"]).get("local", {}).get("location") != tgt:
+                continue
             dflt = vmmap.unwrap(v["right"])
             if dflt.get("type") == "AstExprConstantNumber" and dflt.get("value") == 1:
                 start = tgt
             elif dflt.get("type") == "AstExprUnary" and dflt.get("op") == "Len":
                 stop = tgt
                 tab = vmmap.unwrap(dflt["expr"]).get("local", {}).get("location")
-            else:
-                return None
-        if None in (start, stop, tab) or tab not in locs:
+        if None in (start, stop, tab) or tab not in locs or len({start, stop, tab}) != 3:
             return None
         want = [tab, start, stop]
-        for nd in iter_nodes({"type": "AstStatBlock", "body": body[2:]}):
+        for nd in iter_nodes(whole):
             if nd.get("type") == "AstStatReturn" and len(nd.get("list", [])) == 1:
                 c = vmmap.unwrap(nd["list"][0])
                 if c.get("type") == "AstExprCall" and \
@@ -858,24 +998,28 @@ def _is_reg_unpack(node):
 
 
 def _is_vararg_pack(node):
-    """`function(...) local n = f("#", ...); if ... end; return n, {...} end`."""
+    """`function(...) local n = f("#", ...); if ... end; return n, {...} end`
+    (14.3 wraps the same in a little state loop): a vararg function with no
+    parameters that calls f("#", ...) and returns (n, {...})."""
     try:
         if not node.get("vararg") or node.get("args"):
             return False
-        body = node["body"]["body"]
-        if len(body) != 3 or body[0]["type"] != "AstStatLocal" or body[1]["type"] != "AstStatIf" \
-                or body[2]["type"] != "AstStatReturn":
-            return False
-        call = vmmap.unwrap(body[0]["values"][0])
-        if call["type"] != "AstExprCall" or len(call["args"]) != 2 \
-                or call["args"][0].get("type") != "AstExprConstantString" or call["args"][1].get("type") != "AstExprVarargs":
-            return False
-        ret = body[2]["list"]
-        if len(ret) != 2 or vmmap.unwrap(ret[0]).get("type") != "AstExprLocal":
-            return False
-        tb = vmmap.unwrap(ret[1])
-        return tb["type"] == "AstExprTable" and len(tb["items"]) == 1 \
-            and vmmap.unwrap(tb["items"][0]["value"]).get("type") == "AstExprVarargs"
+        body = {"type": "AstStatBlock", "body": node["body"]["body"]}
+        count = packs = False
+        for nd in iter_nodes(body):
+            t = nd.get("type")
+            if t == "AstExprFunction":
+                return False        # (a nested function: not the packer)
+            if t == "AstExprCall" and len(nd.get("args", [])) == 2 and \
+                    nd["args"][0].get("type") == "AstExprConstantString" and nd["args"][0].get("value") == "#" and \
+                    nd["args"][1].get("type") == "AstExprVarargs":
+                count = True
+            if t == "AstStatReturn" and len(nd.get("list", [])) == 2:
+                tb = vmmap.unwrap(nd["list"][1])
+                if tb.get("type") == "AstExprTable" and len(tb["items"]) == 1 and \
+                        vmmap.unwrap(tb["items"][0]["value"]).get("type") == "AstExprVarargs":
+                    packs = True
+        return count and packs
     except (KeyError, IndexError, TypeError, AttributeError):
         return False
 
@@ -1026,10 +1170,17 @@ class ProtoLifter:
             # by the same VM has them
             fields = [env.get("field") for env in vm.info.get("outer_env", ())]
             tag = getattr(vm, "tag", None)
+            best = 0
             for _cap in dump.protos.values():
-                if (tag is None or _cap.get("__maker") == tag) and all(f in _cap for f in fields):
-                    cap = _cap
-                    break
+                mk = _cap.get("__maker")
+                if isinstance(mk, bytes):
+                    mk = mk.decode("latin-1")
+                if tag is None or mk == (tag.decode("latin-1") if isinstance(tag, bytes) else tag):
+                    n = sum(1 for f in fields if f in _cap)
+                    if n > best:
+                        cap, best = _cap, n
+        for decl, value in getattr(vm, "outer_consts", {}).items():
+            maker_parent.vars.setdefault(decl, value)
         if cap is not None:
             for env in vm.info.get("outer_env", ()):
                 field = env.get("field")
@@ -1531,6 +1682,12 @@ class ProtoLifter:
             obj = obj.first()
         if isinstance(key, Multi):
             key = key.first()
+        if isinstance(obj, Builtin) and obj.fn is None and isinstance(key, bytes) and obj.name in _LIB_FUNCS:
+            # `coroutine.wrap` through a library value from the dump: the
+            # builtin when the lifter models it, else a plain global access
+            name = obj.name + "." + key.decode("latin-1")
+            if name in S.CONCRETE or name in _MODELLED_BUILTINS:
+                return Builtin(name)
         if isinstance(obj, RegFile):
             if is_sym(key):
                 arr = self.reg_array(key)
@@ -2415,11 +2572,17 @@ class UpList:
     """The upvalue list of the proto being lifted. y[i] is a BoxProxy, or a
     FrameProxy for the upvalues that hold the parent's whole register frame."""
 
-    def __init__(self, frames=()):
+    def __init__(self, frames=(), consts=None):
         self.boxes = {}
         self.frames = set(frames)
+        # upvalues captured by value whose value is a constant (14.3 passes
+        # the script's constants to its main function this way): see
+        # cap_upval_consts
+        self.consts = consts or {}
 
     def get(self, i):
+        if i in self.consts:
+            return self.consts[i]
         b = self.boxes.get(i)
         if b is None:
             b = self.boxes[i] = FrameProxy(i) if i in self.frames else BoxProxy(i)
@@ -3704,6 +3867,7 @@ class Program:
                 self.vms[tag] = vm
                 self.ctors[id(vm)] = ctor
                 vm.src_lines = lines
+                vm.outer_consts = wrapper_constants(root)
         self.dump.vm_names = {vm.maker["args"][0]["name"] for vm in self.vms.values()}
         # bind Lua function values of the VM object to their AST
         for cap in self.dump.protos.values():
@@ -3737,6 +3901,23 @@ class Program:
                         v = obj.h.get(k)
                         if isinstance(v, OpaqueFn) and v.node is None:
                             v.node = fnode
+            # 14.3 keeps them in plain locals the VM captures (`Cb = function
+            # (m, l, h) ...`): bind those captures by the local's assignments
+            try:
+                envs = self.vm_of(cap).info.get("outer_env", ())
+            except (KeyError, AttributeError, Unsupported):
+                envs = ()
+            if envs:
+                local_fns = self.__dict__.setdefault("_local_fns", {})
+                if id(self.root) not in local_fns:
+                    local_fns[id(self.root)] = find_local_funcs(self.root)
+                lfns = local_fns[id(self.root)]
+                for env in envs:
+                    v = cap.get(env.get("field"))
+                    fns = lfns.get(env.get("decl"), [])
+                    if isinstance(v, OpaqueFn) and v.node is None and len(fns) == 1 and \
+                            (_is_vararg_pack(fns[0]) or _is_reg_unpack(fns[0])):
+                        v.node = fns[0]
         g = LTable()
         for lib in ("bit32", "string", "table", "math", "buffer"):
             t = LTable()
@@ -4119,8 +4300,10 @@ class FunctionLifter:
             if len(order) > SYMFOR_MAX_STATES:
                 # (huge functions never structured with them on the samples,
                 # and the check alone cost ~20 s there)
+                lf = s0 = order = None     # (free the first walk before the second)
                 lf, s0, order = walk(False)
             elif backend.needs_state_machine(s0.key(vm.kstack_link), _copy.copy(order), me, vm.kstack_link):
+                lf = s0 = order = None     # (free the first walk before the second)
                 lf, s0, order = walk(False)
         orphan_params = []
         if orphan:
@@ -4247,6 +4430,8 @@ class FunctionLifter:
                 upnames[i] = capnames.get(e.reg, "nil")
             elif isinstance(e, (BoxProxy, Upval)):
                 upnames[i] = parent_names.get(("up", e.idx), "upv%d" % e.idx)
+            elif isinstance(e, (bool, int, float, bytes)) or (isinstance(e, Builtin) and e.fn is None):
+                upnames[i] = fmt_expr(Global(e.name)) if isinstance(e, Builtin) else fmt_const(e)
             else:
                 upnames[i] = "nil"
         params = ["..."]
@@ -4391,6 +4576,26 @@ def _uses_own_vararg(lines):
     return False
 
 
+def cap_upval_consts(vm, cap):
+    """{upvalue index: value} of a captured closure's by-value upvalues that
+    are constants (numbers, strings, booleans, library functions). Values in
+    the upvalue table are never replaced (variables shared by reference live
+    in boxes, which are left alone), so these hold for the whole function."""
+    try:
+        ups = cap.get(vm.maker["args"][vm.upvals_index()]["name"])
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return {}
+    if not isinstance(ups, LTable) or os.environ.get("DEVIRT_NO_UPVAL_CONSTS") == "1":
+        return {}
+    out = {}
+    for k, v in ups.h.items():
+        if not isinstance(k, int) or isinstance(k, bool):
+            continue
+        if isinstance(v, (bool, int, float, bytes)) or (isinstance(v, Builtin) and v.fn is None):
+            out[k] = v
+    return out
+
+
 def render_const_pool(pool):
     """`local luraph_constants = {...}`: the script's constant pool (see
     Dump.const_pool_for), as the lifted code indexes it."""
@@ -4459,7 +4664,7 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
             out.append("-- lifted VM root: %s" % role)
         if tag == payload:
             payload_pid = pid
-        lines = fl.lift(vm, vmobj, proto, UpList(), {}, 0)
+        lines = fl.lift(vm, vmobj, proto, UpList(consts=cap_upval_consts(vm, cap)), {}, 0)
         pool = prog.dump.const_pool_for(proto)
         if pool is not None and any(CONST_POOL_NAME in ln for ln in lines):
             out.append("")
@@ -4468,7 +4673,15 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
             out.append("")
             if fl.params:
                 out.append("local %s = ..." % ", ".join(fl.params))
-            out += lines
+            last = next((l for l in reversed(lines) if l.strip()), "")
+            if re.match(r"return\b", last):
+                # a top-level `return` must end the chunk; the functions
+                # lifted on their own follow it
+                out.append("do")
+                out += ["\t" + l if l else l for l in lines]
+                out.append("end")
+            else:
+                out += lines
             payload_pid = None
             continue
         out.append("local function vm_root_%s(%s)" % (pid, ", ".join(fl.params)))
@@ -4501,7 +4714,7 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
                 safe_pid = "p_" + safe_pid
             name = "recovered_proto_" + safe_pid
             try:
-                lines, proto_params, upvalue_params = fl.lift(vm, vmobj, proto, UpList(), {}, 0, orphan=True)
+                lines, proto_params, upvalue_params = fl.lift(vm, vmobj, proto, UpList(consts=cap_upval_consts(vm, cap)), {}, 0, orphan=True)
             except Exception as ex:  # noqa: BLE001
                 out.append("-- captured proto %s could not be lifted on its own: %s" %
                            (pid, str(ex).replace("\n", " ")[:240]))
@@ -4722,10 +4935,13 @@ def collect_requests(source, protos_path, chunk_paths=(), cache=None, fetch=None
     pkey = {tid: ",".join(str(x) for x in p) for tid, p in paths.items()}
     res = PathResolver(dump)
     live = {}
-    for (path, vmid), ent in cache.entries.items():
+    # (keyed also by whether the walk had the closure's constant upvalues:
+    # a function walked as a child has none, as a top-level function it has
+    # them, and the two walks can take different paths)
+    for (path, vmid, uc), ent in cache.entries.items():
         t = res.get(path)
         if t is not None:
-            live[(t.tid, vmid)] = (path, ent)
+            live[(t.tid, vmid, uc)] = (path, ent)
     kept = {}
     stats = {"functions": 0, "errors": 0, "fallbacks": 0, "walked": 0}
     requests = set()
@@ -4738,7 +4954,7 @@ def collect_requests(source, protos_path, chunk_paths=(), cache=None, fetch=None
             vm = prog.vm_of(cap)
         except Unsupported:
             continue
-        todo.append((vm, vm.vmobj_of(cap), vm.proto_of(cap)))
+        todo.append((vm, vm.vmobj_of(cap), vm.proto_of(cap), cap_upval_consts(vm, cap)))
     seen = set()
     for _pass in range(2):
         if _pass == 1:
@@ -4759,25 +4975,26 @@ def collect_requests(source, protos_path, chunk_paths=(), cache=None, fetch=None
                     ovmobj = ovm.vmobj_of(cap)
                 except (Unsupported, KeyError, TypeError, AttributeError):
                     continue
-                if isinstance(oproto, LTable) and id(oproto) not in seen:
-                    todo.append((ovm, ovmobj, oproto))
+                if isinstance(oproto, LTable):
+                    todo.append((ovm, ovmobj, oproto, cap_upval_consts(ovm, cap)))
         while todo:
-            vm, vmobj, proto = todo.pop()
-            if id(proto) in seen:
+            vm, vmobj, proto, upconsts = todo.pop()
+            if (id(proto), bool(upconsts)) in seen:
                 continue
-            seen.add(id(proto))
-            found = live.get((proto.tid, id(vm)))
+            seen.add((id(proto), bool(upconsts)))
+            uc = bool(upconsts)
+            found = live.get((proto.tid, id(vm), uc))
             use = found and _translate(found[1], res, pkey)
             if use:
-                kept[(found[0], id(vm))] = found[1]
+                kept[(found[0], id(vm), uc)] = found[1]
                 ent = found[1]
                 kids, ebw, etw = use
             else:
-                ent = _walk_one(prog, vm, vmobj, proto, pkey)
+                ent = _walk_one(prog, vm, vmobj, proto, pkey, upconsts)
                 stats["walked"] += 1
                 key = pkey.get(proto.tid)
                 if key is not None and ent["clean"]:
-                    kept[(key, id(vm))] = ent
+                    kept[(key, id(vm), uc)] = ent
                 kids = [res.get(c) if isinstance(c, str) else c for c in ent["children"]]
                 ebw, etw = ent["bw"], ent["tw"]
             stats["functions"] += 1
@@ -4786,7 +5003,7 @@ def collect_requests(source, protos_path, chunk_paths=(), cache=None, fetch=None
             bw.update(ebw)
             tw.update(etw)
             kvms = [prog.vms.get(t) or _JIT_TAGGED.get(t) or vm for t in ent.get("child_vms") or [None] * len(kids)]
-            todo += [(kvm, vmobj, c) for c, kvm in reversed(list(zip(kids, kvms))) if c is not None]
+            todo += [(kvm, vmobj, c, None) for c, kvm in reversed(list(zip(kids, kvms))) if c is not None]
     cache.entries = kept
     stats["fetched"] = len(dump.fetched)
     if os.environ.get("DEVIRT_TIMING") and dump.fetched:
@@ -4797,14 +5014,14 @@ def collect_requests(source, protos_path, chunk_paths=(), cache=None, fetch=None
     return stats, requests, format_patches(bw, tw)
 
 
-def _walk_one(prog, vm, vmobj, proto, pkey):
+def _walk_one(prog, vm, vmobj, proto, pkey, upconsts=None):
     dump = prog.dump
     saved = dump.buf_patch, dump.tab_patch
     dump.buf_patch, dump.tab_patch = PatchLog(), PatchLog()
     nmiss = sum(dump.misses.values())
     ent = {"requests": set(), "children": [], "errors": 0, "clean": False, "bw": {}, "tw": {}}
     try:
-        lf = ProtoLifter(vm, dump, vmobj, proto, UpList(), prog.globals)
+        lf = ProtoLifter(vm, dump, vmobj, proto, UpList(consts=upconsts), prog.globals)
         lf.walk_only = True
         st = make_stepper(vm, lf)
         # Request collection intentionally accepts unresolved nodes after the
@@ -4812,6 +5029,19 @@ def _walk_one(prog, vm, vmobj, proto, pkey):
         # constant requests needed by the next round.  Restart exhaustion, on
         # the other hand, is never treated as a successful walk.
         s0, order = prog.walk_stable(vm, lf, st, 400000, purpose="request")
+        if lf.used_symbolic_for and os.environ.get("DEVIRT_SYMBOLIC_FOR") != "force":
+            # the final lift may walk this function again without variable-
+            # count copies (FunctionLifter.lift): its constants are needed too,
+            # or every round ends in another full lift
+            lf2 = ProtoLifter(vm, dump, vmobj, proto, UpList(consts=upconsts), prog.globals)
+            lf2.walk_only = True
+            lf2.use_symbolic_for = False
+            try:
+                prog.walk_stable(vm, lf2, make_stepper(vm, lf2), 400000, purpose="request")
+                lf.requests |= lf2.requests
+                lf.children += [c for c in lf2.children if not any(c.proto is k.proto for k in lf.children)]
+            except Unsupported:
+                pass
     except Unsupported:
         ent["errors"] = 1
         return ent

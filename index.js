@@ -3,10 +3,25 @@
 // Separate Python v15 and beta 15.1 pipelines with live analysis progress.
 
 const {
-  ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder,
+  ActionRowBuilder, AttachmentBuilder: DiscordAttachmentBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder,
   Client, Events, GatewayIntentBits, Partials, PermissionFlagsBits,
   REST, Routes, SlashCommandBuilder,
 } = require('discord.js');
+
+// Every Lua/Luau result the bot sends is named .lua (easier to open and run):
+// `x.luau`, `x.pureluau` and `x.part001.luau` all become `.lua`.
+function luaFileName(name) {
+  return typeof name === 'string' ? name.replace(/\.(?:pure)?luau$/i, '.lua') : name;
+}
+class AttachmentBuilder extends DiscordAttachmentBuilder {
+  constructor(attachment, data = {}) {
+    super(attachment, data && data.name ? { ...data, name: luaFileName(data.name) } : data);
+  }
+
+  setName(name) {
+    return super.setName(luaFileName(name));
+  }
+}
 const { spawn } = require('node:child_process');
 const dns = require('node:dns').promises;
 const net = require('node:net');
@@ -2078,10 +2093,10 @@ async function sendAnalysisOutput(message, input, config) {
       '\nFunctions lifted: ' + (liftedFunctions === null ? 'see report' : liftedFunctions) +
       ' · Unlifted blocks: ' + (unliftedBlocks === null ? 'see report' : unliftedBlocks) +
       '\nCaptured prototypes: ' + (prototypeCount || 'see report') + ' · Dynamic VM chunks: ' + chunkFiles.length +
-      '\nAttached: deobfuscated.luau';
+      '\nAttached: deobfuscated.lua';
   } else if (hasLiftCandidate) {
     summary = '**DAILY DEOBF · ' + config.label + '**\n⚠️ Partial VM lift only. Validation found unresolved VM output, so it is not labelled as recovered source.\nProcessed: ' + safeName +
-      '\nAttached: partial_result.luau';
+      '\nAttached: partial_result.lua';
   } else {
     summary = '**DAILY DEOBF · ' + config.label + '**\n⚠️ Trace-only result. The full VM lift did not complete.\nProcessed: ' + safeName +
       '\nAttached: runtime_trace.luau (trace only, not reconstructed source), analysis-report.txt, and ' +
@@ -2136,8 +2151,10 @@ async function processLuraphV15(message, prompt, input, displayLabel = 'Luraph v
   return processLuraph151(message, prompt, input, gameId, '15');
 }
 
-async function processLuraph14x(message, prompt, input, version) {
+async function processLuraph14x(message, prompt, input, version, options = {}) {
   const versionTag = version.replace('.', '');
+  // 14.3 runs through the 14.7 devirtualizer (same VM family); see processLuraph143
+  const engineVersion = options.engineVersion || version;
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-luraph' + versionTag + '-'));
   const inputPath = path.join(tempRoot, 'input.lua');
   const outputPath = path.join(tempRoot, 'Luraph' + versionTag + '_deobfuscated.luau');
@@ -2154,6 +2171,7 @@ async function processLuraph14x(message, prompt, input, version) {
       'Using the separate v' + version + ' VM mapper, runtime harness and devirtualizer.'
     );
 
+    let engineError = null;
     const result = await runPythonEngine(
       ENGINE_V147_DIR,
       ENGINE_V147_CLI,
@@ -2161,7 +2179,7 @@ async function processLuraph14x(message, prompt, input, version) {
       outputPath,
       ENGINE_TIMEOUT_MS,
       [
-        '--engine', version,
+        '--engine', engineVersion,
         '--strings',
         // When the VM lift is incomplete, return the behaviour trace instead of
         // failing, and keep the work files so the other result can be attached.
@@ -2188,10 +2206,24 @@ async function processLuraph14x(message, prompt, input, version) {
           DEVIRT_ERRS: '1',
           DEVIRT_TB: '1',
           DEVIRT_WALK_LIMIT: '750000',
+          // Small hosts: skip the extra walks of variable-count copy modelling
+          // (fewer holes fixed, much less memory on big scripts)
+          ...(process.env.DEOB_LOW_MEMORY === '1' || Buffer.byteLength(input.source, 'utf8') > 400_000
+            ? { DEVIRT_SYMBOLIC_FOR: '0' } : {}),
+          ...(options.env || {}),
         },
         onProgress: progress.onLine,
       },
-    );
+    ).catch(async (error) => {
+      // Killed (out of memory / time) or crashed: send whatever the engine
+      // already saved instead of nothing. The engine writes the behaviour trace
+      // before lifting and the lift after every full round (see driver.py).
+      const saved = await findSavedEngineOutput(tempRoot);
+      if (!saved) throw error;
+      engineError = error;
+      await fs.copyFile(saved.path, outputPath);
+      return { stdout: error.stdout || '', stderr: (error.stderr || '') + '\n[!] engine stopped early: ' + String(error.message || error) + '\n[*] sending its saved ' + saved.kind };
+    });
 
     const stat = await fs.stat(outputPath).catch(() => null);
     if (!stat || !stat.isFile() || !stat.size) {
@@ -2214,7 +2246,7 @@ async function processLuraph14x(message, prompt, input, version) {
       const workDir = path.join(tempRoot, entry.name);
       for (const name of await fs.readdir(workDir).catch(() => [])) {
         let label = null;
-        if (name.endsWith('.devirt.partial.luau') || (isTrace && name.endsWith('.devirt.luau'))) {
+        if ((name.endsWith('.devirt.partial.luau') && !engineError) || (isTrace && name.endsWith('.devirt.luau'))) {
           label = 'Luraph' + versionTag + '_partial_vm_lift.luau';
         } else if (!isTrace && name.endsWith('.trace.luau')) {
           label = 'Luraph' + versionTag + '_behaviour_trace.luau';
@@ -2245,12 +2277,15 @@ async function processLuraph14x(message, prompt, input, version) {
     await fs.writeFile(reportPath, report, 'utf8');
 
     await message.reply({
-      content: (isTrace ? '⚠️' : '✅') + ' **DAILY DEOBF · Luraph v' + version + '**\n' +
-        (isTrace
+      content: (isTrace || engineError ? '⚠️' : '✅') + ' **DAILY DEOBF · Luraph v' + version + '**\n' +
+        (engineError
+          ? 'The engine stopped before finishing (' + (/SIGKILL|memory/i.test(String(engineError.message)) ? 'the server ran out of memory' : String(engineError.message || engineError).split('\n')[0].slice(0, 160)) +
+            '), so this is what it had recovered by then' + (isTrace ? ' (a behaviour trace).' : ' (a partial VM lift).')
+          : isTrace
           ? 'The VM lift was incomplete, so the main file is a behaviour trace (what the script did in the sandbox).'
           : 'Dedicated v' + version + ' engine finished.') +
-        '\nOutput size: ' + formatBytes(stat.size) + '\nAttached: Luraph' + versionTag + '_deobfuscated.luau' +
-        extraFiles.map((f) => ', ' + f.name).join('') + ' and engine report.',
+        '\nOutput size: ' + formatBytes(stat.size) + '\nAttached: Luraph' + versionTag + '_deobfuscated.lua' +
+        extraFiles.map((f) => ', ' + luaFileName(f.name)).join('') + ' and engine report.',
       files: [
         new AttachmentBuilder(outputPath, { name: 'Luraph' + versionTag + '_deobfuscated.luau' }),
         ...extraFiles.map((f) => new AttachmentBuilder(f.path, { name: f.name })),
@@ -2279,6 +2314,23 @@ async function processLuraph14x(message, prompt, input, version) {
 }
 
 
+// The newest result a killed 14.x engine run left in its work folder.
+async function findSavedEngineOutput(tempRoot) {
+  for (const entry of await fs.readdir(tempRoot, { withFileTypes: true }).catch(() => [])) {
+    if (!entry.isDirectory() || !entry.name.endsWith('_work')) continue;
+    const workDir = path.join(tempRoot, entry.name);
+    const names = await fs.readdir(workDir).catch(() => []);
+    for (const [suffix, kind] of [['.devirt.luau', 'VM lift'], ['.devirt.partial.luau', 'partial VM lift'], ['.trace.luau', 'behaviour trace']]) {
+      const name = names.find((n) => n.endsWith(suffix));
+      if (!name) continue;
+      const full = path.join(workDir, name);
+      const st = await fs.stat(full).catch(() => null);
+      if (st && st.isFile() && st.size > 0) return { path: full, kind };
+    }
+  }
+  return null;
+}
+
 async function processLuraph147(message, prompt, input) {
   return processLuraph14x(message, prompt, input, '14.7');
 }
@@ -2292,6 +2344,16 @@ async function processLuraph149(message, prompt, input) {
 }
 
 async function processLuraph143(message, prompt, input) {
+  // Full devirtualization: the 14.x engine handles the 14.3 VM. 14.3 does not
+  // encrypt functions until their first call, so functions that never ran in
+  // the sandbox are lifted too (DEVIRT_LIFT_UNRUN).
+  return processLuraph14x(message, prompt, input, '14.3', {
+    engineVersion: '14.7',
+    env: { DEVIRT_LIFT_UNRUN: '1' },
+  });
+}
+
+async function processLuraph143Static(message, prompt, input) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-luraph143-'));
   const inputPath = path.join(tempRoot, 'input.lua');
   const reportPath = path.join(tempRoot, 'Luraph143_static_report.txt');
@@ -4791,6 +4853,111 @@ async function handlePureLuauPrefixCommand(message, pastedSource = null) {
   await handlePureLuauCommand(adapter);
 }
 
+// .l - environment log: run the script in the offline sandbox (the v15
+// engine's envlog.luau model of Roblox; nothing touches the network or a real
+// game) and send back what it did: services, instances, remotes fired, URLs
+// requested, values printed. No devirtualization, so it is fast.
+async function startEnvLogWorkflow(message, inlineText = null) {
+  const prompt = await message.reply({
+    embeds: [dailyEmbed('Environment log', 'Preparing...', DAILY_COLORS.primary)],
+    allowedMentions: { repliedUser: false },
+  });
+  let input;
+  try {
+    const attachment = message.attachments.first();
+    if (attachment) {
+      input = await inputFromAttachment(attachment);
+    } else if (inlineText && /https?:\/\//i.test(inlineText) && !/[\r\n]/.test(inlineText.trim()) &&
+        !inlineText.includes('```') && inlineText.length < 600) {
+      // a link, or a loadstring(game:HttpGet("URL"))() one-liner: fetch it
+      input = await inputFromUrlText(inlineText);
+    } else if (inlineText) {
+      // pasted source (``` code blocks are unwrapped)
+      const code = inlineText.replace(/^```(?:lua|luau)?\s*/i, '').replace(/```\s*$/, '');
+      input = { source: code, filename: 'pasted.lua' };
+    } else {
+      input = await collectInput(message, prompt);
+    }
+  } catch (error) {
+    await prompt.edit({ embeds: [dailyEmbed('Environment log', String(error.message || error).slice(0, 1500), DAILY_COLORS.danger)] }).catch(() => {});
+    return;
+  }
+
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-envlog-'));
+  const base = (input.filename || 'script.lua').replace(/[^A-Za-z0-9_.-]/g, '_').replace(/\.(?:lua|luau|pureluau|txt)$/i, '') || 'script';
+  const inputPath = path.join(tempRoot, base + '.lua');
+  const outputPath = path.join(tempRoot, base + '.envlog.lua');
+  const started = Date.now();
+  try {
+    await fs.writeFile(inputPath, input.source, 'utf8');
+    await prompt.edit({
+      embeds: [dailyEmbed('Environment log', 'Running **' + base + '** in the offline sandbox (' + formatBytes(Buffer.byteLength(input.source, 'utf8')) + ')...', DAILY_COLORS.primary)],
+    }).catch(() => {});
+    let result;
+    try {
+      result = await runPythonEngine(ENGINE_V15_DIR, ENGINE_V15_CLI, inputPath, outputPath, 240_000, [
+        '--debug',           // write the trace itself to the output path (also
+                             // when the run stops in an endless loop)
+        '--no-devirt',       // behaviour only: fast
+        '--strings',
+        '--budget', '30',
+        '--timeout', '120',
+        ...(process.env.DEOB_USE_PYPY === '1' ? [] : ['--no-pypy']),
+      ]);
+    } catch (error) {
+      result = { failed: error };
+    }
+    let log = '';
+    try {
+      log = await fs.readFile(outputPath, 'utf8');
+    } catch {
+      const why = result && result.failed ? String(result.failed.message || result.failed) : 'the sandbox produced no log';
+      throw new Error('Environment log failed: ' + why.slice(0, 800));
+    }
+    const header = log.split('\n').filter((line) => line.startsWith('--')).slice(0, 40);
+    const pick = (re) => { const m = header.find((line) => re.test(line)); return m ? m.replace(/^--\s*/, '') : null; };
+    const listAfter = (title) => {
+      const i = header.findIndex((line) => line.toLowerCase().startsWith('-- ' + title));
+      if (i < 0) return [];
+      const out = [];
+      for (let j = i + 1; j < header.length && /^--\s{2,}/.test(header[j]); j++) out.push(header[j].replace(/^--\s+/, ''));
+      return out;
+    };
+    const urls = listAfter('urls requested');
+    const remotes = listAfter('remotes fired');
+    const lines = [
+      '**Status:** ' + (pick(/run status:/) || 'unknown').replace(/^run status:\s*/, ''),
+      '**Recorded:** ' + (pick(/statements recorded/) || 'n/a'),
+      '**Time:** ' + formatDuration(Date.now() - started),
+    ];
+    if (urls.length) lines.push('', '**URLs requested (' + urls.length + '):**', ...urls.slice(0, 8).map((u) => '`' + u.slice(0, 180) + '`'));
+    if (remotes.length) lines.push('', '**Remotes fired/invoked (' + remotes.length + '):**', remotes.slice(0, 20).map((r) => '`' + r.slice(0, 60) + '`').join(', '));
+    lines.push('', 'Offline sandbox: the script never touched the network or a real game. Branches it did not take are not in the log.');
+    const buffer = Buffer.from(log, 'utf8');
+    const files = buffer.length <= MAX_ATTACHMENT_PART_BYTES
+      ? [new AttachmentBuilder(buffer, { name: base + '_envlog.lua' })]
+      : makeSourceParts(buffer, base + '_envlog.lua').slice(0, 1)
+        .map((part) => new AttachmentBuilder(part.data, { name: part.name }));
+    // every string the script built (--strings), when there are any
+    try {
+      const strings = await fs.readFile(outputPath + '.strings.txt');
+      if (strings.length > 0 && strings.length <= 8 * 1024 * 1024) {
+        files.push(new AttachmentBuilder(strings, { name: base + '_strings.txt' }));
+      }
+    } catch {
+      // no strings file
+    }
+    await prompt.edit({
+      embeds: [dailyEmbed('Environment log · ' + base, lines.join('\n'), DAILY_COLORS.success)],
+      files,
+    });
+  } catch (error) {
+    await prompt.edit({ embeds: [dailyEmbed('Environment log', String(error.message || error).slice(0, 1500), DAILY_COLORS.danger)] }).catch(() => {});
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 async function sendRobloxEnvironmentLogger(message) {
   const loggerPath = path.join(__dirname, 'scripts', 'roblox-environment-logger.lua');
   const file = await fs.readFile(loggerPath);
@@ -4813,7 +4980,8 @@ function helpText() {
     '.deobf [URL/file] - analyze protected Lua/Luau; direct HTTP/HTTPS links are supported',
     '.get [URL/file] - scan source and fetch discovered links; direct HTTP/HTTPS links are supported',
     '.purelua',
-    '.l - generate a Roblox Studio environment diagnostic script',
+    '.l [URL/file/code] - environment log: run the script in the offline sandbox and log what it does',
+    '.l studio - Roblox Studio environment diagnostic script',
     '.help',
     '',
     'SLASH COMMANDS',
@@ -5553,7 +5721,8 @@ async function startWorkflow(message, inlineText = null) {
   const luraphVersionRows = [
     new ActionRowBuilder().addComponents(
       ...[
-        ['14.3', 'luraph-v143', 'Luraph 14.3 (Static)'],
+        ['14.3', 'luraph-v143', 'Luraph 14.3'],
+        ['14.3s', 'luraph-v143-static', 'Luraph 14.3 (Static)'],
         ['14.7', 'luraph-v147', 'Luraph 14.7 (VIP)'],
         ['14.8', 'luraph-v148', 'Luraph 14.8'],
       ].map(([version, engine, label]) => engineButton(new ButtonBuilder()
@@ -5683,7 +5852,7 @@ async function startWorkflow(message, inlineText = null) {
       return;
     }
     const luraphVersionMatch = interaction.customId.match(
-      new RegExp('^deobf-luraph-version:(14\\.3|14\\.7|14\\.8|14\\.9|15|15\\.1):' + message.author.id + '$')
+      new RegExp('^deobf-luraph-version:(14\\.3s|14\\.3|14\\.7|14\\.8|14\\.9|15|15\\.1):' + message.author.id + '$')
     );
     if (luraphVersionMatch) {
       await interaction.deferUpdate();
@@ -5692,6 +5861,7 @@ async function startWorkflow(message, inlineText = null) {
       try {
         const selectedInput = await getWorkflowInput();
         if (version === '14.3') await processLuraph143(message, prompt, selectedInput);
+        else if (version === '14.3s') await processLuraph143Static(message, prompt, selectedInput);
         else if (version === '14.7') await processLuraph147(message, prompt, selectedInput);
         else if (version === '14.8') await processLuraph148(message, prompt, selectedInput);
         else if (version === '14.9') await processLuraph149(message, prompt, selectedInput);
@@ -5823,7 +5993,7 @@ async function startWorkflow(message, inlineText = null) {
       try {
         await processLuraph143(message, prompt, await getWorkflowInput());
       } catch (error) {
-        await showDeobfFailure(message, prompt, 'Luraph v14.3 static analysis failed', error);
+        await showDeobfFailure(message, prompt, 'Luraph v14.3 failed', error);
       }
       return;
     }
@@ -6047,15 +6217,27 @@ client.on(Events.MessageCreate, async (message) => {
   }
 
   if (command === '.l') {
-    if (parts.length > 1) {
-      await message.reply('Usage: .l');
+    if (subcommand === 'studio') {
+      // the old .l: a read-only Studio diagnostic script
+      try {
+        await sendRobloxEnvironmentLogger(message);
+      } catch (error) {
+        await message.reply('Roblox environment logger failed: ' + String(error && error.message || error).slice(0, 500))
+          .catch(() => {});
+      }
       return;
     }
+    if (activeUsers.has(message.author.id)) {
+      await message.reply('You already have an active job. Finish it or wait for it to expire.');
+      return;
+    }
+    activeUsers.add(message.author.id);
     try {
-      await sendRobloxEnvironmentLogger(message);
+      await startEnvLogWorkflow(message, content.slice(parts[0].length).trim() || null);
     } catch (error) {
-      await message.reply('Roblox environment logger failed: ' + String(error && error.message || error).slice(0, 500))
-        .catch(() => {});
+      await message.reply('Environment log failed: ' + String(error && error.message || error).slice(0, 500)).catch(() => {});
+    } finally {
+      activeUsers.delete(message.author.id);
     }
     return;
   }

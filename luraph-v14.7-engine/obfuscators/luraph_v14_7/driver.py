@@ -94,6 +94,9 @@ def patch_entries(source, path):
     return "\n".join(lines)
 
 
+MAX_FULL_LIFTS = int(os.environ.get("DEVIRT_MAX_FULL_LIFTS", "4"))
+
+
 def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
     """Lift the captured protos; constants that only Luraph's lazy decoder can
     produce (code that never ran) are requested from further runs. With a
@@ -116,6 +119,7 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
     quick = not os.environ.get("DEVIRT_FULL_ROUNDS")
     cache = devirt.WalkCache()
     t0 = time.time()
+    full_lifts = 0
     for rnd in range(1, rounds + 1):
         t1 = time.time()
         full = not quick
@@ -141,11 +145,27 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
             print("[*]   %d functions, %d unlifted blocks, %d unstructured jumps, %d new constant requests (%.1fs)"
                   % (stats["functions"], stats["errors"], stats["fallbacks"], len(new), time.time() - t1),
                   file=sys.stderr)
+            full_lifts += 1
+            # keep this lift on disk: if a later round is killed (memory, time),
+            # it is still there for the bot to send
+            try:
+                job.write(job.path(".devirt.partial.luau"),
+                          "-- partial result: saved after full lift %d (the run may not have finished)\n"
+                          % full_lifts + devirt.finish_text(text or ""))
+            except Exception as _ex:  # noqa: BLE001
+                print("[!] could not save the partial lift: %s" % _ex, file=sys.stderr)
             if (not new and devirt.same_patches(last_bufs, bufs)) or rnd == rounds:
                 break
+            if full_lifts >= MAX_FULL_LIFTS:
+                # a long chain of constants the walks only meet in the full
+                # lift (14.3 functions that never ran): keep this result
+                print("[*]   the full lift still asks for %d constants; keeping it (%d full lifts)"
+                      % (len(new), full_lifts), file=sys.stderr)
+                break
             if quick:
-                print("[*]   the full lift needs more constants: continuing with full lifts", file=sys.stderr)
-                quick = False
+                # back to the walk-only rounds: they are much cheaper, and the
+                # next full lift happens at their fixed point again
+                print("[*]   the full lift needs more constants: more walk rounds", file=sys.stderr)
         requested |= reqs
         last_bufs = bufs
         c = dict(cfg)
@@ -407,6 +427,15 @@ def run(job):
     # fails: otherwise skip its readability pass (minutes on a 250k-statement trace)
     if not (devirt_on and not job.debug):
         write_trace()
+    else:
+        # Lifting a big script can run out of memory or time on a small host.
+        # Save the behaviour trace first, so a killed run still leaves a
+        # result behind (skipped for huge traces: their readability pass is slow)
+        try:
+            if trace.stmt_count(body) <= int(os.environ.get("DEOB_EARLY_TRACE_MAX", "20000")):
+                job.write(job.path(".trace.luau"), trace.render(text, args))
+        except Exception as _ex:  # noqa: BLE001 - only a safety net
+            print("[!] early trace failed: %s" % _ex, file=sys.stderr)
     if strings is not None:
         job.write(job.path(".strings.txt"), strings)
     dpath = job.path(".devirt.luau")

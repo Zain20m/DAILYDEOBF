@@ -3057,7 +3057,10 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
         env: {
           // Keep the seed search enabled, but bound every parallel candidate.
           DEOB_FAST: '',
-          DEOB_CANDIDATE_TIMEOUT_MS: '120000',
+          // A big file's full lift runs 3-4 minutes without printing anything:
+          // 120 s / 75 s killed every candidate of a 1-2 MB script before its
+          // first lift finished. Stay inside the outer ENGINE_TIMEOUT_MS (25 min).
+          DEOB_CANDIDATE_TIMEOUT_MS: '1200000',
           // Racing 3 python candidates triples peak memory; on large inputs
           // that gets the whole engine OOM-killed by the host, so run one.
           // The racing candidates usually agree exactly but triple peak memory
@@ -3065,8 +3068,9 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
           // when DEOB_LOW_MEMORY=1 is set for a small bot host.
           ...(process.env.DEOB_LOW_MEMORY === '1' || Buffer.byteLength(input.source, 'utf8') > 512_000
             ? { DEOB_PY_CANDIDATES: 'python:1' } : {}),
-          DEOB_CANDIDATE_IDLE_TIMEOUT_MS: '75000',
-          DEVIRT_LOADERS: '1',
+          DEOB_CANDIDATE_IDLE_TIMEOUT_MS: '600000',
+          // (no DEVIRT_LOADERS: it lifts Luraph's own loader VMs too, which
+          // buried the script in thousands of lines of runtime code)
           DEVIRT_FULL_ROUNDS: '', // fast rounds: walk only, one full lift at the end (same result, ~2x faster)
           DEVIRT_TIMING: '1',
           DEVIRT_ERRS: '1',

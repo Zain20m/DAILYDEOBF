@@ -241,9 +241,22 @@ def take_chunks(body):
     """[(key, source)] of the big loadstring'd chunks a run reported (\\0CHUNK),
     and the body without them. Chunks passed back in `chunks` run instead of
     the original (a plugin instruments them like the main script)."""
+    out = []
+    # segmented: CHUNK <key> <bytes> <parts>, then CHUNKDATA <key> <n> <hex> records
+    heads = re.findall(mark("CHUNK ") + r"(\S+) (\d+) (\d+)\n", body)
+    for key, nbytes, nparts in heads:
+        parts = dict(re.findall(mark("CHUNKDATA ") + re.escape(key) + r" (\d+) ([0-9a-f]+)\n", body))
+        if len(parts) == int(nparts):
+            data = bytes.fromhex("".join(parts[str(i)] for i in range(1, int(nparts) + 1)))
+            if len(data) == int(nbytes):
+                out.append((key, data.decode("latin-1")))
+    body = re.sub(mark("CHUNK ") + r"\S+ \d+ \d+\n", "", body)
+    body = re.sub(mark("CHUNKDATA ") + r"\S+ \d+ [0-9a-f]+\n", "", body)
+    # the old single-line form
     found = re.findall(mark("CHUNK ") + r"(\S+)\n([0-9a-f]*)\n", body)
     body = re.sub(mark("CHUNK ") + r"\S+\n[0-9a-f]*\n", "", body)
-    return [(k, bytes.fromhex(hx).decode("latin-1")) for k, hx in found], body
+    out += [(k, bytes.fromhex(hx).decode("latin-1")) for k, hx in found]
+    return out, body
 
 LAST_RAW = [""]     
 
@@ -395,12 +408,6 @@ class HarnessServer:
         return m.group(1), None
 
     def request(self, cfg, timeout, mode="dump"):
-        # the process may have died on a previous reply (e.g. a constant request
-        # too big to allocate), which also removed self.dir; don't crash the whole
-        # run trying to use a dead server -- let the caller fall back / keep the
-        # best lift so far.
-        if self.eof or self.proc.poll() is not None or not os.path.isdir(self.dir):
-            return None, "harness process exited"
         req, buf = cfg.get("force_req") or "", cfg.get("force_buf") or ""
         if len(req) + len(buf) < 2000 and re.fullmatch(r"[\w,@.;=+/:*\-]*", req + buf):
 
@@ -408,18 +415,9 @@ class HarnessServer:
             return self.reply(timeout)
         self.nreq += 1
         name = "req_%d" % self.nreq
-        # the server process can die mid-run (a constant request that crashes or
-        # OOMs the luau), and its temp dir may already be gone; writing the req
-        # file then raises FileNotFoundError and used to abort the whole devirt.
-        # Degrade to the normal "process exited" path so the caller falls back to
-        # per-round reruns / keeps the best lift so far.
-        try:
-            with open(os.path.join(self.dir, name + ".luau"), "w", encoding="utf-8", newline="\n") as f:
-                f.write("return {%s, %s, %s}\n" % (long_string(cfg.get("force_req") or ""),
-                                                  long_string(cfg.get("force_buf") or ""), long_string(mode)))
-        except OSError as e:
-            self.eof = True
-            return None, "harness temp dir gone (%s)" % e
+        with open(os.path.join(self.dir, name + ".luau"), "w", encoding="utf-8", newline="\n") as f:
+            f.write("return {%s, %s, %s}\n" % (long_string(cfg.get("force_req") or ""),
+                                              long_string(cfg.get("force_buf") or ""), long_string(mode)))
         self._send(b'__S(table.unpack(require("./%s")))\n' % name.encode())
         return self.reply(timeout)
 
@@ -452,9 +450,7 @@ def trace_text(body):
     body = re.sub(r"(?<=[ \t])(?=\S)(?:[A-Za-z]:)?[^:\n]*?\.luau:", "harness:", body)
     body = re.sub(r"harness:\d+: ", "", body)
     body = re.sub(r'"(?:[^"\\\n]|\\.)*"', '""', body)
-    # the sign too: random offsets trace as "-3" in one run and "5" in the next
-    # (code3: the long-lived harness was dropped for one "-0" vs "0")
-    return re.sub(r"-?\d+(?:\.\d+)?(?:e[-+]?\d+)?", "0", body)
+    return re.sub(r"\d+(?:\.\d+)?(?:e[-+]?\d+)?", "0", body)
 
 def same_trace(a, b):
     """trace_text(a) == trace_text(b), ignoring words only one of the two

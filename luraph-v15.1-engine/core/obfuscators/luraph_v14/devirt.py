@@ -509,9 +509,9 @@ def _lift_program_inner(source, protos_path, chunk_paths=(), fetch=None):
         if best_score <= 0:
             break
     if best_out is None:
-        if "last_error" in locals() and last_error is not None:
-            raise last_error
-        raise Unsupported("no viable Luraph v14 payload root could be lifted")
+        # no v14 root lifted: the plain v15 lift of the same dump is still
+        # better than no output (its unresolved spots are marked)
+        return _orig_lift_program(source, protos_path, chunk_paths, fetch)
     return best_out
 
 

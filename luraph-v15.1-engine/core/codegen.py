@@ -328,7 +328,7 @@ class TempDef:
 
 def conv(e, D):
     if isinstance(e, D.GenIter):
-        return GenIterE([conv(x, D) for x in e.args.items] if e.args is not None else [])
+        return GenIterE([conv(x, D) for x in e.args.items[1:]] if e.args is not None else [])
     if isinstance(e, S.NewTable):
 
         return NewTableE([(conv(k, D) if k is not None else None, conv(v, D)) for k, v in e.items])
@@ -1477,16 +1477,8 @@ class Renderer:
         if isinstance(e, Pseudo):
             return "%s_%d" % (e.name, e.depth)
         if isinstance(e, Global):
-            if e.name == "_ENV":
-                return "getfenv()"
-            if all(seg and IDENT.match(seg) and seg not in LUA_KEYWORDS for seg in e.name.split(".")):
-                return e.name
-            # a global whose name is not a valid (dotted) identifier -- e.g. a
-            # mis-resolved asset-url / opaque string ("rbxassetid://...", "|").
-            # Render a safe access so the output stays parseable: an invalid
-            # token here cascades (the naming/local-function passes re-parse the
-            # output and drop the whole function, failing the devirt).
-            return "getfenv()[%s]" % quote(e.name.encode("latin-1"))
+
+            return "getfenv()" if e.name == "_ENV" else e.name
         if isinstance(e, Upval):
             return self.names.get(("up", e.idx), "upv%d" % e.idx if isinstance(e.idx, int)
                                   else "upv%d_%d" % e.idx)
@@ -1535,7 +1527,7 @@ class Renderer:
             ind = getattr(self, "cur_ind", "")
             return "\n".join([e.lines[0]] + [ind + l for l in e.lines[1:]])
         if isinstance(e, GenIterE):
-            return "geniter(%s)" % ", ".join(self.expr(a) for a in e.args)
+            return "(function(f, s, var) local co = coroutine.wrap(function() coroutine.yield(); for a, b, c, d, e, g, h, i, j, k in f, s, var do coroutine.yield(true, {a, b, c, d, e, g, h, i, j, k}) end end); co(); return co end)(%s)" % ", ".join(self.expr(a) for a in e.args)
         if isinstance(e, TempVal):
             return "t%s[%d]" % (e.t, e.i)
         if isinstance(e, TailCount):

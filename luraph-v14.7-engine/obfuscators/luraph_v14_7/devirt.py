@@ -2160,6 +2160,14 @@ class ProtoLifter:
             self.emit(SetList(dst, t, Multi([self.value_of(x) if x is not None else Const(None) for x in src.items],
                                             src.tail)))
             return dst
+        if isinstance(src, RegFile) and isinstance(f, int) and is_sym(e) and isinstance(dst, Expr) \
+                and isinstance(t, int) and self.top_marker(e) is not None:
+            # SETLIST of registers up to the stack top after a variable-count
+            # copy: `{...}` / `{f()}`
+            vals = self.unpack(Multi([src, f, e]))
+            self.emit(SetList(dst, t, Multi([self.value_of(x) if x is not None else Const(None) for x in vals.items],
+                                            vals.tail)))
+            return dst
         if is_sym(e) and isinstance(src, Expr) and isinstance(dst, Expr):
             # a pack held in a register that is no longer tracked: the real call
             tt = self.new_temp()
@@ -3004,7 +3012,8 @@ class Stepper:
             if getattr(state, "rtail", None) is not None:
                 start, tail, decls = state.rtail
                 for k in decls:
-                    inner.vars[k] = TopMarker(start, tail)
+                    sc = inner.lookup(k) or inner
+                    sc.vars[k] = TopMarker(start, tail)
         return cs, inner
 
     def run_once(self, state, decisions, tprefix):
@@ -3086,9 +3095,21 @@ class Stepper:
             if lf.rtail_new is not None:
                 # the loop function's locals still holding the new top
                 top = lf.rtail_new[2]
-                decls = tuple(sorted(k for k, v in dict.items(acc) if v is top))
+                ftop = fmt_any(top) if isinstance(top, Expr) else None
+
+                def holds_top(v):
+                    # (14.x recomputes it after the loop: `U = g + Q`)
+                    return v is top or (ftop is not None and isinstance(v, Expr) and fmt_any(v) == ftop)
+                decls = [k for k, v in dict.items(acc) if holds_top(v)]
+                # ... or keeps it in the VM function's scope (an upvalue of the loop function)
+                decls += [k for k, v in cs.vars.items() if k != "..." and holds_top(v)]
+                decls = tuple(sorted(set(decls), key=repr))
                 if decls:
                     rtail = (lf.rtail_new[0], lf.rtail_new[1], decls)
+                else:
+                    # nothing remembers how many values were copied: the
+                    # next instruction would lose them (`{...}` as `{}`)
+                    raise Unsupported("variable-count copy whose stack top is not kept")
             else:
                 # an instruction that left the top alone passes it on
                 marks = [(k, v) for k, v in dict.items(acc) if isinstance(v, TopMarker)]
@@ -4344,6 +4365,19 @@ def _vm_roots(prog):
     return vms, payload
 
 
+def _uses_own_vararg(lines):
+    """Whether a function body (indented one level) reads `...` itself,
+    outside nested functions (which may be vararg on their own)."""
+    depth = 0
+    for ln in lines:
+        code = re.sub(r'"(?:[^"\\]|\\.)*"|--.*$', "", ln)
+        if depth == 0 and "..." in code.replace("function(...)", ""):
+            return True
+        depth += len(re.findall(r"\bfunction\b", code))
+        depth -= len(re.findall(r"^\s*end\b", code)) if depth else 0
+    return False
+
+
 def render_const_pool(pool):
     """`local luraph_constants = {...}`: the script's constant pool (see
     Dump.const_pool_for), as the lifted code indexes it."""
@@ -4481,7 +4515,7 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
             huge_probe = len(lines) > 2000 and data_lines > 0.8 * len(lines) and api_hits * 50 < len(lines)
             signature = list(upvalue_params)
             signature.extend(p for p in proto_params if p != "...")
-            if "..." in proto_params:
+            if "..." in proto_params or _uses_own_vararg(lines):
                 signature.append("...")
             if len(signature) > 190:
                 # no compiled Luau function has this many parameters (the

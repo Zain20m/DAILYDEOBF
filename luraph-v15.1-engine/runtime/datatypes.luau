@@ -256,11 +256,23 @@ end
 local METHODS = {
 	Inverse = function(self) return wrap(inverse(get(self))) end,
 	Orthonormalize = function(self)
+		-- Gram-Schmidt over X, Y, Z in float32, each normalised by a float32
+		-- reciprocal length (bit-exact with real Studio 0.747 answers)
 		local c = get(self)
-		local z = vnorm(c.z)
-		local y = vnorm(c.y - z * vdot(c.y, z))
-		local x = vcross(y, z)
-		return make(c.p, x, y, z)
+		local function dot3(a, b) return f32(f32(f32(a[1] * b[1]) + f32(a[2] * b[2])) + f32(a[3] * b[3])) end
+		local function nrm(a)
+			local inv = f32(1 / f32(math.sqrt(dot3(a, a))))
+			return { f32(a[1] * inv), f32(a[2] * inv), f32(a[3] * inv) }
+		end
+		local function minus(a, b, k) return { f32(a[1] - f32(b[1] * k)), f32(a[2] - f32(b[2] * k)), f32(a[3] - f32(b[3] * k)) } end
+		local X0 = { c.x.x, c.x.y, c.x.z }
+		local Y0 = { c.y.x, c.y.y, c.y.z }
+		local Z0 = { c.z.x, c.z.y, c.z.z }
+		local x = nrm(X0)
+		local y = nrm(minus(Y0, x, dot3(Y0, x)))
+		local zt = minus(Z0, x, dot3(Z0, x))
+		local z = nrm(minus(zt, y, dot3(zt, y)))
+		return make(c.p, vec(x[1], x[2], x[3]), vec(y[1], y[2], y[3]), vec(z[1], z[2], z[3]))
 	end,
 	GetComponents = function(self) return components(get(self)) end,
 	ToWorldSpace = each(function(c, o) return wrap(mul(c, get(o))) end),

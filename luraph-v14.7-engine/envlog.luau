@@ -1164,9 +1164,26 @@ do
 		return nil
 	end
 	-- the Frame a Path2D sits in: absolute size from offset-only sizes
+	-- --cfg p2d_unlaid=true: a parent chain that ends at an instance the script
+	-- made and never parented is outside the DataModel, which a headless
+	-- client never lays out: the parent has NO size (scale counts as 0,
+	-- positions come back in offsets). Real Studio 0.747 headless answers
+	-- (research/test_path2d_parity.py). Off by default: a rendered client may
+	-- differ, and a Luraph 14.9 check only went on with the sized answers.
+	function M.outsideDataModel(p)
+		for _ = 1, 64 do
+			if not isP(p) then return false end
+			local inf = INFO[p]
+			local up = inf.props and inf.props.Parent
+			if not isP(up) then return inf.created == true end
+			p = up
+		end
+		return false
+	end
 	function M.frameSize(path)
 		local parent = INFO[path].props and INFO[path].props.Parent
 		if not isP(parent) then return nil end
+		if CFG.p2d_unlaid and M.outsideDataModel(parent) then return 0, 0 end
 		local sz = INFO[parent].props and INFO[parent].props.Size
 		local u = sz and M.udim2(sz)
 		if not u then return nil end
@@ -1339,6 +1356,12 @@ do
 		return segs[1], 0
 	end
 	-- the engine's answer as a replay-cache record (p2dEncode format), or nil
+	-- UDim offsets are integers: the engine truncates toward zero (checked
+	-- against real Studio answers: 198.9 -> 198, 0.6 -> 0)
+	function M.offset(x)
+		if x >= 0 then return R.floor(x) end
+		return -R.floor(-x)
+	end
 	function M.answer(path, name, t)
 		local inf = INFO[path]
 		local segs = inf.p2dSegs
@@ -1357,6 +1380,12 @@ do
 		if not c then return nil end
 		if R.find(name, "Position", 1, true) then
 			local x, y = M.eval(c, u)
+			if W == 0 or H == 0 then
+				-- a parent with no size on an axis: the answer is in (whole)
+				-- offsets (real Studio; the parent's own screen position, which
+				-- the engine adds there, is not modelled)
+				return R.fmt("u:0,%.17g,0,%.17g", M.offset(x), M.offset(y))
+			end
 			return R.fmt("u:%.17g,0,%.17g,0", f32(x / W), f32(y / H))
 		end
 		local x, y = M.tangent(c, u)

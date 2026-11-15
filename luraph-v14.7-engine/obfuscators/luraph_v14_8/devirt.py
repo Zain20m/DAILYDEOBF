@@ -728,7 +728,7 @@ def find_assigned_funcs(root):
         for g in groups.values():
             for k, fns in g.items():
                 for f in fns:
-                    if _is_vararg_pack(f):
+                    if _is_vararg_pack(f) or _is_reg_unpack(f):
                         packs.setdefault(k, []).append(f)
         for k, fns in packs.items():
             if k not in out:
@@ -812,6 +812,35 @@ def _loc_key(v):
     if isinstance(v, Reg):
         return ("reg", v.n)
     return (type(v).__name__, id(v))
+
+
+def _is_reg_unpack(node):
+    """Luraph's register-range unpack: `function(x, K, n) n = n or 1;
+    x = x or #K; if x - n + 1 <= LIMIT then return unpack(K, n, x) else
+    return helper(x, n, K) end end` (the helper does the same for huge
+    ranges): unpack(K, n, x)."""
+    try:
+        args = node.get("args") or []
+        if len(args) != 3 or node.get("vararg"):
+            return False
+        x, k, n = (a["location"] for a in args)
+        body = node["body"]["body"]
+        if not 3 <= len(body) <= 4:
+            return False
+        first = [st for st in body[:2] if st["type"] == "AstStatAssign"]
+        assigned = {vmmap.unwrap(v).get("local", {}).get("location") for st in first for v in st["vars"]}
+        if assigned != {x, n}:
+            return False
+        want = [k, n, x]
+        for nd in iter_nodes({"type": "AstStatBlock", "body": body[2:]}):
+            if nd.get("type") == "AstStatReturn" and len(nd.get("list", [])) == 1:
+                c = vmmap.unwrap(nd["list"][0])
+                if c.get("type") == "AstExprCall" and \
+                        [vmmap.unwrap(a).get("local", {}).get("location") for a in c.get("args", [])] == want:
+                    return True
+        return False
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return False
 
 
 def _is_vararg_pack(node):
@@ -1910,7 +1939,10 @@ class ProtoLifter:
         if name in S.CONCRETE:
             vals = a.items
             if a.tail is not None or any(is_sym(x) or isinstance(x, (SymList, Multi)) for x in vals):
-                if name.startswith("bit32.") and a.tail is None and all(is_sym(x) or isinstance(x, int) for x in vals):
+                if a.tail is None and not any(isinstance(x, (SymList, Multi, LTable, Buf)) for x in vals) and \
+                        (name.startswith("bit32.") or name.startswith("string.") or name.startswith("math.")):
+                    # the script's own library call on its values (`bit32.bxor(y, K)`,
+                    # `string.unpack("<d", s, p)`): the real call
                     # a handler for the script's own bit32 call (`x = bit32.bxor(y, K)`
                     # compiled into a dedicated opcode): the real call
                     t = self.new_temp()
@@ -2188,6 +2220,12 @@ class ProtoLifter:
                 # environment state that the VM interpreter does not model,
                 # preserve the function as native source and emit the call
                 # instead of treating it as a broken VM function.
+                if _is_reg_unpack(node):
+                    vals = it.adjust(args, 3)
+                    x, k, n = vals[0], vals[1], vals[2]
+                    if n is None:
+                        n = 1
+                    return self.unpack(Multi([k, n] + ([x] if x is not None else [])))
                 if _is_vararg_pack(node):
                     # Luraph's `function(...) local n = select("#", ...)
                     # if n == 0 then return n, EMPTY end return n, {...} end`:
@@ -3608,7 +3646,7 @@ class Program:
             # whose meaning is known; the others stay runtime stubs
             if objs:
                 for k, fnode in assigned.items():
-                    if not _is_vararg_pack(fnode):
+                    if not (_is_vararg_pack(fnode) or _is_reg_unpack(fnode)):
                         continue
                     for obj in objs:
                         v = obj.h.get(k)

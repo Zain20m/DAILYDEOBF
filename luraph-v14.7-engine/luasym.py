@@ -548,6 +548,57 @@ def _str_byte(s, i=1, j=None):
     return Multi(list(s[i - 1:j]))
 
 
+def _str_unpack(fmt, s, pos=1):
+    """string.unpack (Lua 5.4 / Luau formats: < > = ! b B h H i[n] I[n] l L
+    j J T f d n s[n] z x, spaces). Returns Multi(values..., next position)."""
+    import re as _re
+    if not isinstance(fmt, bytes) or not isinstance(s, bytes):
+        raise TypeError("string.unpack needs strings")
+    i = int(pos) - 1
+    if i < 0:
+        i = len(s) + i + 1
+    little = True
+    out = []
+    for m in _re.finditer(rb"([<>=!])(\d*)|([bBhHlLjJTfdnzx])|([iIs])(\d*)|( )", fmt):
+        if m.group(1):
+            if m.group(1) == b"<" or m.group(1) == b"=":
+                little = True
+            elif m.group(1) == b">":
+                little = False
+            continue
+        if m.group(6):
+            continue
+        c = (m.group(3) or m.group(4)).decode()
+        n = m.group(5)
+        size = {"b": 1, "B": 1, "h": 2, "H": 2, "l": 8, "L": 8, "j": 8, "J": 8, "T": 8,
+                "f": 4, "d": 8, "n": 8, "i": 4, "I": 4, "s": 8}.get(c)
+        if c in "iIs" and n:
+            size = int(n)
+        order = "little" if little else "big"
+        if c == "x":
+            i += 1
+        elif c == "z":
+            e = s.index(b"\0", i)
+            out.append(s[i:e])
+            i = e + 1
+        elif c == "s":
+            ln = int.from_bytes(s[i:i + size], order)
+            i += size
+            out.append(s[i:i + ln])
+            i += ln
+        elif c in "fdn":
+            if i + size > len(s):
+                raise ValueError("data string too short")
+            out.append(struct.unpack(("<" if little else ">") + ("f" if c == "f" else "d"), s[i:i + size])[0])
+            i += size
+        else:
+            if i + size > len(s):
+                raise ValueError("data string too short")
+            out.append(int.from_bytes(s[i:i + size], order, signed=c in "bhilj"))
+            i += size
+    return Multi(out + [i + 1])
+
+
 def _str_sub(s, i=1, j=-1):
     n = len(s)
     i, j = int(i), int(j)
@@ -563,6 +614,7 @@ def _str_sub(s, i=1, j=-1):
 
 
 CONCRETE = {"string.byte": _str_byte, "string.sub": _str_sub, "string.len": lambda s: len(s),
+            "string.unpack": _str_unpack,
             "string.char": lambda *a: bytes(int(x) for x in a),
             "string.rep": lambda s, n, sep=b"": sep.join([s] * int(n)),
             "math.floor": lambda x: fix_int(math.floor(x)), "math.ceil": lambda x: fix_int(math.ceil(x)),

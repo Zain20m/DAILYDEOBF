@@ -188,6 +188,20 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
     finished = devirt.finish_text(text or "").strip()
     # Avoid duplicate/stale credit headers when the same output path is reused.
     finished = re.sub(r"^(?:-- Devirtualized with Luraph v14\.[789] engine\s*)+", "", finished).lstrip()
+    # Luraph's own bootstrap / anti-tamper (global caching, tostring hooks,
+    # env checks) is not the script: cut it (DEOB_KEEP_LURAPH_RUNTIME=1 keeps it)
+    stripped_runtime = False
+    if finished:
+        try:
+            import strip_runtime
+            from obfuscators.luraph_v14_9.vmmap import luau_ast_executable
+            finished, rep = strip_runtime.strip(finished, luau_ast_executable())
+            if rep:
+                stripped_runtime = True
+                print("[*] removed Luraph runtime code: %d bootstrap lines, %d function(s)"
+                      % (rep["bootstrap_lines"], len(rep["functions"])), file=sys.stderr)
+        except Exception as _ex:  # noqa: BLE001 - keep the full output
+            print("[!] Luraph runtime strip failed: %s" % _ex, file=sys.stderr)
     if not finished:
         print("[!] v14.x lifter captured no liftable VM functions; falling back to the behavior trace",
               file=sys.stderr)
@@ -199,6 +213,9 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
     partial_allowed = os.environ.get("DEVIRT_ALLOW_PARTIAL") == "1"
     unresolved_states = int((stats or {}).get("unresolved_states", 0))
     unlifted = int((stats or {}).get("errors", 0))
+    if stripped_runtime:
+        # unlifted blocks inside the removed Luraph code no longer count
+        unlifted = len((re.findall(r'^\s*error\(["\']devirt:', finished, re.M)))
     symbolic_markers = (
         "MISSING[" in finished
         or "unresolved Luraph runtime helper" in finished
@@ -216,7 +233,8 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
 
     # backend.lower() leaves blocks it could not lift as error("devirt: ...")
     # lines: say so at the top instead of letting the file pass as complete
-    unlifted = int((stats or {}).get("errors", 0))
+    if not stripped_runtime:
+        unlifted = int((stats or {}).get("errors", 0))
     note = ""
     if unlifted:
         note = ("-- NOTE: partial lift: %d VM block(s) could not be lifted; each one is an\n"

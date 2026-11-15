@@ -31,7 +31,8 @@ def build(finished, stats):
         - (1 if "local function luraph_undecrypted_function" in finished else 0)
     if recovered_fns < 0:
         recovered_fns = 0
-    unlifted = int(stats.get("errors", 0) or 0)
+    # what the reader sees: the error("devirt: ...") lines left in the text
+    unlifted = len(re.findall(r"^\s*error\([\"']devirt:", finished, re.M))
     api_hits = len(_API.findall(finished))
 
     out = []

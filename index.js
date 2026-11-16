@@ -928,10 +928,19 @@ function dailyEmbed(title, description, color = DAILY_COLORS.primary) {
 
 const DAILY_DEOBF_HEADER = '--deobf by daily deobf';
 
+// The credit goes on the LAST line: Discord's file preview shows the first
+// lines, which should be the recovered code, not banners.
 async function prependDailyDeobfHeader(filePath) {
-  const source = (await fs.readFile(filePath, 'utf8')).replace(/^\uFEFF/, '');
-  if (source.split(/\r?\n/, 1)[0].trim().toLowerCase() === DAILY_DEOBF_HEADER) return;
-  await fs.writeFile(filePath, DAILY_DEOBF_HEADER + '\n' + source.replace(/^(?:\r?\n)+/, ''), 'utf8');
+  let source = (await fs.readFile(filePath, 'utf8')).replace(/^\uFEFF/, '');
+  // (an older top-of-file credit, if any: moved to the end)
+  const lines = source.split(/\r?\n/);
+  while (lines.length && (lines[0].trim().toLowerCase() === DAILY_DEOBF_HEADER || !lines[0].trim()
+      || /^--\s*Deobfuscated in https:\/\/discord\.gg\//i.test(lines[0]))) lines.shift();
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  if (lines.length && lines[lines.length - 1].trim().toLowerCase() === DAILY_DEOBF_HEADER) lines.pop();
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  source = lines.join('\n');
+  await fs.writeFile(filePath, (source ? source + '\n\n' : '') + DAILY_DEOBF_HEADER + '\n', 'utf8');
 }
 
 async function sendAutomaticPureLuau(message, sourceText, originalName, contextLabel) {

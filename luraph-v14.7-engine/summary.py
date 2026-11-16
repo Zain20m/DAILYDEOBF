@@ -62,7 +62,6 @@ def build(finished, stats):
         out.append("--  running the script. What is below IS the recovered code, not")
         out.append("--  a trace -- there just is not much game logic in this file.")
         out.append("-- ------------------------------------------------------------")
-    out.append("--  The real script starts after this header and the stubs below.")
     out.append("-- ============================================================")
     out.append("")
     out.append("")

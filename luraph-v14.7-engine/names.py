@@ -23,10 +23,27 @@ import re
 import subprocess
 import sys
 
-from obfuscators.luraph_v14_9.vmmap import luau_ast_executable
+try:
+    from obfuscators.luraph_v14_9.vmmap import luau_ast_executable
+except ImportError:     # (the same file serves the v15.1 engine as core/names_refine.py)
+    def luau_ast_executable():
+        import harness
+        exe = harness.luau_ast()
+        if not os.path.exists(exe):
+            import shutil
+            exe = shutil.which("luau-ast.exe" if os.name == "nt" else "luau-ast") or exe
+        return exe
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GENERATED = re.compile(r"^(?:[a-z]\d+(?:_\d+)*|arg\d+_*)$")
+# a second pass over the finished text (refine_text) also renames the names
+# the first pass fell back on when it had no evidence
+GENERIC = re.compile(r"^(?:[a-z]\d+(?:_\d+)*|arg\d*_*|v|tbl\d*|str\d*|n\d*|flag\d*|list\d*|fn\d*|result\d+|"
+                     r"clone\d*|obj\d*|value\d+|item\d+|[A-Za-z]_\d+)$")
+# the value a UI library hands a component's Callback
+UI_CALLBACK_PARAM = {"Toggle": "enabled", "Checkbox": "checked", "Dropdown": "option", "Input": "text",
+                     "Textbox": "text", "TextBox": "text", "Slider": "value", "Keybind": "key",
+                     "Colorpicker": "color", "ColorPicker": "color"}
 KEYWORDS = {"and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in", "local",
             "nil", "not", "or", "repeat", "return", "then", "true", "until", "while", "continue", "type",
             "export", "self"}
@@ -163,7 +180,8 @@ def dotted(e):
 
 
 class Namer:
-    def __init__(self, text):
+    def __init__(self, text, refine=False):
+        self.generated = GENERIC if refine else GENERATED
         import tempfile
         self.text = text
         with tempfile.NamedTemporaryFile("w", suffix=".luau", delete=False, encoding="utf-8", newline="\n") as f:
@@ -465,6 +483,9 @@ class Namer:
         body = fn.get("body", {}).get("body", [])
         if not body:
             return None
+        nm = self.body_pattern_name(fn, body)
+        if nm:
+            return nm
         st = body[0]
         if st["type"] == "AstStatAssign" and len(st["vars"]) == 1 and len(st["values"]) == 1:
             var, val = st["vars"][0], st["values"][0]
@@ -482,6 +503,69 @@ class Namer:
                     if v.get("type") == "AstExprCall" and dotted(v["func"]) in ("Instance.new", "Drawing.new") \
                             and v.get("args") and const_str(v["args"][0]):
                         return camel("create " + const_str(v["args"][0]))
+        return None
+
+    def body_pattern_name(self, fn, body):
+        """Names from what a whole function does: returning one method's
+        result (`return HttpService:GenerateGUID(false)` -> generateGUID), a
+        recursive table copy (deepCopy), a predicate search (findKey)."""
+        def walk(n):
+            st = [n]
+            while st:
+                x = st.pop()
+                if isinstance(x, list):
+                    st.extend(x)
+                elif isinstance(x, dict):
+                    yield x
+                    st.extend(v for v in x.values() if isinstance(v, (dict, list)))
+        if len(body) == 1 and body[0]["type"] == "AstStatReturn" and len(body[0].get("list", [])) == 1:
+            r = body[0]["list"][0]
+            if r.get("type") == "AstExprCall" and r["func"].get("type") == "AstExprIndexName" \
+                    and r["func"].get("op") == ":":
+                m = r["func"]["index"]
+                if re.match(r"^[A-Z]\w+$", m):
+                    return m[:1].lower() + m[1:]
+        nodes = list(walk(body))
+        params = [a["location"] for a in fn.get("args", [])]
+        # if type(x) ~= "table" then return x end ... for k, v in pairs(x) do t[k] = f(v) end
+        if params and any(n.get("type") == "AstExprConstantString" and n.get("value") == "table" for n in nodes) \
+                and any(n.get("type") == "AstStatForIn" for n in nodes) \
+                and any(n.get("type") == "AstExprTable" and not n.get("items") for n in nodes):
+            calls = [n for n in nodes if n.get("type") == "AstExprCall" and n["func"].get("type") == "AstExprLocal"]
+            if calls and any(c.get("args") and c["args"][0].get("type") == "AstExprLocal" for c in calls):
+                for a in fn.get("args", [])[:1]:
+                    info = self.locals.get(a["location"])
+                    if info is not None and info["hint"] in (None, "arg") and self.generated.match(info["name"]):
+                        info["hint"] = "value"
+                return "deepCopy"
+        # update("pet_char_wrappers", function(list) ... table.remove(list, i) ... end)
+        keyed = [n for n in nodes if n.get("type") == "AstExprCall" and len(n.get("args", [])) == 2
+                 and const_str(n["args"][0]) and n["args"][1].get("type") == "AstExprFunction"
+                 and re.match(r"^[a-z][a-z0-9_]*$", const_str(n["args"][0]))]
+        if len(keyed) == 1 and len(body) <= 3:
+            key = const_str(keyed[0]["args"][0])
+            inner = list(walk(keyed[0]["args"][1].get("body", {})))
+            verb = "update"
+            if any(n.get("type") == "AstExprCall" and dotted(n.get("func", {})) == "table.remove" for n in inner):
+                verb = "remove"
+            elif any(n.get("type") == "AstExprCall" and dotted(n.get("func", {})) == "table.insert" for n in inner) \
+                    or any(n.get("type") == "AstStatAssign" and any(v.get("type") == "AstExprIndexExpr"
+                           and v.get("index", {}).get("type") == "AstExprBinary" for v in n.get("vars", []))
+                           for n in inner):
+                verb = "add"
+            noun = camel(singular(key) if verb in ("add", "remove") and singular(key) else key)
+            if noun:
+                return verb + noun[:1].upper() + noun[1:]
+        # for k, v in pairs(t) do if pred(v, k) then return k end end return nil
+        if len(params) == 2:
+            for n in nodes:
+                if n.get("type") == "AstStatForIn" and len(n.get("vars", [])) == 2:
+                    k = n["vars"][0]["location"]
+                    for x in walk(n.get("body", {})):
+                        if x.get("type") == "AstStatReturn" and len(x.get("list", [])) == 1 \
+                                and x["list"][0].get("type") == "AstExprLocal" \
+                                and x["list"][0]["local"]["location"] == k:
+                            return "findKey"
         return None
 
     def same(self, a, b):
@@ -517,6 +601,21 @@ class Namer:
         names = [key, ("v", base)] + ["v%d" % i for i in range(3, n + 1)]
         return names[:n]
 
+    def call_result_name(self, e):
+        f = e.get("func", {})
+        if f.get("type") != "AstExprLocal":
+            return None
+        nm = f["local"]["name"]
+        if GENERIC.match(nm):
+            return None
+        if nm in ("get", "getData", "load"):
+            return "value"
+        m = re.match(r"^(?:get|find|create|make|new|load|read|fetch|build|generate|deep)([A-Z]\w*)$", nm)
+        if m:
+            w = m.group(1)
+            return w[:1].lower() + w[1:]
+        return None
+
     def infer(self, e, idx=0):
         t = e.get("type")
         if t == "AstExprCall":
@@ -526,6 +625,9 @@ class Namer:
                 return ["ok", "result"][min(idx, 1)]
             if idx > 0:
                 return None
+            got = self.call_result_name(e)
+            if got:
+                return got
             if d == "require" and e["args"]:
                 a = e["args"][0]
                 if a.get("type") == "AstExprIndexName":
@@ -602,7 +704,15 @@ class Namer:
             return camel(e["index"])
         if t == "AstExprIndexExpr":
             s = const_str(e.get("index"))
-            return camel(s) if s else None
+            if s:
+                return camel(s)
+            # petCharWrappers[i] -> petCharWrapper
+            base = e.get("expr", {})
+            if base.get("type") == "AstExprLocal":
+                nm = base["local"]["name"]
+                if not GENERIC.match(nm):
+                    return singular(nm)
+            return None
         if t == "AstExprFunction":
             return self.function_name(e) or "fn"
         if t == "AstExprTable":
@@ -683,11 +793,197 @@ class Namer:
         if info.get("role") and len(info["hints"]) <= 1:
             return info["role"]
         nm = self._base_name(info)
-        if nm in WEAK or nm in ("arg", "v", "fn") or nm is None:
+        if nm in WEAK or nm in ("arg", "v", "fn", "list", "clone") or nm is None:
             better = self.use_name(info)
             if better:
                 return better
+            stored = self.stored_name(info)
+            if stored:
+                return stored
         return nm
+
+    def stored_name(self, info):
+        """`{ unique = v }` / `t.unique = v` / `t["unique"] = v`: the one field
+        name the value is stored under (assigned once, used for that)."""
+        keys = info.get("stored") or {}
+        if len(info["hints"]) > 1 or len(keys) != 1:
+            return None
+        nm = camel(next(iter(keys)))
+        if not nm or nm in KEYWORDS or len(nm) < 2 or GENERIC.match(nm):
+            return None
+        return nm
+
+    def usage_facts(self):
+        """Evidence the statement walk does not record: the field a local is
+        stored under, the key a callback is registered for, the value a UI
+        component's Callback gets."""
+        def local_of(e):
+            if isinstance(e, dict) and e.get("type") == "AstExprLocal":
+                return self.locals.get(e["local"]["location"])
+            return None
+
+        def store(info, key):
+            if info is not None and isinstance(key, str) and re.match(r"^[A-Za-z_]\w*$", key):
+                info.setdefault("stored", {})
+                info["stored"][key] = info["stored"].get(key, 0) + 1
+
+        def name_params(fn, names):
+            for a, nm in zip(fn.get("args", []), names):
+                info = self.locals.get(a["location"])
+                if nm and info is not None and info["hint"] in (None, "arg") and self.generated.match(info["name"]):
+                    info["hint"] = nm
+
+        # name -> functions declared with it (local function f / local f = function)
+        funcs = {}
+        calls = {}
+        stack = [self.root]
+        while stack:
+            n = stack.pop()
+            if isinstance(n, list):
+                stack.extend(n)
+                continue
+            if not isinstance(n, dict):
+                continue
+            if n.get("type") == "AstStatLocalFunction":
+                funcs.setdefault(n["name"]["location"], []).append(n["func"])
+            elif n.get("type") == "AstStatLocal" and len(n.get("vars", [])) == 1 and n.get("values") \
+                    and n["values"][0].get("type") == "AstExprFunction":
+                funcs.setdefault(n["vars"][0]["location"], []).append(n["values"][0])
+            elif n.get("type") == "AstExprCall" and n["func"].get("type") == "AstExprLocal":
+                calls.setdefault(n["func"]["local"]["location"], []).append(n.get("args", []))
+            stack.extend(v for v in n.values() if isinstance(v, (dict, list)))
+
+        def arg_name(a):
+            if a.get("type") == "AstExprLocal":
+                nm = a["local"]["name"]
+                return None if GENERIC.match(nm) or nm in ("self",) else nm
+            if a.get("type") == "AstExprIndexName":
+                return camel(a["index"])
+            return None
+        # f(arg.pet_unique) everywhere -> f's parameter is petUnique
+        for key, fl in funcs.items():
+            if len(fl) != 1 or key not in calls:
+                continue
+            fn = fl[0]
+            sites = calls[key]
+            for i, p in enumerate(fn.get("args", [])):
+                got = {arg_name(args[i]) if i < len(args) else None for args in sites}
+                if len(got) == 1 and None not in got:
+                    name_params(fn, [None] * i + [got.pop()])
+                elif all(i < len(args) and const_str(args[i]) is not None for args in sites):
+                    name_params(fn, [None] * i + ["key"])
+            # update("inventory", function(inventory) ... end) at every call
+            finfo = self.locals.get(key)
+            if finfo is not None and self.generated.match(finfo["name"]) and len(sites) >= 2 and all(
+                    len(a) == 2 and const_str(a[0]) is not None and a[1].get("type") == "AstExprFunction"
+                    for a in sites):
+                finfo["hint"] = "modifyData"
+            # addPetCharWrapper(petCharWrapper)
+            m = re.match(r"^(?:add|insert|remove|spawn|destroy|equip|unequip)([A-Z]\w*)$", finfo["name"] if finfo else "")
+            if m and len(fn.get("args", [])) == 1:
+                name_params(fn, [m.group(1)[:1].lower() + m.group(1)[1:]])
+
+        stack = [self.root]
+        while stack:
+            n = stack.pop()
+            if isinstance(n, list):
+                stack.extend(n)
+                continue
+            if not isinstance(n, dict):
+                continue
+            t = n.get("type")
+            if t == "AstStatAssign":
+                for var, val in zip(n.get("vars", []), n.get("values", [])):
+                    # X.get = function(key) ... end
+                    if var.get("type") == "AstExprIndexName" and val.get("type") == "AstExprFunction" \
+                            and var.get("index") in ("get", "Get", "load", "Load") and len(val.get("args", [])) == 1:
+                        name_params(val, ["key"])
+                    if var.get("type") == "AstExprIndexName":
+                        store(local_of(val), var.get("index"))
+                    elif var.get("type") == "AstExprIndexExpr" and const_str(var.get("index")):
+                        store(local_of(val), const_str(var["index"]))
+            elif t == "AstExprTable":
+                for item in n.get("items", []):
+                    if item.get("kind") == "record" and const_str(item.get("key")):
+                        store(local_of(item.get("value")), const_str(item["key"]))
+            elif t == "AstExprCall":
+                args = n.get("args", [])
+                # update("inventory", function(inventory) ... end)
+                for i, a in enumerate(args):
+                    if a.get("type") == "AstExprFunction" and i > 0 and const_str(args[i - 1]):
+                        key = camel(const_str(args[i - 1]))
+                        np = len(a.get("args", []))
+                        if key and np == 1:
+                            name_params(a, [key])
+                        elif key and np == 2:
+                            name_params(a, [None, key])
+                fname = n.get("func", {})
+                fnm = fname["local"]["name"] if fname.get("type") == "AstExprLocal" else dotted(fname)
+                # findKey(petCharWrappers, function(petCharWrapper) ... end)
+                if fnm and re.match(r"^find\w*$", fnm) and len(args) == 2 \
+                        and args[1].get("type") == "AstExprFunction" and args[0].get("type") == "AstExprLocal":
+                    one = singular(args[0]["local"]["name"])
+                    if one and not GENERIC.match(args[0]["local"]["name"]):
+                        name_params(args[1], [one])
+                # table.sort(list, function(a, b) ... end)
+                if fnm == "table.sort" and len(args) == 2 and args[1].get("type") == "AstExprFunction":
+                    name_params(args[1], ["a", "b"])
+                # tab:Toggle({ ..., Callback = function(enabled) ... end })
+                f = n.get("func", {})
+                comp = f.get("index") if f.get("type") == "AstExprIndexName" else None
+                if comp in UI_CALLBACK_PARAM and args and args[0].get("type") == "AstExprTable":
+                    for item in args[0].get("items", []):
+                        if item.get("kind") == "record" and const_str(item.get("key")) == "Callback" \
+                                and item.get("value", {}).get("type") == "AstExprFunction":
+                            name_params(item["value"], [UI_CALLBACK_PARAM[comp]])
+            for v in n.values():
+                if isinstance(v, (dict, list)):
+                    stack.append(v)
+        self.param_roles()
+
+    def param_roles(self):
+        """Parameters with no other evidence, named from their one role: only
+        called (callback), only iterated (list), only used as a key (key)."""
+        uses = {}
+        stack = [(self.root, None)]
+        while stack:
+            n, parent = stack.pop()
+            if isinstance(n, list):
+                stack.extend((x, parent) for x in n)
+                continue
+            if not isinstance(n, dict):
+                continue
+            if n.get("type") == "AstExprLocal":
+                pk = parent.get("type") if parent else None
+                role = "other"
+                if pk == "AstExprCall" and parent.get("func") is n:
+                    role = "call"
+                elif pk == "AstExprCall" and dotted(parent.get("func", {})) in ("pairs", "ipairs") \
+                        and parent.get("args", [None])[0] is n:
+                    role = "iter"
+                elif pk == "AstExprIndexExpr" and parent.get("index") is n:
+                    role = "key"
+                uses.setdefault(n["local"]["location"], set()).add(role)
+            for v in n.values():
+                if isinstance(v, (dict, list)):
+                    stack.append((v, n))
+        names = {"call": "callback", "iter": "list", "key": "key"}
+        stack = [self.root]
+        while stack:
+            n = stack.pop()
+            if isinstance(n, list):
+                stack.extend(n)
+                continue
+            if not isinstance(n, dict):
+                continue
+            if n.get("type") == "AstExprFunction":
+                for a in n.get("args", []):
+                    info = self.locals.get(a["location"])
+                    r = uses.get(a["location"])
+                    if info is not None and r and len(r) == 1 and next(iter(r)) in names \
+                            and info["hint"] in (None, "arg") and self.generated.match(info["name"]):
+                        info["hint"] = names[next(iter(r))]
+            stack.extend(v for v in n.values() if isinstance(v, (dict, list)))
 
     def _base_name(self, info):
         h = info["hint"]
@@ -721,6 +1017,7 @@ class Namer:
     # ---- naming
     def run(self):
         self.collect()
+        self.usage_facts()
         for key in self.self_candidates:
             info = self.locals.get(key)
             if info is not None and len(info["refs"]) == 1 and not info["hints"]:
@@ -734,7 +1031,7 @@ class Namer:
         for key in self.order:
             info = self.locals[key]
             info["refs"].sort()
-            if not GENERATED.match(info["name"]):
+            if not self.generated.match(info["name"]):
                 info["new"] = info["name"]
                 taken.setdefault(info["name"], []).append(info)
         for key in sorted(self.order, key=lambda k: self.locals[k]["decl"]):     # numbered in reading order
@@ -792,6 +1089,12 @@ class Namer:
 
 def rename_text(text):
     return Namer(text).run()
+
+
+def refine_text(text):
+    """Second naming pass over the finished text: renames only the names the
+    first pass had no evidence for (v12, arg, tbl3, fn20, ...)."""
+    return Namer(text, refine=True).run()
 
 
 def main():

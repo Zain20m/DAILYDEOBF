@@ -123,9 +123,37 @@ def polish(text):
     return text
 
 def finish_text(text):
-    """Blank lines between blocks (only for the final output, not every round)."""
+    """Blank lines between blocks (only for the final output, not every round),
+    then a second naming pass over the finished code: names still generic
+    (v12, arg, tbl3, fn20) from what the code does (names_refine.py)."""
     import spacing
-    return spacing.space(text)
+    text = spacing.space(text)
+    if os.environ.get("DEVIRT_NO_NAMES") or len(text) > int(os.environ.get("DEOB_REFINE_MAX", "600000")):
+        return text
+    try:
+        import names_refine
+        new = text
+        for _ in range(3):
+            nxt = names_refine.refine_text(new)
+            if nxt == new:
+                break
+            new = nxt
+        if new != text:
+            import tempfile
+            import harness
+            with tempfile.NamedTemporaryFile("w", suffix=".luau", delete=False, encoding="utf-8",
+                                             newline="\n") as f:
+                f.write(new)
+                tmp = f.name
+            try:
+                if harness.run_luau_ast(tmp).returncode != 0:
+                    return text     # (renamed text that does not parse: keep the first names)
+            finally:
+                os.remove(tmp)
+        return new
+    except Exception as ex:  # noqa: BLE001 - keep the first pass's names
+        print("[!] second naming pass failed: %s" % ex, file=sys.stderr)
+        return text
 
 def run_big_stack(fn, *a):
     """Deeply nested scripts need deep recursion: run in a thread with a big stack."""

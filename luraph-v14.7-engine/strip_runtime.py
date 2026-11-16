@@ -170,7 +170,7 @@ def strip(text, exe):
                 drop.remove(d)
                 changed = True
     if not drop:
-        new = _merge_ifs(_fold_iterators(_unwrap_main(text, exe), exe), exe)
+        new = _drop_lift_notes(_refine_names(_merge_ifs(_fold_iterators(_unwrap_main(text, exe), exe), exe), exe))
         if new == text:
             return text, None
         return new, report
@@ -187,10 +187,8 @@ def strip(text, exe):
     while i < len(lines):
         if i in marks:
             b, what = marks[i]
-            if what == "bootstrap":
-                out.append("-- [Luraph bootstrap removed: %d lines of Luraph's own start-up code" % report["bootstrap_lines"])
-                out.append("--  (global caching, tostring/rawset tamper hooks, debug-library and")
-                out.append("--  loadstring checks). It is not part of the script.]")
+            # (Luraph's bootstrap goes without a note: the file starts with
+            # the script; the log says how much was removed)
             i = b + 1
             continue
         out.append(lines[i])
@@ -202,7 +200,41 @@ def strip(text, exe):
     new = re.sub(r"\n{3,}", "\n\n", new)
     if _parse(new, exe) is None:
         return text, None
-    return _merge_ifs(_fold_iterators(_unwrap_main(new, exe), exe), exe), report
+    return _drop_lift_notes(_refine_names(_merge_ifs(_fold_iterators(_unwrap_main(new, exe), exe), exe), exe)), report
+
+
+_LIFT_NOTES = re.compile(
+    r"(?m)^-- captured proto \S+: created at run time by a Luraph runtime helper, so it is\n"
+    r"-- lifted on its own \(upvalues it uses come first in the parameter list\)\n"
+    r"|^-- a function Luraph never decrypted: it did not run while the script was\n"
+    r"-- analysed \(Luraph decrypts a function's code on its first call\)\n"
+    r"|^-- unresolved Luraph runtime helper; preserved as a safe stub\n")
+
+
+def _drop_lift_notes(text):
+    """The lifter's notes about how a function was found: the file should
+    start with code (a file preview shows its first lines). Comments only:
+    the code is the same."""
+    return _LIFT_NOTES.sub("", text).lstrip("\n")
+
+
+def _refine_names(text, exe):
+    """Name what is still generic (v12, arg, tbl3, fn20) from the finished
+    code; a few rounds, since a name found in one (findKey) names more in the
+    next (`local key = findKey(...)`). DEVIRT_NO_NAMES=1: off."""
+    if os.environ.get("DEVIRT_NO_NAMES") or len(text) > int(os.environ.get("DEOB_REFINE_MAX", "600000")):
+        return text     # (a very big file: its syntax tree costs a lot of memory, three times)
+    try:
+        import names
+        new = text
+        for _ in range(3):
+            nxt = names.refine_text(new)
+            if nxt == new:
+                break
+            new = nxt
+    except Exception:  # noqa: BLE001 - keep the names as they are
+        return text
+    return new if _parse(new, exe) is not None else text
 
 
 _IF = re.compile(r"^(\t*)(if|elseif) (.+) then$")

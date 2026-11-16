@@ -166,7 +166,9 @@ class Job:
     def credit_header(self) -> str:
         if self.args.no_credit:
             return ""
-        return "-- Deobfuscated in https://discord.gg/Be9adB2dCn\n\n"
+        # (no banner on top: the first lines are the code, which is what a
+        # file preview shows; the bot adds its own line at the end)
+        return ""
 
 
 def parser() -> argparse.ArgumentParser:

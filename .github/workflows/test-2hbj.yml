@@ -1,0 +1,48 @@
+name: Inspect 2HBJ sample pipeline
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'scripts/setup-2hbj-engine.py'
+      - 'upload/2hbj-deobf-tools.zip'
+      - 'upload/2hbj_204764.lua (1).txt'
+      - '.github/workflows/test-2hbj.yml'
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Prepare 2HBJ tools
+        run: python scripts/setup-2hbj-engine.py
+      - name: Run the failing sample and preserve intermediates
+        shell: bash
+        run: |
+          mkdir -p /tmp/2hbj-output
+          set +e
+          bash 2hbj-engine/tools/run.sh "upload/2hbj_204764.lua (1).txt" /tmp/2hbj-output > /tmp/2hbj-run.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/2hbj-run.log
+          echo "$status" > /tmp/2hbj-exit-status.txt
+          find 2hbj-engine /tmp/2hbj-output -type f -maxdepth 6 -print || true
+      - name: Upload generated intermediates and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 2hbj-diagnostics
+          path: |
+            2hbj-engine/
+            /tmp/2hbj-output/
+            /tmp/2hbj-run.log
+            /tmp/2hbj-exit-status.txt
+          if-no-files-found: warn
+          retention-days: 3

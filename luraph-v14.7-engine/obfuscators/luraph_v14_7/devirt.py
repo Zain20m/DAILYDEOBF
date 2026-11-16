@@ -949,6 +949,14 @@ def _loc_key(v):
         return ("const", type(v.v).__name__, v.v)
     if isinstance(v, Reg):
         return ("reg", v.n)
+    if isinstance(v, (BoxProxy, FrameProxy)):
+        return (type(v).__name__, v.idx)
+    if isinstance(v, BoxPart):
+        return ("boxpart", v.idx, repr(v.k))
+    if isinstance(v, MaybeBox):
+        return ("maybebox", v.reg)
+    if isinstance(v, (UpList, OpenUps)):
+        return type(v).__name__
     return (type(v).__name__, id(v))
 
 
@@ -1972,6 +1980,8 @@ class ProtoLifter:
         self.ov.set(key, v, base)
 
     def check_decision(self, cond):
+        if DEADLINE[0] is not None and time.time() > DEADLINE[0]:
+            raise Unsupported("time budget of a never-run function")
         # (forking both ways here in request walks was tried: same functions
         # per round on StealAnEgg, but walks into junk code; not worth it)
         if any(isinstance(x, Missing) and not isinstance(x, NilIndex) for x in walk_expr(cond)):
@@ -2382,23 +2392,30 @@ class ProtoLifter:
             # closure's upvalue vector.  Reconstruct that closure instead of
             # emitting a stub call that expands the Luraph bootstrap.
             vals = list(args.items)
+            unrun_mode = os.environ.get("DEVIRT_LIFT_UNRUN", "try")
             for i, proto in enumerate(vals):
+                unrun = False
                 if isinstance(proto, LTable) and proto.tid not in self.dump.pid_of_table and \
                         self._is_proto_table(proto) and self._proto_pid(proto) is None and \
                         (i + 1 >= len(vals) or isinstance(vals[i + 1], LTable) or vals[i + 1] in (None, False)):
-                    # a function that never ran during the trace: from 14.7 on
-                    # Luraph decrypts code on first run, so its body is
-                    # unreadable. 14.3 does not (DEVIRT_LIFT_UNRUN=1: lift it)
-                    if os.environ.get("DEVIRT_LIFT_UNRUN") != "1":
+                    # a function that never ran during the trace. Its code is
+                    # in the dump all the same (Luraph decrypts it in place as
+                    # it runs, which the lifter emulates): try to lift it, on a
+                    # time budget (DEVIRT_UNRUN_BUDGET); a function that does
+                    # not lift in time is left as a stub. DEVIRT_LIFT_UNRUN=0:
+                    # never try, =1: no budget (14.3).
+                    if unrun_mode == "0":
                         return Multi([Global(UNDECRYPTED_FN)])
+                    unrun = unrun_mode != "1"
                 if not isinstance(proto, LTable) or not (proto.tid in self.dump.pid_of_table or (
-                        self._is_proto_table(proto) and (self._proto_pid(proto) is not None or os.environ.get("DEVIRT_LIFT_UNRUN") == "1"))):
+                        self._is_proto_table(proto) and (self._proto_pid(proto) is not None or unrun_mode != "0"))):
                     continue
                 ups = vals[i + 1] if i + 1 < len(vals) else None
                 if not isinstance(ups, LTable) and ups not in (None, False):
                     continue
                 # (`Y = W > 0 and {}`: false when the proto has no upvalues)
                 c = self._closure_value(proto, [], self.vm)
+                c.unrun = unrun
                 if isinstance(ups, LTable):
                     self._fill_upvals(c, ups)
                 return Multi([c])
@@ -2651,10 +2668,16 @@ class BoxPart(Expr):
 
 
 def walk_expr(e):
+    # each node once: symbolic expressions share subtrees (a value used twice),
+    # and walking them as a tree is exponential in the sharing depth
     stack = [e]
+    seen = set()
     while stack:
         x = stack.pop()
         if isinstance(x, Expr):
+            if id(x) in seen:
+                continue
+            seen.add(id(x))
             yield x
             stack += [v for v in x.__dict__.values() if isinstance(v, Expr)]
             if isinstance(x, S.NewTable):
@@ -3138,6 +3161,12 @@ class Stepper:
                     or isinstance(v, Const):
                 out.append((k, v))
                 continue
+            if isinstance(v, (UpList, OpenUps, BoxProxy, FrameProxy, BoxPart, MaybeBox)):
+                # a handle on an upvalue (Luraph reads a captured local over
+                # two or three micro-instructions: `g=x[s[e]]`, `g=g[Q]`,
+                # `g[1][g[3]]`): the same reference next instruction
+                out.append((k, v))
+                continue
             if isinstance(v, LTable) and id(v) not in new:
                 out.append((k, v))      # a table that existed before: same object next time
                 continue
@@ -3242,6 +3271,11 @@ class Stepper:
             outcome = ("ret", Multi([lf.value_of(x) if not isinstance(x, SymList) else x for x in m.items], m.tail))
         lf.finish_closures()
         self._note_access(acc)
+        if self.temps and state is not None:
+            # which micro-instruction temporaries this instruction reads
+            # before writing them (see walk_stable: dead temps)
+            self.__dict__.setdefault("temp_reads", {}).setdefault((state.mode, state.pc), set()).update(
+                k for k in acc.read_first if k in self.temps)
         if outcome[0] == "next":
             def get(k):
                 return inner.lookup(k).vars[k]
@@ -3255,7 +3289,13 @@ class Stepper:
                 jr = tuple(sorted((k, v) for k, v in lf.jvals.items() if k not in lf.jread
                                   and not (isinstance(k, int) and k > top)))
             else:
-                jr = tuple(sorted((k, v) for k, v in lf.jvals.items() if k not in lf.jread))
+                # (a register feeding an instruction patch keeps its value
+                # when read: only a jump register's value is used up. Not for
+                # 14.3, which patches no code in place: there it only keeps
+                # paths apart that should merge)
+                keep = lf.patch_regs if os.environ.get("DEVIRT_LIFT_UNRUN") != "1" else ()
+                jr = tuple(sorted((k, v) for k, v in lf.jvals.items()
+                                  if k not in lf.jread or k in keep))
             rtail = None
             if lf.rtail_new is not None:
                 # the loop function's locals still holding the new top
@@ -3281,7 +3321,16 @@ class Stepper:
                 if marks:
                     m = marks[0][1]
                     rtail = (m.start, m.tail, tuple(sorted(k for k, v in marks if v is m)))
-            nxt = State(get(self.mode_decl) if self.mode_decl else 0, get(self.pc_decl), get(self.vm.kstack_key) if self.vm.kstack_key else None,
+            nmode, npc = get(self.mode_decl) if self.mode_decl else 0, get(self.pc_decl)
+            norm = getattr(self, "norm_reads", None)
+            if norm is not None and self.temps:
+                live = norm.get((nmode, npc))
+                if live is not None:
+                    # a temporary the next instruction overwrites before
+                    # reading is dead: keeping it apart makes a loop's header
+                    # differ from itself on the way back (unrolled loops)
+                    locs = tuple((k, v) for k, v in locs if k not in self.temps or k in live)
+            nxt = State(nmode, npc, get(self.vm.kstack_key) if self.vm.kstack_key else None,
                         jr, None, lf.state_packs(), locs, rtail)
             return it, Next(nxt)
         return it, Ret(outcome[1])
@@ -3947,7 +3996,7 @@ class Program:
         for attempt in range(1, WALK_RESTARTS + 1):
             s0, order, restart = self._walk(vm, lf, st, limit)
             if not restart:
-                return s0, order
+                return self._without_dead_temps(vm, lf, st, limit, purpose, s0, order)
 
             sig = _walk_signature(lf, st, order)
             if sig == last_sig:
@@ -3972,6 +4021,40 @@ class Program:
             (purpose, WALK_RESTARTS, len(lf.jump_regs),
              len(getattr(st, "carry", ())), len(lf.requests))
         )
+
+    def _without_dead_temps(self, vm, lf, st, limit, purpose, s0, order):
+        """Walk again with the temporaries each instruction does not read
+        dropped from the states (learned from this walk), when some state
+        carried one; keep that walk if it is no worse and nothing it dropped
+        turned out to be read. Experimental, off unless DEVIRT_TEMP_NORM=1:
+        it still drops a live value in some functions."""
+        reads = getattr(st, "temp_reads", None)
+        temps = getattr(st, "temps", None)
+        if not temps or reads is None or getattr(st, "norm_reads", None) is not None \
+                or os.environ.get("DEVIRT_TEMP_NORM") != "1":
+            return s0, order
+        dead = False
+        for k, _ in order:
+            live = reads.get((k[0], k[1]))
+            if live is not None and any(t in temps and t not in live for t, _ in k[6]):
+                dead = True
+                break
+        if not dead:
+            return s0, order
+
+        def errors(o):
+            return sum(1 for _, n in o if getattr(n, "error", None))
+        st.norm_reads = {pc: set(r) for pc, r in reads.items()}
+        try:
+            s1, o1 = self.walk_stable(vm, lf, st, limit, purpose=purpose)
+        except Unsupported:
+            s1 = o1 = None
+        grew = any(r - st.norm_reads.get(pc, r) for pc, r in st.temp_reads.items())
+        if o1 is None or grew or errors(o1) > errors(order):
+            st.norm_reads = None
+            # (the first walk's facts stay: walk it again unchanged)
+            return self.walk_stable(vm, lf, st, limit, purpose=purpose)
+        return s1, o1
 
     def lift_raw(self, key, upvals=None, limit=200000):
         cap = self.dump.protos[key]
@@ -4011,6 +4094,8 @@ class Program:
         steps = 0
         nerr = 0
         while work and len(order) < limit:
+            if DEADLINE[0] is not None and time.time() > DEADLINE[0]:
+                raise Unsupported("time budget of a never-run function")
             k = work.pop()
             inwork.discard(k)
             s = states[k]
@@ -4272,8 +4357,21 @@ class FunctionLifter:
         self.stats = {"functions": 0, "errors": 0, "fallbacks": 0}
         self.lifted = set()
         self.completed = set()    # protos for which a source body was emitted
+        self.inline_log = []      # protos lifted in place (as a closure), in order
 
     def lift(self, vm, vmobj, proto, upvals, upnames, depth=0, orphan=False):
+        # `lifted` is the recursion guard: the protos being lifted right now.
+        # A proto leaves it when its lift ends, so one lifted earlier (on its
+        # own) is still lifted in place where a later function creates it,
+        # instead of becoming a `--[[ recursive proto ]]` placeholder.
+        fresh = id(proto) not in self.lifted
+        try:
+            return self._lift(vm, vmobj, proto, upvals, upnames, depth, orphan)
+        finally:
+            if fresh:
+                self.lifted.discard(id(proto))
+
+    def _lift(self, vm, vmobj, proto, upvals, upnames, depth=0, orphan=False):
         self.stats["functions"] += 1
         self.lifted.add(id(proto))
         me = sys.modules[__name__]
@@ -4430,18 +4528,41 @@ class FunctionLifter:
         # closure op once per state, tail duplication copies code): lift once
         ckey = (id(proto), id(cvm), tuple(fidx), depth, tuple(sorted(upnames.items(), key=repr)))
         memo = self.__dict__.setdefault("_closure_memo", {})
+        unrun = getattr(c, "unrun", False)
         if ckey in memo:
             lines, params = memo[ckey]
+            if lines is None:
+                return CG.FuncE([UNDECRYPTED_FN])
         else:
+            old_deadline = DEADLINE[0]
+            stats0 = dict(self.stats)
+            if unrun:
+                end = time.time() + float(os.environ.get("DEVIRT_UNRUN_BUDGET", "6"))
+                DEADLINE[0] = end if old_deadline is None else min(end, old_deadline)
             try:
                 lines = self.lift(cvm, vmobj, proto, UpList(fidx), upnames, depth + 1)
                 params = self.params
+                if unrun and not _plausible_unrun(lines):
+                    raise Unsupported("never-run function did not lift cleanly")
             except Unsupported as ex:
+                if unrun or old_deadline is not None and time.time() > old_deadline:
+                    # (a budget ran out: the stub, here and in any enclosing
+                    # never-run function, which gives up too)
+                    memo[ckey] = (None, None)
+                    self.lifted.discard(id(proto))
+                    self.stats.update(stats0)   # (its blocks are not in the output)
+                    if old_deadline is not None and time.time() > old_deadline:
+                        raise
+                    return CG.FuncE([UNDECRYPTED_FN])
                 lines = [
                     "-- unresolved native/runtime closure: %s" % str(ex).replace("\n", " "),
                     "return nil",
                 ]
+            finally:
+                DEADLINE[0] = old_deadline
             memo[ckey] = (lines, params)
+        if not (lines and lines[0].startswith("-- unresolved native/runtime closure")):
+            self.inline_log.append(id(proto))
         self.lifted.discard(id(proto))
         f = CG.FuncE(["function(%s)" % ", ".join(params)] + ["\t" + l for l in lines] + ["end"])
         f.captures = set(upnames.values())
@@ -4711,6 +4832,11 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
     # closure (e.g. created by an unresolved Luraph runtime helper, as the
     # v14.8 payload is): lift them on their own so their source is not lost.
     orphan_count = 0
+    # (proto id, first line, end line, protos it lifted in place) per function
+    # lifted on its own; ones another kept function already shows in place
+    # are dropped after the loop
+    entries = []
+    covered = set(fl.inline_log)
     if not os.environ.get("DEVIRT_NO_ORPHANS"):
         selected = {tag for tag, _ in vms if tag == payload or loaders}
         for pid, cap in prog.dump.protos.items():
@@ -4725,6 +4851,7 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
                 continue
             if id(proto) in fl.completed:
                 continue
+            entry_start, log0 = len(out), len(fl.inline_log)
             safe_pid = re.sub(r"[^A-Za-z0-9_]", "_", str(pid))
             if not safe_pid or safe_pid[0].isdigit():
                 safe_pid = "p_" + safe_pid
@@ -4780,6 +4907,8 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
             out.append("end")
             out.append("")
             orphan_count += 1
+            entries.append((id(proto), entry_start, len(out), set(fl.inline_log[log0:]) - {id(proto)}))
+    orphan_count -= _drop_inlined(out, entries, covered)
     fl.stats["orphan_protos"] = orphan_count
     # Luraph runtime functions the script calls (SharedFn): stubs up front
     shared = []
@@ -4807,6 +4936,47 @@ def lift_program(source, protos_path, chunk_paths=(), fetch=None):
         out[at:at] = shared
     text = backend.polish("\n".join(out))
     return text, fl.stats, prog.requests, buffer_patches(prog.dump)
+
+
+# when lifting a never-run function: the time it must be done by (or None)
+DEADLINE = [None]
+
+
+def _plausible_unrun(lines):
+    """A never-run function lifted from code Luraph had not decrypted yet
+    reads as garbage when the guess is wrong: unlifted blocks, unresolved
+    reads. Keep it only when it is clean."""
+    body = "\n".join(lines)
+    bad = body.count('error("devirt:') + body.count("read through an unresolved table")
+    if bad and os.environ.get("DEVIRT_SHOW_UNRUN"):
+        print("-- never-run function rejected (%d bad lines):\n%s" % (bad, body[:3000]), file=sys.stderr)
+    return bad == 0
+
+
+def _drop_inlined(out, entries, covered):
+    """Remove the functions lifted on their own that a kept function (or the
+    root) already shows in place, where the script creates them. -> count."""
+    covered = set(covered)
+    kept = []
+    # containers first: the function that creates most others is kept
+    for e in sorted(entries, key=lambda e: -len(e[3])):
+        if e[0] in covered:
+            continue
+        kept.append(e)
+        covered |= e[3]
+    # a function kept early may be shown in place by one kept later
+    for e in list(kept):
+        others = set()
+        for o in kept:
+            if o is not e:
+                others |= o[3]
+        if e[0] in others:
+            kept.remove(e)
+    keep = {id(e) for e in kept}
+    drop = sorted((e for e in entries if id(e) not in keep), key=lambda e: -e[1])
+    for _, a, b, _ in drop:
+        del out[a:b]
+    return len(drop)
 
 
 finish_text = backend.finish_text

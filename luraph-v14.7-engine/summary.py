@@ -25,7 +25,8 @@ def build(finished, stats):
     total = len(lines)
 
     runtime_stubs = len(re.findall(r"^local function luraph_runtime\d+\(", finished, re.M))
-    orphan_protos = int(stats.get("orphan_protos", 0) or 0)
+    # (what is left in the text: the strip and the in-place lifting remove most)
+    orphan_protos = len(re.findall(r"^local function recovered_proto_\w+\(", finished, re.M))
     undecrypted_refs = finished.count("luraph_undecrypted_function") - (1 if "local function luraph_undecrypted_function" in finished else 0)
     recovered_fns = len(re.findall(r"^\s*(?:local\s+)?function\b", finished, re.M)) - runtime_stubs \
         - (1 if "local function luraph_undecrypted_function" in finished else 0)

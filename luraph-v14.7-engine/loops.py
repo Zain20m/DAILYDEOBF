@@ -154,12 +154,19 @@ def try_numeric(h, blocks, D):
         start = Const(start.v + step.v)
     else:
         return False
-    for side in h.succ:
+    def only_from(bid, allowed):
+        # (equivalent blocks are merged across loops: one this loop's compare
+        # shares with another loop must stay for that one)
+        return all(b.id in allowed for b in blocks.values() if bid in b.succ)
+    sides = list(h.succ)
+    for side in sides:
         sb = blocks[side]
         for x in sb.succ:
-            blocks.pop(x, None) if blocks.get(x) is not None and blocks[x].kind == "goto" and \
-                blocks[x].succ == [body] else None
-        blocks.pop(side, None)
+            if blocks.get(x) is not None and blocks[x].kind == "goto" and blocks[x].succ == [body] \
+                    and only_from(x, set(sides)):
+                blocks.pop(x, None)
+        if only_from(side, {h.id}):
+            blocks.pop(side, None)
     h.stmts = []
     h.kind = "for"
     h.cond = None

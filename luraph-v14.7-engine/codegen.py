@@ -1767,7 +1767,11 @@ class Renderer:
         if isinstance(st, ST.SCrash):
             return [ind + "LPH_CRASH()"]
         if isinstance(st, ST.SError):
-            return [ind + "error(\"devirt: %s\")" % st.msg.replace("\\", "\\\\").replace("\"", "'")]
+            # Collapse any leaked `<module.Class object at 0x...>` repr to a
+            # short stable tag (no memory address, so output stays reproducible).
+            import re as _re
+            msg = _re.sub(r"<[\w.]*\.(\w+) object at 0x[0-9a-fA-F]+>", r"<\1>", st.msg)
+            return [ind + "error(\"devirt: %s\")" % msg.replace("\\", "\\\\").replace("\"", "'")]
         if isinstance(st, ST.SGotoState):
             # a jump the structurer could not express (e.g. a two-level break):
             # fail loudly instead of silently running on

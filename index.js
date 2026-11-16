@@ -4417,8 +4417,16 @@ async function handleDailyfuscatorCommand(interaction, attachment) {
     const result = await obfuscateDailyfuscatorInWorker(source, {
       profile,
       seed,
-      minBytes: 512000,
-    }, 180_000);
+      // Keep the minimum aligned with the engine's tested configuration.
+      // A 512 KB floor caused unnecessary output expansion on every build.
+      minBytes: 4096,
+    }, 180_000, (elapsedMs) => {
+      const elapsedSeconds = Math.floor(elapsedMs / 1000);
+      interaction.editReply(
+        '**[3/4]** Running Dailyfuscator v3 (' + profile + ')...\n' +
+        'Worker is still processing in isolation · ' + elapsedSeconds + 's elapsed.'
+      ).catch(() => {});
+    });
     if (!result || !result.ok) {
       throw new Error(result && result.error || 'Dailyfuscator did not produce an output.');
     }

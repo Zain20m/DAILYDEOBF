@@ -3176,12 +3176,15 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
       selectedEngineDir
     );
 
-    // Only fall back to v15.1 when legacy v15 produced no source at all. On
-    // v15 files legacy v15 recovers far more (795 vs 198 functions on a 785 KB
-    // v15.0 sample), and the fallback was only ever used if it came back fully
-    // complete -- so running it after a partial legacy lift mostly cost time
-    // and memory (884 MB peak), and got the whole job OOM-killed on small hosts.
-    if (version === '15' && !dedicatedValidation.complete && !dedicatedValidation.candidate) {
+    // Try the merged v15.1 engine when legacy v15 has no candidate OR
+    // explicitly reports devirtualization holes. A partial legacy candidate
+    // containing error("devirt: ...") is not a reason to skip the merged engine.
+    // Keep the better validated result so the fallback cannot replace a better lift.
+    const shouldTryMerged151 = version === '15' &&
+      !dedicatedValidation.complete &&
+      (!dedicatedValidation.candidate ||
+        Number(dedicatedValidation.metrics && dedicatedValidation.metrics.devirtErrors) > 0);
+    if (shouldTryMerged151) {
       // Legacy v15 cannot follow scripts that loadstring a second VM chunk and
       // gives up on several anti-tamper layouts. Give the v15.1 engine (which
       // also handles v15) a chance before returning a failed lift.
@@ -3199,11 +3202,15 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
       await cleanLuraph151Candidate(fallback.base + '.devirt.luau', ENGINE_151_DIR);
       const fbValidation = await inspectLiftFile(fallback.base + '.devirt.luau', ENGINE_151_DIR);
       const legacyHasCandidate = Boolean(dedicatedValidation.candidate);
-      if (fbValidation.complete || (fbValidation.candidate && !legacyHasCandidate)) {
+      const mergedIsBetter = fbValidation.candidate &&
+        Number(fbValidation.score) > Number(dedicatedValidation.score);
+      if (fbValidation.complete || (fbValidation.candidate && (!legacyHasCandidate || mergedIsBetter))) {
         chosen = fallback;
         chosenEngineDir = ENGINE_151_DIR;
         dedicatedValidation = fbValidation;
-        dedicatedLogs += '\n[*] using the v15.1 engine result (legacy v15 lift was incomplete).\n';
+        dedicatedLogs += '\n[*] using the merged v15.1 engine result (it passed validation or scored better than legacy v15).\n';
+      } else {
+        dedicatedLogs += '\n[*] keeping the legacy v15 result; the merged v15.1 candidate was not better by validation score.\n';
       }
     }
 

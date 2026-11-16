@@ -592,7 +592,15 @@ class VMModel:
         vals = [None] * max(n, 3)
         if self.info.get("mode") == "dispatch_local" and cap is not None:
             if self.info.get("chain"):
-                return [upvals] * max(n, 3)
+                # the innermost factory's arguments: the harness records its
+                # numeric ones (v15.2: the function's decryption keys) as
+                # __m_<name>; the rest stand for the upvalue list
+                out = [upvals] * max(n, 3)
+                for i, a in enumerate(self.maker["args"]):
+                    v = cap.get("__m_" + a["name"])
+                    if isinstance(v, (int, float)) and not isinstance(v, bool):
+                        out[i] = v
+                return out
             # this build's factory does not take (vmobj, proto, upvals): its
             # real arguments were captured per proto (`__PA[pv]` holds every
             # free name, the parameters included)

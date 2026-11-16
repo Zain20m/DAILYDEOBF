@@ -2778,7 +2778,7 @@ function normalize2HBJBinaryLiterals(source) {
       if (opener) {
         i = copyLongBracket(i, opener);
       } else {
-        const newline = text.indexOf('\\n', i + 2);
+        const newline = text.indexOf('\n', i + 2);
         const end = newline < 0 ? text.length : newline;
         output += text.slice(i, end);
         i = end;

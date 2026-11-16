@@ -3284,7 +3284,10 @@ class Stepper:
                 jr = tuple(sorted((k, v) for k, v in lf.jvals.items() if k not in lf.jread
                                   and not (isinstance(k, int) and k > top)))
             else:
-                jr = tuple(sorted((k, v) for k, v in lf.jvals.items() if k not in lf.jread))
+                # (a register feeding an instruction patch keeps its value
+                # when read: only a jump register's value is used up)
+                jr = tuple(sorted((k, v) for k, v in lf.jvals.items()
+                                  if k not in lf.jread or k in lf.patch_regs))
             rtail = None
             if lf.rtail_new is not None:
                 # the loop function's locals still holding the new top

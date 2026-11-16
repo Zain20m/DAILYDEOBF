@@ -170,7 +170,7 @@ def strip(text, exe):
                 drop.remove(d)
                 changed = True
     if not drop:
-        new = _fold_iterators(_unwrap_main(text, exe), exe)
+        new = _merge_ifs(_fold_iterators(_unwrap_main(text, exe), exe), exe)
         if new == text:
             return text, None
         return new, report
@@ -202,7 +202,68 @@ def strip(text, exe):
     new = re.sub(r"\n{3,}", "\n\n", new)
     if _parse(new, exe) is None:
         return text, None
-    return _fold_iterators(_unwrap_main(new, exe), exe), report
+    return _merge_ifs(_fold_iterators(_unwrap_main(new, exe), exe), exe), report
+
+
+_IF = re.compile(r"^(\t*)(if|elseif) (.+) then$")
+_IF_ONLY = re.compile(r"^(\t*)if (.+) then$")
+
+
+def _cond(c):
+    # `and` binds tighter than `or`: an operand with `or` in it gets parentheses
+    return "(%s)" % c if re.search(r"\bor\b", c) else c
+
+
+def _merge_ifs(text, exe):
+    """`if a then if b then ... end end` (no else at either level, nothing
+    else in the outer body) -> `if a and b then ... end`."""
+    lines = text.split("\n")
+    changed = True
+    while changed:
+        changed = False
+        i = 0
+        while i < len(lines):
+            m = _IF.match(lines[i])
+            if not m:
+                i += 1
+                continue
+            ind = m.group(1)
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            m2 = _IF_ONLY.match(lines[j]) if j < len(lines) else None
+            if not m2 or m2.group(1) != ind + "\t":
+                i += 1
+                continue
+            inner = ind + "\t"
+            # the inner if's end, with no else/elseif of its own on the way
+            k = j + 1
+            while k < len(lines) and lines[k] != inner + "end":
+                if lines[k].startswith(inner + "else") or lines[k].startswith(inner + "elseif") or \
+                        (lines[k].strip() and not lines[k].startswith(inner + "\t") and not lines[k].startswith(inner + "end")):
+                    k = None
+                    break
+                k += 1
+            if k is None or k >= len(lines):
+                i += 1
+                continue
+            e = k + 1
+            while e < len(lines) and not lines[e].strip():
+                e += 1
+            if e >= len(lines) or lines[e] != ind + "end":
+                i += 1
+                continue
+            body = [ln[1:] if ln.startswith("\t") else ln for ln in lines[j + 1:k]]
+            # (an `elseif` merges only as the last branch: with an `else`
+            # after it, `a and not b` would now run that else)
+            head = "%s%s %s and %s then" % (ind, m.group(2), _cond(m.group(3)), _cond(m2.group(2)))
+            lines[i:e + 1] = [head] + body + [ind + "end"]
+            changed = True
+            i += 1
+    new = "\n".join(lines)
+    if new == text:
+        return text
+    return new if _parse(new, exe) is not None else text
 
 
 _ITER = re.compile(r"(?m)^(\t*)local (\w+), (\w+), (\w+) = (i?pairs)\((.+)\)\n(?:\n)?\1for (\w+(?:, \w+)?) in \3, \4 do$")

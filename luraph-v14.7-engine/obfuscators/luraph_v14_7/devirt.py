@@ -3271,6 +3271,11 @@ class Stepper:
             outcome = ("ret", Multi([lf.value_of(x) if not isinstance(x, SymList) else x for x in m.items], m.tail))
         lf.finish_closures()
         self._note_access(acc)
+        if self.temps and state is not None:
+            # which micro-instruction temporaries this instruction reads
+            # before writing them (see walk_stable: dead temps)
+            self.__dict__.setdefault("temp_reads", {}).setdefault((state.mode, state.pc), set()).update(
+                k for k in acc.read_first if k in self.temps)
         if outcome[0] == "next":
             def get(k):
                 return inner.lookup(k).vars[k]
@@ -3284,7 +3289,13 @@ class Stepper:
                 jr = tuple(sorted((k, v) for k, v in lf.jvals.items() if k not in lf.jread
                                   and not (isinstance(k, int) and k > top)))
             else:
-                jr = tuple(sorted((k, v) for k, v in lf.jvals.items() if k not in lf.jread))
+                # (a register feeding an instruction patch keeps its value
+                # when read: only a jump register's value is used up. Not for
+                # 14.3, which patches no code in place: there it only keeps
+                # paths apart that should merge)
+                keep = lf.patch_regs if os.environ.get("DEVIRT_LIFT_UNRUN") != "1" else ()
+                jr = tuple(sorted((k, v) for k, v in lf.jvals.items()
+                                  if k not in lf.jread or k in keep))
             rtail = None
             if lf.rtail_new is not None:
                 # the loop function's locals still holding the new top
@@ -3310,7 +3321,16 @@ class Stepper:
                 if marks:
                     m = marks[0][1]
                     rtail = (m.start, m.tail, tuple(sorted(k for k, v in marks if v is m)))
-            nxt = State(get(self.mode_decl) if self.mode_decl else 0, get(self.pc_decl), get(self.vm.kstack_key) if self.vm.kstack_key else None,
+            nmode, npc = get(self.mode_decl) if self.mode_decl else 0, get(self.pc_decl)
+            norm = getattr(self, "norm_reads", None)
+            if norm is not None and self.temps:
+                live = norm.get((nmode, npc))
+                if live is not None:
+                    # a temporary the next instruction overwrites before
+                    # reading is dead: keeping it apart makes a loop's header
+                    # differ from itself on the way back (unrolled loops)
+                    locs = tuple((k, v) for k, v in locs if k not in self.temps or k in live)
+            nxt = State(nmode, npc, get(self.vm.kstack_key) if self.vm.kstack_key else None,
                         jr, None, lf.state_packs(), locs, rtail)
             return it, Next(nxt)
         return it, Ret(outcome[1])
@@ -3976,7 +3996,7 @@ class Program:
         for attempt in range(1, WALK_RESTARTS + 1):
             s0, order, restart = self._walk(vm, lf, st, limit)
             if not restart:
-                return s0, order
+                return self._without_dead_temps(vm, lf, st, limit, purpose, s0, order)
 
             sig = _walk_signature(lf, st, order)
             if sig == last_sig:
@@ -4001,6 +4021,40 @@ class Program:
             (purpose, WALK_RESTARTS, len(lf.jump_regs),
              len(getattr(st, "carry", ())), len(lf.requests))
         )
+
+    def _without_dead_temps(self, vm, lf, st, limit, purpose, s0, order):
+        """Walk again with the temporaries each instruction does not read
+        dropped from the states (learned from this walk), when some state
+        carried one; keep that walk if it is no worse and nothing it dropped
+        turned out to be read. Experimental, off unless DEVIRT_TEMP_NORM=1:
+        it still drops a live value in some functions."""
+        reads = getattr(st, "temp_reads", None)
+        temps = getattr(st, "temps", None)
+        if not temps or reads is None or getattr(st, "norm_reads", None) is not None \
+                or os.environ.get("DEVIRT_TEMP_NORM") != "1":
+            return s0, order
+        dead = False
+        for k, _ in order:
+            live = reads.get((k[0], k[1]))
+            if live is not None and any(t in temps and t not in live for t, _ in k[6]):
+                dead = True
+                break
+        if not dead:
+            return s0, order
+
+        def errors(o):
+            return sum(1 for _, n in o if getattr(n, "error", None))
+        st.norm_reads = {pc: set(r) for pc, r in reads.items()}
+        try:
+            s1, o1 = self.walk_stable(vm, lf, st, limit, purpose=purpose)
+        except Unsupported:
+            s1 = o1 = None
+        grew = any(r - st.norm_reads.get(pc, r) for pc, r in st.temp_reads.items())
+        if o1 is None or grew or errors(o1) > errors(order):
+            st.norm_reads = None
+            # (the first walk's facts stay: walk it again unchanged)
+            return self.walk_stable(vm, lf, st, limit, purpose=purpose)
+        return s1, o1
 
     def lift_raw(self, key, upvals=None, limit=200000):
         cap = self.dump.protos[key]

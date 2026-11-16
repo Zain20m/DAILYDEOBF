@@ -1728,7 +1728,7 @@ async function startFulcrumWorkflow(message, inlineSource = null) {
     workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-fulcrum-'));
     const inputPath = path.join(workDir, 'input.lua');
     const outputDir = path.join(workDir, 'out');
-    await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
+    const normalizedSource = normalize2HBJBinaryLiterals(input.source);\n    await fs.writeFile(inputPath, normalizedSource, { encoding: 'utf8', mode: 0o600 });
 
     await runPythonEngine(
       ENGINE_FULCRUM_DIR,
@@ -2733,6 +2733,94 @@ async function processIronbrew2(message, prompt, input) {
   }
 }
 
+// The bundled 2HBJ parser predates Luau's binary integer literal syntax.
+ // Normalize only numeric tokens; leave quoted strings and both Lua comment forms untouched.
+function normalize2HBJBinaryLiterals(source) {
+  const text = String(source || '');
+  let output = '';
+  let i = 0;
+
+  function longBracketAt(index) {
+    if (text[index] !== '[') return null;
+    let cursor = index + 1;
+    while (text[cursor] === '=') cursor += 1;
+    if (text[cursor] !== '[') return null;
+    const equals = text.slice(index + 1, cursor);
+    return { end: cursor + 1, close: ']' + equals + ']' };
+  }
+
+  function copyLongBracket(index, opener) {
+    const closeAt = text.indexOf(opener.close, opener.end);
+    const end = closeAt < 0 ? text.length : closeAt + opener.close.length;
+    output += text.slice(index, end);
+    return end;
+  }
+
+  while (i < text.length) {
+    const char = text[i];
+
+    if (char === "'" || char === '"') {
+      const quote = char;
+      const start = i++;
+      while (i < text.length) {
+        if (text[i] === '\\') {
+          i = Math.min(text.length, i + 2);
+          continue;
+        }
+        if (text[i++] === quote) break;
+      }
+      output += text.slice(start, i);
+      continue;
+    }
+
+    if (char === '-' && text[i + 1] === '-') {
+      const opener = longBracketAt(i + 2);
+      if (opener) {
+        i = copyLongBracket(i, opener);
+      } else {
+        const newline = text.indexOf('\\n', i + 2);
+        const end = newline < 0 ? text.length : newline;
+        output += text.slice(i, end);
+        i = end;
+      }
+      continue;
+    }
+
+    if (char === '[') {
+      const opener = longBracketAt(i);
+      if (opener) {
+        i = copyLongBracket(i, opener);
+        continue;
+      }
+    }
+
+    const previous = i > 0 ? text[i - 1] : '';
+    if (char === '0' && (text[i + 1] === 'b' || text[i + 1] === 'B') &&
+        !/[A-Za-z0-9_.]/.test(previous)) {
+      let end = i + 2;
+      while (/[01_]/.test(text[end] || '')) end += 1;
+      const rawDigits = text.slice(i + 2, end);
+      const digits = rawDigits.replace(/_/g, '');
+      const next = text[end] || '';
+      const validSeparators = rawDigits.length > 0 &&
+        !rawDigits.endsWith('_') && !rawDigits.includes('__');
+      if (/[01]/.test(digits) && validSeparators && !/[A-Za-z0-9_]/.test(next)) {
+        const decimal = Number('0b' + digits);
+        if (Number.isFinite(decimal)) {
+          output += String(decimal);
+          i = end;
+          continue;
+        }
+      }
+    }
+
+    output += char;
+    i += 1;
+  }
+
+  return output;
+}
+
 async function process2HBJ(message, prompt, input) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-2hbj-'));
   const inputPath = path.join(tempRoot, 'input.lua');
@@ -2823,7 +2911,7 @@ async function process2HBJ(message, prompt, input) {
       '',
       'The included tool bundle says the protected script itself is not executed by its dump stage; it inspects the VM loader and reconstructs source from dumped prototypes.',
       'Important limitation: the supplied bundle is tuned to its included 2HBJ sample. Its instructions say stage2.js string/alphabet mappings, instr.py instrumentation patterns and the disasm.py opcode table may need manual changes for other builds. Treat this output as experimental, not guaranteed complete source.',
-      'The included README notes that anti-tamper code may remain above the recovered script in out.lua.',
+      'The 2HBJ input is normalized for binary integer literals before parsing because the bundled parser does not recognize Luau 0b/0B numeric syntax.',\n      'The included README notes that anti-tamper code may remain above the recovered script in out.lua.',
       '',
       'Engine diagnostics:',
       String(result.stdout || result.stderr || '').slice(-7000) || '(No diagnostics emitted.)',

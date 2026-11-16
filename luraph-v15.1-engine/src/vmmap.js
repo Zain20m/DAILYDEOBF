@@ -553,6 +553,16 @@ function patchEntries(source, filePath, chunkTag) {
       const f3Cap = f3Params.map(nm => `${nm}=${nm}`).join(',');
       const headCode = `local __pv={${f3Cap}};if __PA and __PA.n<8192 then __PA.n=__PA.n+1;__PA[__pv]={__seq=__PA.n,__maker="${tag}@${l2},${c2}",${f3Cap}} end;`;
       edits.push([f3_l0, f3_c0, headCode]);
+      // the middle factory's own parameters (v15.2: function(H,A,p,v) with
+      // H and p the function's operand/constant decryption keys): recorded
+      // once per proto as __m_<name>, read by devirt maker_args (chain mode)
+      const f2b = f2.body && f2.body.body;
+      const f2Params = [...new Set((f2.args || []).map(a => a.name).filter(nm => nm && nm !== '...'))];
+      if (f2b && f2b.length && f2Params.length) {
+        const [f2_l0, f2_c0] = loc(f2b[0]);
+        const sets = f2Params.map(nm => `__e.__m_${nm}=${nm};`).join('');
+        edits.push([f2_l0, f2_c0, `do local __e=__PA and __PA[__pv];if __e and __e.__m==nil then __e.__m=true;${sets}end end;`]);
+      }
       if (kind === 'named') {
         const [r1_l, r1_c] = loc(retStmt);
         const [r2_l, r2_c] = loc(f2Ret);

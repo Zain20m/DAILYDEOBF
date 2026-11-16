@@ -47,6 +47,10 @@ API = re.compile(
 DECODER = re.compile(r"bit32\.bxor")
 # a function whose body is mostly a numeric-keyed table (Luraph's constant pool)
 CONST_ENTRY = re.compile(r"(?m)^\s*\[\d+\]\s*=\s*")
+# reading Luraph's constant pool through an upvalue (`upvalue1[110]`) or the
+# pool's `[0]` slot: the lifter resolves the script's own constants in place,
+# so only Luraph's runtime code (env checks, hooks) is left doing this
+POOL_USE = re.compile(r"\b(?:__orphan_)?upvalue_?\d+\[\d{2,3}\]|\w\[0\]\[")
 PROTO = re.compile(r"^local function (recovered_proto_\w+)\(([^)]*)\)")
 PREAMBLE = re.compile(r"^local function (luraph_runtime\d+|luraph_undecrypted_function)\(|"
                       r"^local luraph_constants = ")
@@ -130,7 +134,7 @@ def strip(text, exe):
         # a quoted string that looks like a Roblox member or a word of game
         # text (PascalCase or a phrase) marks real script code
         game_str = re.search(r'"[A-Z][a-z]\w+|"[a-z]+_[a-z]', body)
-        luraph_only = not API.search(body) and (
+        luraph_only = POOL_USE.search(body) or not API.search(body) and (
             MARKERS.search(body)                        # Luraph text markers
             or nparams >= HUGE_ARITY                    # VM-internal arity
             or (DECODER.search(body) and "% 256" in body)  # LPH_ENCSTR decryptor
@@ -166,7 +170,10 @@ def strip(text, exe):
                 drop.remove(d)
                 changed = True
     if not drop:
-        return text, None
+        new = _fold_iterators(_unwrap_main(text, exe), exe)
+        if new == text:
+            return text, None
+        return new, report
 
     # cut, taking each function's describing comment with it
     marks = {}
@@ -183,8 +190,7 @@ def strip(text, exe):
             if what == "bootstrap":
                 out.append("-- [Luraph bootstrap removed: %d lines of Luraph's own start-up code" % report["bootstrap_lines"])
                 out.append("--  (global caching, tostring/rawset tamper hooks, debug-library and")
-                out.append("--  loadstring checks). It is not part of the script; the script's")
-                out.append("--  code is in the recovered functions below.]")
+                out.append("--  loadstring checks). It is not part of the script.]")
             i = b + 1
             continue
         out.append(lines[i])
@@ -196,7 +202,95 @@ def strip(text, exe):
     new = re.sub(r"\n{3,}", "\n\n", new)
     if _parse(new, exe) is None:
         return text, None
-    return new, report
+    return _fold_iterators(_unwrap_main(new, exe), exe), report
+
+
+_ITER = re.compile(r"(?m)^(\t*)local (\w+), (\w+), (\w+) = (i?pairs)\((.+)\)\n(?:\n)?\1for (\w+(?:, \w+)?) in \3, \4 do$")
+
+
+_LUA_WORDS = {"and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in",
+              "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
+              "continue", "type", "string", "table", "next", "select", "game", "workspace"}
+
+
+def _loop_value_name(expr, loopvars, block):
+    """(old, new): a name for a loop's value variable from what the loop
+    goes through (`pairs(x.neon_parts)` -> neonPart), when the value has a
+    generated name and the new one is free in the block."""
+    vs = [v.strip() for v in loopvars.split(",")]
+    if len(vs) != 2 or not re.match(r"^v\d+$", vs[1]):
+        return None
+    m = re.search(r":Get(\w+)\(\)$", expr.strip()) or re.search(r"(?:^|[.:])([A-Za-z_]\w*)$", expr.strip())
+    if not m:
+        return None
+    try:
+        import names
+        word = names.singular(m.group(1))
+        if word:
+            word = re.sub(r"_+([a-z0-9])", lambda x: x.group(1).upper(), word)
+            word = word[:1].lower() + word[1:]
+    except Exception:  # noqa: BLE001
+        return None
+    if not word or word in _LUA_WORDS or not re.match(r"^[a-z]\w*$", word) or \
+            re.search(r"\b%s\b" % word, block) or word == vs[0]:
+        return None
+    return vs[1], word
+
+
+def _fold_iterators(text, exe):
+    """`local a, b, c = pairs(x)` + `for k, v in b, c do` (how the VM's
+    generic-for setup lifts) -> `for k, v in pairs(x) do`, when a, b and c
+    are used nowhere else in that block."""
+    out = []
+    pos = 0
+    for m in _ITER.finditer(text):
+        ind, a, b, c = m.group(1), m.group(2), m.group(3), m.group(4)
+        # the rest of the enclosing block: up to the first line indented less
+        rest = text[m.end():]
+        end = re.search(r"(?m)^(?!%s)(?=\t{0,%d}\S)" % (re.escape(ind), max(len(ind) - 1, 0)), rest) if ind else None
+        block = rest[:end.start()] if end else rest
+        if any(re.search(r"\b%s\b" % n, block) for n in (a, b, c)):
+            continue
+        out.append(text[pos:m.start()])
+        loopvars = m.group(7)
+        body_end = re.search(r"(?m)^%send$" % re.escape(ind), rest)
+        named = _loop_value_name(m.group(6), loopvars, block)
+        if named and body_end:
+            old_v, nv = named
+            loopvars = re.sub(r"\b%s\b" % old_v, nv, loopvars)
+            body = re.sub(r"\b%s\b" % old_v, nv, rest[:body_end.start()])
+            out.append("%sfor %s in %s(%s) do" % (ind, loopvars, m.group(5), m.group(6)))
+            out.append(body)
+            pos = m.end() + body_end.start()
+            continue
+        out.append("%sfor %s in %s(%s) do" % (ind, loopvars, m.group(5), m.group(6)))
+        pos = m.end()
+    if not out:
+        return text
+    out.append(text[pos:])
+    new = "".join(out)
+    return new if _parse(new, exe) is not None else text
+
+
+def _unwrap_main(text, exe):
+    """When all that is left of the script is one parameterless function that
+    nothing calls (Luraph started it from its runtime), show its body at top
+    level, as the script was written."""
+    root = _parse(text, exe)
+    if root is None:
+        return text
+    lines = text.split("\n")
+    stmts = [_loc(s["location"]) for s in root.get("body", [])]
+    protos = [(a, b, m) for a, b in stmts for m in [PROTO.match(lines[a])] if m]
+    if len(protos) != 1:
+        return text
+    a, b, m = protos[0]
+    if m.group(2).strip() or (a, b) != stmts[-1] or _refs(m.group(1), text) != 1:
+        return text
+    body = [ln[1:] if ln.startswith("\t") else ln for ln in lines[a + 1:b]]
+    new = "\n".join(lines[:_comment_start(lines, a)] + body + lines[b + 1:])
+    new = re.sub(r"\n{3,}", "\n\n", new)
+    return new if _parse(new, exe) is not None else text
 
 
 def strip_quiet(text):

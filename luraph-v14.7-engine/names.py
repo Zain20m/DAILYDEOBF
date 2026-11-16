@@ -317,9 +317,18 @@ class Namer:
                 self.visit_expr(v)
             body = loc(st["body"]["location"])
             names = self.forin_names(st)
-            for var, nm in zip(st["vars"], names):
+            ipairs_ = bool(st["values"]) and st["values"][0].get("type") == "AstExprCall" \
+                and dotted(st["values"][0].get("func", {})) == "ipairs"
+            for i, (var, nm) in enumerate(zip(st["vars"], names)):
                 info = self.local_info(var, (body[0], body[1]))
                 info["hint"] = nm
+                info["forvar"] = True
+                if i == 1:
+                    # a value with nothing to name it after: an element of a
+                    # list (ipairs) is an item, of a table a value
+                    info["forfallback"] = "item" if ipairs_ else "value"
+                    if isinstance(nm, tuple) and nm[1] is None:
+                        info["hint"] = info["forfallback"]
             self.visit_block(st["body"])
             return
         if t in ("AstStatBlock",):
@@ -963,6 +972,8 @@ class Namer:
                     role = "iter"
                 elif pk == "AstExprIndexExpr" and parent.get("index") is n:
                     role = "key"
+                elif pk == "AstExprUnary" and parent.get("op") == "Len":
+                    role = "iter"
                 uses.setdefault(n["local"]["location"], set()).add(role)
             for v in n.values():
                 if isinstance(v, (dict, list)):
@@ -1001,6 +1012,8 @@ class Namer:
                     nm = singular(base[1])
                     if nm:
                         return nm
+            if key == "v" and info.get("forfallback"):
+                return info["forfallback"]
             return key
         if h:
             return h
@@ -1031,12 +1044,20 @@ class Namer:
         for key in self.order:
             info = self.locals[key]
             info["refs"].sort()
+            if info.get("forvar") and len(info["spans"]) == 1 \
+                    and (self.generated.match(info["name"]) or info["name"] in ("k", "i", "v")):
+                info["new"] = "_"       # (a loop variable nothing reads)
+                continue
             if not self.generated.match(info["name"]):
                 info["new"] = info["name"]
                 taken.setdefault(info["name"], []).append(info)
         for key in sorted(self.order, key=lambda k: self.locals[k]["decl"]):     # numbered in reading order
             info = self.locals[key]
             if "new" in info:
+                continue
+            if info.get("forvar") and len(info["refs"]) == 1 and len(info["spans"]) == 1 \
+                    and (self.generated.match(info["name"]) or info["name"] in ("k", "i", "v")):
+                info["new"] = "_"       # (a loop variable nothing reads)
                 continue
             base = self.base_name(info)
             if not base or not re.match(r"^[A-Za-z_]\w*$", base) or (base in reserved and info.get("role") != "self"):

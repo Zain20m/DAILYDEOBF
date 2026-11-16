@@ -170,7 +170,8 @@ def strip(text, exe):
                 drop.remove(d)
                 changed = True
     if not drop:
-        new = _drop_lift_notes(_refine_names(_merge_ifs(_fold_iterators(_unwrap_main(text, exe), exe), exe), exe))
+        new = _drop_lift_notes(_refine_names(_inline_temps(_inline_aliases(_merge_ifs(_fold_iterators(
+            _unwrap_main(text, exe), exe), exe), exe), exe), exe))
         if new == text:
             return text, None
         return new, report
@@ -200,7 +201,93 @@ def strip(text, exe):
     new = re.sub(r"\n{3,}", "\n\n", new)
     if _parse(new, exe) is None:
         return text, None
-    return _drop_lift_notes(_refine_names(_merge_ifs(_fold_iterators(_unwrap_main(new, exe), exe), exe), exe)), report
+    return _drop_lift_notes(_refine_names(_inline_temps(_inline_aliases(_merge_ifs(_fold_iterators(
+        _unwrap_main(new, exe), exe), exe), exe), exe), exe)), report
+
+
+_TEMP = re.compile(r"^(\t*)local ([A-Za-z_]\w*) = ([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)$")
+
+
+def _inline_temps(text, exe):
+    """`local name = localPlayer.Name` used once, on the next line ->
+    that line reads `localPlayer.Name` itself (the VM loads every operand
+    into a register first; the script wrote it inline)."""
+    lines = text.split("\n")
+    i = 0
+    changed = False
+    while i < len(lines):
+        m = _TEMP.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        ind, name, path = m.groups()
+        j = i + 1
+        while j < len(lines) and not lines[j].strip():
+            j += 1
+        if j >= len(lines) or not lines[j].startswith(ind) or lines[j][len(ind):len(ind) + 1] == "\t":
+            i += 1
+            continue
+        word = re.compile(r"(?<![\w.:])%s\b" % re.escape(name))
+        # the rest of the declaring block: the name must occur exactly once there
+        k = j
+        while k < len(lines) and (not lines[k].strip() or lines[k].startswith(ind)):
+            if k > j and lines[k].strip() and not lines[k].startswith(ind + "\t") and \
+                    re.match(r"^%s(?:end|else|elseif|until)\b" % re.escape(ind[:-1]), lines[k]) if ind else False:
+                break
+            k += 1
+        block = "\n".join(lines[j:k])
+        if len(word.findall(block)) != 1 or len(word.findall(lines[j])) != 1 \
+                or re.search(r"(?<![\w.:])%s\s*=[^=]" % re.escape(name), lines[j]) \
+                or path.split(".")[0] == name:
+            i += 1
+            continue
+        lines[j] = word.sub(path, lines[j], count=1)
+        del lines[i:j]          # the declaration (and a blank line after it)
+        changed = True
+    if not changed:
+        return text
+    new = "\n".join(lines)
+    return new if _parse(new, exe) is not None else text
+
+
+# built-in libraries / datatypes: `local x = Color3.fromHex` only caches them
+_BUILTIN_ROOTS = ("Color3|Vector3|Vector2|CFrame|UDim2|UDim|Instance|math|string|table|Enum|TweenInfo|"
+                  "ColorSequence|ColorSequenceKeypoint|NumberSequence|NumberSequenceKeypoint|NumberRange|"
+                  "BrickColor|Ray|Random|Rect|Region3|task|os|coroutine|bit32|utf8|buffer|Font|PhysicalProperties")
+_ALIAS = re.compile(r"(?m)^(\t*)local ([A-Za-z_]\w*) = ((?:%s)\.[A-Za-z_]\w*)\n" % _BUILTIN_ROOTS)
+
+
+def _inline_aliases(text, exe):
+    """`local color = Color3.fromHex` ... `color("F89B29")` -> `Color3.fromHex("F89B29")`
+    (how the VM loads a library function, not how the script was written), when
+    within the declaring block the name is never assigned again or declared
+    again, and is only ever called."""
+    out = text
+    # last first: earlier offsets stay valid
+    for m in reversed(list(_ALIAS.finditer(text))):
+        ind, name, path = m.group(1), m.group(2), m.group(3)
+        if name in path.split("."):
+            continue
+        rest = out[m.end():]
+        # the declaring block: up to the first line indented less
+        end = re.search(r"(?m)^\t{0,%d}(?=\S)" % (len(ind) - 1), rest) if ind else None
+        block = rest[:end.start()] if end else rest
+        # declared again in the block (a sibling local of the same name): stop there
+        again = re.search(r"(?m)^\s*local (?:function )?(?:[\w, ]*\b)?%s\b" % re.escape(name), block)
+        if again:
+            block = block[:again.start()]
+        uses = list(re.finditer(r"(?<![\w.:])%s\b" % re.escape(name), block))
+        if not uses or any(not block[u.end():].startswith("(") for u in uses):
+            continue
+        body = re.sub(r"(?<![\w.:])%s(?=\()" % re.escape(name), path, block)
+        start = m.start()
+        tail = rest[len(block):]
+        if body.startswith("\n") and (not out[:start] or out[:start].endswith("\n\n")):
+            body = body[1:]
+        out = out[:start] + body + tail
+    if out == text:
+        return text
+    return out if _parse(out, exe) is not None else text
 
 
 _LIFT_NOTES = re.compile(

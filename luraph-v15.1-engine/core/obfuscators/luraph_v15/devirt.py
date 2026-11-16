@@ -2363,6 +2363,9 @@ class OpenUps:
     MaybeBox (a by-reference capture of that register); storing nil into it
     is the close op: the captured local's scope ends there."""
 
+    def __repr__(self):
+        return "<open-upvalues>"
+
 OPENUPS = OpenUps()
 
 class MaybeBox:
@@ -2385,6 +2388,9 @@ class UpList:
         if b is None:
             b = self.boxes[i] = FrameProxy(i) if i in self.frames else BoxProxy(i)
         return b
+
+    def __repr__(self):
+        return "<upvalue-list>"
 
 REGFILE = RegFile()
 

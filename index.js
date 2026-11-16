@@ -5767,6 +5767,7 @@ async function startWorkflow(message, inlineText = null) {
         ['14.9', 'luraph-v149', 'Luraph 14.9'],
         ['15', 'luraph-v15', 'Luraph 15'],
         ['15.1', 'luraph-151', 'Luraph 15.1'],
+        ['15.2', 'luraph-152', 'Luraph 15.2'],
       ].map(([version, engine, label]) => engineButton(new ButtonBuilder()
         .setCustomId(`deobf-luraph-version:${version}:${message.author.id}`), engine, label))
     ),
@@ -5886,7 +5887,7 @@ async function startWorkflow(message, inlineText = null) {
       return;
     }
     const luraphVersionMatch = interaction.customId.match(
-      new RegExp('^deobf-luraph-version:(14\\.3s|14\\.3|14\\.7|14\\.8|14\\.9|15|15\\.1):' + message.author.id + '$')
+      new RegExp('^deobf-luraph-version:(14\\.3s|14\\.3|14\\.7|14\\.8|14\\.9|15|15\\.1|15\\.2):' + message.author.id + '$')
     );
     if (luraphVersionMatch) {
       await interaction.deferUpdate();
@@ -5900,6 +5901,12 @@ async function startWorkflow(message, inlineText = null) {
         else if (version === '14.8') await processLuraph148(message, prompt, selectedInput);
         else if (version === '14.9') await processLuraph149(message, prompt, selectedInput);
         else if (version === '15') await processLuraphV15(message, prompt, selectedInput);
+        else if (version === '15.2') {
+          // v15.2 shares the v15.1 engine's VM family (newest dedicated engine).
+          // Its closure/upvalue layout differs, so the lift is best-effort.
+          const gameId = await collectLuraphGameId(message, prompt, 'Luraph 15.2');
+          await processLuraph151(message, prompt, selectedInput, gameId, '15.2');
+        }
         else {
           const gameId = await collectLuraphGameId(message, prompt, 'Luraph 15.1');
           await processLuraph151(message, prompt, selectedInput, gameId);

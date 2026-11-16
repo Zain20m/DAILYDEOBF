@@ -29,6 +29,7 @@ const LURAPH_ENGINES = {
   '14.9': ['luraph-v149', 'Luraph 14.9'],
   '15': ['luraph-v15', 'Luraph v15'],
   '15.1': ['luraph-151', 'Luraph 15.1'],
+  '15.2': ['luraph-152', 'Luraph 15.2'],
 };
 
 const LURAPH_14_FAMILY = ['luraph-v149', 'luraph-v148', 'luraph-v147'];
@@ -54,7 +55,8 @@ function luraphFromVersion(version) {
   const v = String(version).replace(/\.0$/, '');
   if (LURAPH_ENGINES[v]) {
     const [engine, label] = LURAPH_ENGINES[v];
-    const alts = v.startsWith('14.') && v !== '14.3' ? LURAPH_14_FAMILY : (v === '15' ? ['luraph-151'] : v === '15.1' ? ['luraph-v15'] : []);
+    const alts = v.startsWith('14.') && v !== '14.3' ? LURAPH_14_FAMILY
+      : (v === '15' ? ['luraph-151'] : v === '15.1' ? ['luraph-v15'] : v === '15.2' ? ['luraph-151', 'luraph-v15'] : []);
     return result(engine, label, 'high', 'The file header names Luraph v' + v + '.', alts);
   }
   const [major, minor] = v.split('.').map(Number);
@@ -68,12 +70,12 @@ function luraphFromVersion(version) {
       'The header names Luraph v' + v + ', which has no dedicated engine; v14.3 is the closest.', ['luraph-v147']);
   }
   if (major === 15 || (major === 14 && minor > 9)) {
-    return result('luraph-151', 'Luraph 15.1', 'medium',
-      'The header names Luraph v' + v + ', which has no dedicated engine; 15.1 is the newest engine.', ['luraph-v15']);
+    return result('luraph-152', 'Luraph 15.2', 'medium',
+      'The header names Luraph v' + v + ', which has no dedicated engine; it shares the v15.1 VM family.', ['luraph-151', 'luraph-v15']);
   }
   if (major > 15) {
-    return result('luraph-151', 'Luraph 15.1', 'low',
-      'The header names Luraph v' + v + ', newer than any engine here; 15.1 is the closest and may not work.', ['luraph-v15']);
+    return result('luraph-152', 'Luraph 15.2', 'low',
+      'The header names Luraph v' + v + ', newer than any engine here; the v15.2 route is the closest and may not work.', ['luraph-151', 'luraph-v15']);
   }
   return result(null, 'Luraph v' + v, 'medium', 'The header names Luraph v' + v + ', which no engine here supports.');
 }

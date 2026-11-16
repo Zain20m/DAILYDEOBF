@@ -21,6 +21,16 @@ METHOD_NAMES = {"GetChildren": "children", "GetDescendants": "descendants", "Get
                 "JSONDecode": "data", "JSONEncode": "json", "match": "match", "gsub": "str", "sub": "str",
                 "lower": "str", "upper": "str", "format": "str", "rep": "str", "find": "pos", "split": "parts",
                 "GetAttribute": "attribute", "IsA": "isA", "Wait": "result"}
+# UI-library builder methods (WindUI, Rayfield, Orion, Fluent, ...): the local
+# that holds the result is named after the component it makes.
+UI_COMPONENTS = {"Window": "window", "CreateWindow": "window", "Section": "section",
+                 "Tab": "tab", "CreateTab": "tab", "Toggle": "toggle", "Button": "button",
+                 "Dropdown": "dropdown", "Slider": "slider", "Input": "input", "Textbox": "textbox",
+                 "Paragraph": "paragraph", "Label": "label", "Keybind": "keybind",
+                 "ColorPicker": "colorPicker", "Divider": "divider", "AddTab": "tab",
+                 "AddSection": "section", "AddToggle": "toggle", "AddButton": "button",
+                 "AddDropdown": "dropdown", "AddSlider": "slider", "AddLabel": "label",
+                 "Groupbox": "groupbox", "Tabbox": "tabbox", "CreateToggle": "toggle"}
 GLOBAL_CALLS = {"tick": "now", "time": "now", "os.clock": "now", "os.time": "now", "type": "kind",
                 "typeof": "kind", "tostring": "str", "tonumber": "num", "setmetatable": "obj",
                 "loadstring": "chunk", "getgenv": "genv", "getfenv": "env", "gethui": "hui",
@@ -49,6 +59,19 @@ SIGNAL_PARAMS = {
     "AncestryChanged": ["child", "parent"], "AttributeChanged": ["attribute"],
     "StateChanged": ["old", "new"], "MoveToFinished": ["reached"], "Completed": ["playbackState"],
 }
+
+def _table_field_str(node, keys):
+    """The string value of the first of `keys` in a table literal, or None."""
+    if not node or node.get("type") != "AstExprTable":
+        return None
+    for item in node.get("items", []):
+        k = item.get("key")
+        if k and k.get("type") == "AstExprConstantString" and k.get("value") in keys:
+            v = item.get("value")
+            if v and v.get("type") == "AstExprConstantString":
+                return v.get("value")
+    return None
+
 
 def str_arg_name(call):
     """f("RouterClient") -> RouterClient, x.get("TradeAPI/SendTrade") -> sendTrade:
@@ -415,8 +438,20 @@ class Namer:
                     return camel("is " + arg)
                 if m in METHOD_NAMES:
                     return METHOD_NAMES[m]
-                if m.startswith("Get") and len(m) > 3:
-                    return camel(m[3:])
+                if m in UI_COMPONENTS:
+                    comp = UI_COMPONENTS[m]
+                    title = _table_field_str(e["args"][0] if e["args"] else None, ("Title", "Name", "Text"))
+                    if title:
+                        base = re.sub(r"\s*[\(\[].*$", "", title).strip()
+                        words = re.findall(r"[A-Za-z][A-Za-z0-9]*", base)[:3]
+                        if 1 <= len(words) <= 3 and sum(len(w) for w in words) <= 24:
+                            nm = camel(" ".join(words) + " " + comp)
+                            if nm and nm not in KEYWORDS:
+                                return nm
+                    return comp
+                mp = re.match(r"^(?:Create|Make|New|Build|Add|Get|Register)([A-Z]\w+)$", m)
+                if mp:
+                    return camel(mp.group(1))
                 return str_arg_name(e)
             if f.get("type") == "AstExprCall":
                 inner = dotted(f.get("func", {}))

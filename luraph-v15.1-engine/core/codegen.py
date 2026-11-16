@@ -1699,7 +1699,13 @@ class Renderer:
         if isinstance(st, ST.SCrash):
             return [ind + "LPH_CRASH()"]
         if isinstance(st, ST.SError):
-            return [ind + "error(\"devirt: %s\")" % st.msg.replace("\\", "\\\\").replace("\"", "'")]
+            # A raised Unsupported sometimes formats an internal object with %r,
+            # which would leak a Python repr (module path + 0x memory address)
+            # into the output and make it non-deterministic. Collapse any such
+            # object repr to a short, stable tag.
+            import re as _re
+            msg = _re.sub(r"<[\w.]*\.(\w+) object at 0x[0-9a-fA-F]+>", r"<\1>", st.msg)
+            return [ind + "error(\"devirt: %s\")" % msg.replace("\\", "\\\\").replace("\"", "'")]
         if isinstance(st, ST.SGotoState):
 
             return [ind + "error(\"devirt: unstructured jump to block_%s\") -- goto block_%s" % (st.target, st.target)]

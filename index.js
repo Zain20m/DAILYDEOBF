@@ -4406,9 +4406,8 @@ async function handleDailyfuscatorCommand(interaction, attachment) {
     const source = decodeSource(inputBuffer);
     if (!source.trim()) throw new Error('The uploaded source file contains no Lua/Luau code.');
 
-    await interaction.editReply('**[2/4]** Loading the approved Dailyfuscator v3 engine...');
+    await interaction.editReply('**[2/4]** Preparing the approved Dailyfuscator v3 engine in an isolated worker...');
     const { obfuscateDailyfuscatorInWorker } = require('./scripts/dailyfuscator-runtime');
-    const engine = await loadDailyfuscator();
 
     const requestedProfile = interaction.options.getString('profile') || 'standard';
     const profile = ['light', 'standard', 'hard'].includes(requestedProfile) ? requestedProfile : 'standard';

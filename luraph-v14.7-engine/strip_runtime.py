@@ -199,6 +199,16 @@ def strip(text, exe):
     return new, report
 
 
+def strip_quiet(text):
+    """strip() for side outputs (the per-round partial lift): never raises,
+    returns the text unchanged on any problem."""
+    try:
+        from obfuscators.luraph_v14_9.vmmap import luau_ast_executable
+        return strip(text, luau_ast_executable())[0]
+    except Exception:  # noqa: BLE001 - keep the partial as it is
+        return text
+
+
 def _prune_preamble(text):
     """Stubs nobody calls and luraph_constants entries nobody indexes."""
     for name in ("luraph_undecrypted_function",) + tuple(sorted(set(re.findall(r"\bluraph_runtime\d+\b", text)))):

@@ -4407,7 +4407,7 @@ async function handleDailyfuscatorCommand(interaction, attachment) {
     if (!source.trim()) throw new Error('The uploaded source file contains no Lua/Luau code.');
 
     await interaction.editReply('**[2/4]** Loading the approved Dailyfuscator v3 engine...');
-    const { loadDailyfuscator } = require('./scripts/dailyfuscator-runtime');
+    const { obfuscateDailyfuscatorInWorker } = require('./scripts/dailyfuscator-runtime');
     const engine = await loadDailyfuscator();
 
     const requestedProfile = interaction.options.getString('profile') || 'standard';
@@ -4415,11 +4415,11 @@ async function handleDailyfuscatorCommand(interaction, attachment) {
     const seed = interaction.options.getString('seed') || undefined;
 
     await interaction.editReply('**[3/4]** Running Dailyfuscator v3 (' + profile + ')...');
-    const result = engine.obfuscate(source, {
+    const result = await obfuscateDailyfuscatorInWorker(source, {
       profile,
       seed,
       minBytes: 512000,
-    });
+    }, 180_000);
     if (!result || !result.ok) {
       throw new Error(result && result.error || 'Dailyfuscator did not produce an output.');
     }

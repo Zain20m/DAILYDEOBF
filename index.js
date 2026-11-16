@@ -3087,7 +3087,9 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
   }
 
   const dedicated = await prepare('selected-v' + version);
-  const selectedEngineDir = version === '15' ? ENGINE_V15_DIR : ENGINE_151_DIR;
+  // Both the v15 and v15.1 selections use the merged engine; the legacy v15
+  // lifter can emit error("devirt: value <UpList>...") stubs for valid closures.
+  const selectedEngineDir = ENGINE_151_DIR;
   const inputBytes = Buffer.byteLength(input.source, 'utf8');
   const progress = createAnalysisProgress(
     prompt, input.filename, inputBytes, 'Luraph v' + version,
@@ -3118,46 +3120,10 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
     );
 
     try {
-      let result;
-      if (version === '15') {
-        // The legacy v15 button runs the legacy Python engine directly.
-        // It is no longer silently used as a fallback for a 15.1 selection.
-        result = await runPythonEngine(
-          selectedEngineDir,
-          ENGINE_V15_CLI,
-          dedicated.inputPath,
-          dedicated.outputPath,
-          420_000,
-          [
-            '--obfuscator', 'luraph_v15',
-            '--debug',
-            '--strings',
-            '--max-runs', '16',
-            '--devirt-rounds', '200',
-            '--budget', '60',
-            '--timeout', '120',
-            ...(process.env.DEOB_USE_PYPY === '1' ? [] : ['--no-pypy']),
-            ...(gameId ? ['--cfg', '__superz_game_id=' + gameId] : []),
-          ],
-          {
-            env: {
-              DEVIRT_LOADERS: '1',
-              DEVIRT_ALL_PROTOS: '1',
-              DEVIRT_FULL_ROUNDS: '', // fast rounds: walk only, one full lift at the end (same result, ~2x faster)
-              DEVIRT_TIMING: '1',
-              DEVIRT_ERRS: '1',
-              DEVIRT_TB: '1',
-              DEVIRT_WALK_LIMIT: '750000',
-              DEVIRT_WALK_RESTARTS: '96',
-              DEVIRT_MAX_STACK_DEPTHS: '12',
-              DEVIRT_STACK_WALK_MAX: '60000',
-            },
-            onProgress: progress.onLine,
-          },
-        );
-      } else {
-        result = await runLuraph151Engine(dedicated);
-      }
+      // Route both v15 and v15.1 through the merged engine. The legacy v15
+      // devirtualizer is retained in the repository for reference, but must
+      // not be allowed to produce the selected output for this command.
+      const result = await runLuraph151Engine(dedicated);
       dedicatedLogs += result.stderr || '';
     } catch (error) {
       dedicatedError = error;
@@ -3176,43 +3142,8 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
       selectedEngineDir
     );
 
-    // Try the merged v15.1 engine when legacy v15 has no candidate OR
-    // explicitly reports devirtualization holes. A partial legacy candidate
-    // containing error("devirt: ...") is not a reason to skip the merged engine.
-    // Keep the better validated result so the fallback cannot replace a better lift.
-    const shouldTryMerged151 = version === '15' &&
-      !dedicatedValidation.complete &&
-      (!dedicatedValidation.candidate ||
-        Number(dedicatedValidation.metrics && dedicatedValidation.metrics.devirtErrors) > 0);
-    if (shouldTryMerged151) {
-      // Legacy v15 cannot follow scripts that loadstring a second VM chunk and
-      // gives up on several anti-tamper layouts. Give the v15.1 engine (which
-      // also handles v15) a chance before returning a failed lift.
-      await progress.setPhase(
-        'Legacy v15 lift incomplete: trying the v15.1 engine',
-        'Validation found: ' + (dedicatedValidation.issues || []).slice(0, 2).join('; ')
-      );
-      const fallback = await prepare('fallback-v15.1');
-      try {
-        const fbResult = await runLuraph151Engine(fallback);
-        dedicatedLogs += '\n[*] v15.1 engine fallback:\n' + (fbResult.stderr || '');
-      } catch (error) {
-        dedicatedLogs += '\n[!] v15.1 engine fallback: ' + String(error.message || error) + '\n';
-      }
-      await cleanLuraph151Candidate(fallback.base + '.devirt.luau', ENGINE_151_DIR);
-      const fbValidation = await inspectLiftFile(fallback.base + '.devirt.luau', ENGINE_151_DIR);
-      const legacyHasCandidate = Boolean(dedicatedValidation.candidate);
-      const mergedIsBetter = fbValidation.candidate &&
-        Number(fbValidation.score) > Number(dedicatedValidation.score);
-      if (fbValidation.complete || (fbValidation.candidate && (!legacyHasCandidate || mergedIsBetter))) {
-        chosen = fallback;
-        chosenEngineDir = ENGINE_151_DIR;
-        dedicatedValidation = fbValidation;
-        dedicatedLogs += '\n[*] using the merged v15.1 engine result (it passed validation or scored better than legacy v15).\n';
-      } else {
-        dedicatedLogs += '\n[*] keeping the legacy v15 result; the merged v15.1 candidate was not better by validation score.\n';
-      }
-    }
+    // v15 and v15.1 both use the merged engine directly. Do not rerun it
+    // as a fallback or replace its output with the legacy v15 lifter.
 
     await progress.setPhase(
       dedicatedValidation.complete ? 'Selected candidate passed validation' : 'Selected candidate has unresolved output',

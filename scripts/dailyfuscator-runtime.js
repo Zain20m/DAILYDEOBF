@@ -147,23 +147,37 @@ async function loadDailyfuscator() {
 
 // Keep CPU-heavy obfuscation off Discord's main event loop. This prevents one
 // large input from freezing command handling, heartbeats, and other users.
-function obfuscateDailyfuscatorInWorker(source, options = {}, timeoutMs = 180_000) {
+function obfuscateDailyfuscatorInWorker(source, options = {}, timeoutMs = 180_000, onHeartbeat = null) {
   return new Promise((resolve, reject) => {
     const worker = new Worker(path.join(__dirname, 'dailyfuscator-worker.js'), {
       workerData: { source, options },
       resourceLimits: { maxOldGenerationSizeMb: 512 },
     });
     let settled = false;
+    const startedAt = Date.now();
+    let heartbeatTimer = null;
     const finish = (callback, value) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
       callback(value);
     };
     const timer = setTimeout(() => {
       finish(reject, new Error('Dailyfuscator exceeded its ' + Math.round(timeoutMs / 1000) + '-second processing limit. The bot remains responsive.'));
       worker.terminate().catch(() => {});
     }, timeoutMs);
+    if (typeof onHeartbeat === 'function') {
+      heartbeatTimer = setInterval(() => {
+        if (settled) return;
+        try {
+          onHeartbeat(Date.now() - startedAt);
+        } catch {
+          // Progress reporting must never interrupt an obfuscation job.
+        }
+      }, 15_000);
+      heartbeatTimer.unref?.();
+    }
 
     worker.once('message', (message) => {
       if (!message || message.ok !== true) {

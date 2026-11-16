@@ -1728,8 +1728,7 @@ async function startFulcrumWorkflow(message, inlineSource = null) {
     workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-fulcrum-'));
     const inputPath = path.join(workDir, 'input.lua');
     const outputDir = path.join(workDir, 'out');
-    const normalizedSource = normalize2HBJBinaryLiterals(input.source);
-    await fs.writeFile(inputPath, normalizedSource, { encoding: 'utf8', mode: 0o600 });
+    await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
 
     await runPythonEngine(
       ENGINE_FULCRUM_DIR,
@@ -2472,7 +2471,8 @@ async function processIronbrew1(message, prompt, input) {
 
   try {
     await fs.mkdir(outputDir, { recursive: true });
-    await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
+    const normalizedSource = normalize2HBJBinaryLiterals(input.source);
+    await fs.writeFile(inputPath, normalizedSource, { encoding: 'utf8', mode: 0o600 });
     await progress.start();
     await progress.setPhase(
       'Checking the IronBrew signature',

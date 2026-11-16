@@ -274,7 +274,7 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
     note = ""
     if unlifted:
         note = ("-- NOTE: partial lift: %d VM block(s) could not be lifted; each one is an\n"
-                "-- error(\"devirt: ...\") line below. Everything else is recovered code.\n\n" % unlifted)
+                "-- error(\"devirt: ...\") line above. Everything else is recovered code.\n" % unlifted)
         print("[!] %d VM block(s) could not be lifted (marked in the output)" % unlifted, file=sys.stderr)
     try:
         import summary
@@ -282,8 +282,9 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
     except Exception as _ex:  # noqa: BLE001 - a summary must never break output
         print("[!] recovery summary failed: %s" % _ex, file=sys.stderr)
         recovery = ""
-    header = job.credit_header()
-    job.write(dpath, header + recovery + note + finished + "\n")
+    # the code first (a file preview shows the first lines), the summary at the end
+    tail = (recovery.rstrip("\n") + "\n" if recovery.strip() else "") + note
+    job.write(dpath, job.credit_header() + finished.strip("\n") + "\n" + ("\n" + tail if tail else ""))
     return True
 
 

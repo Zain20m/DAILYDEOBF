@@ -2892,10 +2892,35 @@ async function process2HBJ(message, prompt, input) {
       'Running the 2HBJ VM analysis pipeline',
       'Preparing the wrapper, dumping VM prototypes, mapping handlers and rebuilding Lua control flow.'
     );
-    const result = await runCommand(
-      'bash', [ENGINE_2HBJ_RUN, inputPath, outputDir], ENGINE_2HBJ_DIR, ENGINE_TIMEOUT_MS,
-      { env: { PYTHON_BIN: 'python3', PATH: [ENGINE_2HBJ_TOOLS, process.env.PATH || ''].filter(Boolean).join(path.delimiter), ...pythonEnv }, onProgress: progress.onLine }
-    );
+    let result;
+    try {
+      result = await runCommand(
+        'bash', [ENGINE_2HBJ_RUN, inputPath, outputDir], ENGINE_2HBJ_DIR, ENGINE_TIMEOUT_MS,
+        { env: { PYTHON_BIN: 'python3', PATH: [ENGINE_2HBJ_TOOLS, process.env.PATH || ''].filter(Boolean).join(path.delimiter), ...pythonEnv }, onProgress: progress.onLine }
+      );
+    } catch (engineError) {
+      // Preserve the generated code that instr.py failed to instrument.
+      const intermediatePath = path.join(outputDir, 'stage2_jit.lua');
+      try {
+        const intermediateStat = await fs.stat(intermediatePath);
+        if (intermediateStat.isFile() && intermediateStat.size > 0 &&
+            intermediateStat.size <= MAX_OUTPUT_BYTES) {
+          await message.reply({
+            content: '⚠️ 2HBJ diagnostic attached\nThe VM wrapper was generated, but this 2HBJ build did not match the bundled instrumentation. This is the generated stage2_jit.lua, not recovered source.',
+            files: [new AttachmentBuilder(await fs.readFile(intermediatePath), {
+              name: '2hbj-stage2_jit.lua',
+            })],
+            allowedMentions: { repliedUser: false },
+          });
+        } else {
+          console.warn('[2HBJ diagnostic] stage2_jit.lua is empty or exceeds the attachment limit.');
+        }
+      } catch (diagnosticError) {
+        console.warn('[2HBJ diagnostic] Could not attach stage2_jit.lua: ' +
+          String(diagnosticError.message || diagnosticError).slice(0, 500));
+      }
+      throw engineError;
+    }
     const stat = await fs.stat(outputPath).catch(() => null);
     if (!stat || !stat.isFile() || !stat.size) {
       throw new Error('2HBJ finished without producing out.lua. ' + String(result.stderr || result.stdout || '').slice(-1400));

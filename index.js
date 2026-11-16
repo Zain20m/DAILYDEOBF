@@ -3217,11 +3217,9 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
              normalized.removedBytes + ' malformed trailing bytes were removed.']
           : []),
         'deep_reconstruction_instructions.txt contains the requested behavior-preserving follow-up checklist.',
-        version === '15.1'
-          ? 'Only the dedicated v15.1 engine was run. To try legacy v15, select Luraph v15 from the engine picker; it is now an explicit separate run.'
-          : (chosen === dedicated
-            ? 'The legacy v15 engine was run, because Luraph v15 was selected explicitly.'
-            : 'The legacy v15 engine did not complete the lift, so the v15.1 engine (which also supports v15) was run and its result is used.'),
+        version === '15'
+          ? 'The merged v15.1 engine was used for the Luraph v15 selection; the legacy v15 lifter was not used.'
+          : 'The merged v15.1 engine was used for the Luraph v15.1 selection.',
         'The checklist is an instruction for a separate reconstruction pass, not proof that every item was automatically completed.',
         ...(gameId ? ['Target Universe/GameId supplied to the sandbox: ' + gameId + '.'] : ['No target Universe/GameId was supplied; game-locked builds may stop in their bootstrap layer.']),
         ...((/buffer access out of bounds|size out of range/i).test(dedicatedLogs)

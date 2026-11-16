@@ -9,7 +9,7 @@ const {
   to_jsstring,
   to_luastring,
 } = require('fengari');
-const { loadDailyfuscator } = require('./dailyfuscator-runtime');
+const { obfuscateDailyfuscatorInWorker } = require('./dailyfuscator-runtime');
 
 function runLua(code) {
   const state = lauxlib.luaL_newstate();
@@ -40,7 +40,6 @@ function runLua(code) {
 }
 
 test('Dailyfuscator v3 preserves a simple function across all profiles', async () => {
-  const engine = await loadDailyfuscator();
   const source = [
     'local function greet(name)',
     '  local message = "hello, " .. name',
@@ -51,12 +50,12 @@ test('Dailyfuscator v3 preserves a simple function across all profiles', async (
   ].join('\n');
 
   for (const profile of ['light', 'standard', 'hard']) {
-    const result = engine.obfuscate(source, {
+    const result = await obfuscateDailyfuscatorInWorker(source, {
       profile,
       seed: 'dailyfuscator-test-' + profile,
       minBytes: 4096,
       notice: false,
-    });
+    }, 60_000);
     assert.equal(result.ok, true, result.ok ? '' : result.error);
     const executed = runLua(result.code);
     assert.equal(executed.ok, true, executed.ok ? '' : profile + ': ' + executed.error);

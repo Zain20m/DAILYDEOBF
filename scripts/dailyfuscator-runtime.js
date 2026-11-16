@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const zlib = require('node:zlib');
+const { Worker } = require('node:worker_threads');
 const ts = require('typescript');
 
 const ARCHIVE_PATH = path.join(__dirname, '..', 'upload', 'grok-workspace-3.zip');
@@ -144,4 +145,42 @@ async function loadDailyfuscator() {
   return enginePromise;
 }
 
-module.exports = { loadDailyfuscator };
+// Keep CPU-heavy obfuscation off Discord's main event loop. This prevents one
+// large input from freezing command handling, heartbeats, and other users.
+function obfuscateDailyfuscatorInWorker(source, options = {}, timeoutMs = 180_000) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path.join(__dirname, 'dailyfuscator-worker.js'), {
+      workerData: { source, options },
+      resourceLimits: { maxOldGenerationSizeMb: 512 },
+    });
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callback(value);
+    };
+    const timer = setTimeout(() => {
+      finish(reject, new Error('Dailyfuscator exceeded its ' + Math.round(timeoutMs / 1000) + '-second processing limit. The bot remains responsive.'));
+      worker.terminate().catch(() => {});
+    }, timeoutMs);
+
+    worker.once('message', (message) => {
+      if (!message || message.ok !== true) {
+        finish(reject, new Error(message && message.error || 'Dailyfuscator worker returned no result.'));
+        return;
+      }
+      finish(resolve, message.result);
+    });
+    worker.once('error', (error) => finish(reject, error));
+    worker.once('exit', (code) => {
+      if (!settled && code !== 0) {
+        finish(reject, new Error('Dailyfuscator worker exited unexpectedly with code ' + code + '.'));
+      } else if (!settled) {
+        finish(reject, new Error('Dailyfuscator worker exited without returning a result.'));
+      }
+    });
+  });
+}
+
+module.exports = { loadDailyfuscator, obfuscateDailyfuscatorInWorker };

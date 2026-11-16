@@ -33,13 +33,20 @@ MARKERS = re.compile(
     r"Luraph|LPH_|lura\.ph|support ticket|short_src|linedefined|"
     r"debug library|setfenv\(function|:\(%d\+\)\[:|\"__metatable\"|"
     r"\"tostring\"|luraph_undecrypted_function\(\)")
-# the script doing something in the game (calls, not bare captures such as
-# Luraph's own `local v = Instance`)
+# the script doing something in the game. Only a USAGE position counts (a
+# method call, a member access, Instance.new, require, ...): a bare global as
+# a table value (`[97] = workspace`, `[47] = Instance`) is Luraph's constant
+# pool, not the script using the API.
 API = re.compile(
-    r"[:.](?:GetService|WaitForChild|FindFirstChild\w*|GetChildren|GetDescendants|Kick|"
-    r"Connect|Once|Fire\w*|Invoke\w*|Create|Clone|Destroy|GetMouse)\(|"
-    r"\bInstance\.new\(|\bgame[.:]|\bworkspace\b|\bLocalPlayer\b|\brequire\(|"
-    r"\bEnum\.|\bDrawing\.new\(|\bhttp_?request\(|\brequest\(|\bloadstring\(game")
+    r"[:.](?:GetService|WaitForChild|FindFirstChild\w*|GetChildren|GetDescendants|GetPlayers|"
+    r"Kick|Connect|Once|Fire\w*|Invoke\w*|Create|Clone|Destroy|GetMouse|HttpGet|PivotTo|"
+    r"LoadAnimation|SetAttribute|GetAttribute|JSONE\w+|JSOND\w+)\(|"
+    r"\bInstance\.new\(|\bgame[:.]|workspace[.:\[]|\.Parent\b|\.LocalPlayer\b|\brequire\(|"
+    r"\bEnum\.[A-Z]|\bDrawing\.new\(|\bhttp_?request\(|\bloadstring\(game")
+# Luraph's LPH_ENCSTR byte decryptor: an LCG keystream xored with the bytes.
+DECODER = re.compile(r"bit32\.bxor")
+# a function whose body is mostly a numeric-keyed table (Luraph's constant pool)
+CONST_ENTRY = re.compile(r"(?m)^\s*\[\d+\]\s*=\s*")
 PROTO = re.compile(r"^local function (recovered_proto_\w+)\(([^)]*)\)")
 PREAMBLE = re.compile(r"^local function (luraph_runtime\d+|luraph_undecrypted_function)\(|"
                       r"^local luraph_constants = ")
@@ -119,7 +126,18 @@ def strip(text, exe):
     for l0, l1, m in protos:
         body = body_of(l0, l1)
         nparams = len([p for p in m.group(2).split(",") if p.strip()])
-        luraph_only = not API.search(body) and (MARKERS.search(body) or nparams >= HUGE_ARITY)
+        nlines = l1 - l0 + 1
+        # a quoted string that looks like a Roblox member or a word of game
+        # text (PascalCase or a phrase) marks real script code
+        game_str = re.search(r'"[A-Z][a-z]\w+|"[a-z]+_[a-z]', body)
+        luraph_only = not API.search(body) and (
+            MARKERS.search(body)                        # Luraph text markers
+            or nparams >= HUGE_ARITY                    # VM-internal arity
+            or (DECODER.search(body) and "% 256" in body)  # LPH_ENCSTR decryptor
+            or len(CONST_ENTRY.findall(body)) >= 24     # the constant pool
+            # a large function that touches the game in no way and carries no
+            # game text: a Luraph numeric unpacker / VM helper
+            or (nlines >= 40 and not game_str))
         if luraph_only:
             drop.append((l0, l1, m.group(1)))
         else:

@@ -22,6 +22,13 @@ MAX_RERUNS = 12
 SPIN_CHECKS = int(os.environ.get("DEOB_SPIN_CHECKS") or 24)    # watchdog checks (2^20 VM steps each) without environment access = endless loop
 
 
+
+def _strip_partial(text):
+    """The partial lift is what the bot sends when a run is cut short (time,
+    memory): give it the same Luraph-runtime strip as the finished result."""
+    import strip_runtime
+    return strip_runtime.strip_quiet(text)
+
 def patch_spin(src):
     """Instrument every loop head so pure-script loops cannot starve the tracer.
 
@@ -170,7 +177,7 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
             try:
                 job.write(job.path(".devirt.partial.luau"),
                           "-- partial result: saved after full lift %d (the run may not have finished)\n"
-                          % full_lifts + devirt.finish_text(text or ""))
+                          % full_lifts + _strip_partial(devirt.finish_text(text or "")))
             except Exception as _ex:  # noqa: BLE001
                 print("[!] could not save the partial lift: %s" % _ex, file=sys.stderr)
             if (not new and devirt.same_patches(last_bufs, bufs)) or rnd == rounds:

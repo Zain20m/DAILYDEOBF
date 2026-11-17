@@ -2350,7 +2350,7 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
 
     const previewText = buildDeobfPreview(await fs.readFile(outputPath, 'utf8'), Date.now() - startedAt);
     await message.reply({
-      content: '## Luraph v' + version + ' Deobfuscated!\\n\\n' + previewText + '\\n\\n' +
+      content: '## Luraph v' + version + ' Deobfuscated!\n\n' + previewText + '\n\n' +
         (isTrace || engineError ? '⚠️' : '✅') + ' **DAILY DEOBF · Luraph v' + version + '**\n' +
         (engineError
           ? 'The engine stopped before finishing (' + (/SIGKILL|memory/i.test(String(engineError.message)) ? 'the server ran out of memory' : String(engineError.message || engineError).split('\n')[0].slice(0, 160)) +

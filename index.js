@@ -927,18 +927,18 @@ function dailyEmbed(title, description, color = DAILY_COLORS.primary) {
 }
 
 function buildDeobfPreview(source, elapsedMs = 0, maxLines = 5) {
-  const lines = String(source || '').replace(/^\\uFEFF/, '').replace(/\\r\\n?/g, '\\n').split('\\n');
+  const lines = String(source || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n');
   const isNoise = (line) => {
     const value = String(line || '').trim();
     return !value ||
       /^--(?:deobf by daily deobf|deobfuscated in )/i.test(value) ||
-      /^if\\s+[^\\n]+\\s+then\\s*$/.test(value) ||
-      /^end\\s*[,;)]?\\s*$/.test(value) ||
-      /^local\\s+function\\s+(?:fn|recovered_proto|proto_)[\\w]*\\s*\\(/i.test(value) ||
-      /^return\\s+(?:false|nil)\\s*$/.test(value);
+      /^if\s+[^\n]+\s+then\s*$/.test(value) ||
+      /^end\s*[,;)]?\s*$/.test(value) ||
+      /^local\s+function\s+(?:fn|recovered_proto|proto_)[\w]*\s*\(/i.test(value) ||
+      /^return\s+(?:false|nil)\s*$/.test(value);
   };
   const payloadStart = lines.findIndex((line) =>
-    /\\b(?:game\\s*[:.]\\s*GetService|GetService\\s*\\(|Players\\.LocalPlayer|LocalPlayer\\s*=|Instance\\.new|script\\.Parent|workspace\\b|Workspace\\b)/i.test(line)
+    /\b(?:game\s*[:.]\s*GetService|GetService\s*\(|Players\.LocalPlayer|LocalPlayer\s*=|Instance\.new|script\.Parent|workspace\b|Workspace\b)/i.test(line)
   );
   const start = payloadStart >= 0 ? payloadStart : lines.findIndex((line) => !isNoise(line));
   const useful = [];
@@ -946,7 +946,7 @@ function buildDeobfPreview(source, elapsedMs = 0, maxLines = 5) {
   if (start >= 0) {
     for (let i = start; i < lines.length && useful.length < maxLines; i++) {
       if (isNoise(lines[i])) continue;
-      useful.push(String(lines[i]).trim().replace(/\\s+/g, ' '));
+      useful.push(String(lines[i]).trim().replace(/\s+/g, ' '));
       lastIndex = i;
     }
   }
@@ -955,8 +955,8 @@ function buildDeobfPreview(source, elapsedMs = 0, maxLines = 5) {
   const preview = useful.join(' ').replace(/\x60/g, "'");
   const clipped = preview.length > 820 ? preview.slice(0, 817) + '...' : preview;
   const duration = (Math.max(0, Number(elapsedMs) || 0) / 1000).toFixed(2);
-  return '**Preview (first ' + maxLines + ' lines):**\\n\\n`' +
-    clipped + (remaining > 0 ? ' ... and ' + remaining + ' more!' : '') + '`\\n\\nThis file was generated in ' + duration + 's.';
+  return '**Preview (first ' + maxLines + ' lines):**\n\n`' +
+    clipped + (remaining > 0 ? ' ... and ' + remaining + ' more!' : '') + '`\n\nThis file was generated in ' + duration + 's.';
 }
 
 const DAILY_DEOBF_HEADER = '--deobf by daily deobf';
@@ -2178,7 +2178,7 @@ async function sendAnalysisOutput(message, input, config) {
     ? await fs.readFile(candidatePath, 'utf8').catch(() => '')
     : '';
   const previewBlock = previewSource ? buildDeobfPreview(previewSource, config.elapsedMs || 0) : '';
-  if (previewBlock) summary = previewBlock + '\\n\\n' + summary;
+  if (previewBlock) summary = '## ' + String(config.label || 'Script') + ' Deobfuscated!\\n\\n' + previewBlock + '\\n\\n' + summary;
 
   await message.reply({
     embeds: [dailyEmbed(config.label + ' · Analysis result', summary.replace(/\*\*/g, ''), hasLiftedSource ? DAILY_COLORS.success : DAILY_COLORS.warning)],

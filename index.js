@@ -2249,7 +2249,9 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
       ENGINE_V147_CLI,
       inputPath,
       outputPath,
-      ENGINE_TIMEOUT_MS,
+      options.fast
+        ? 120_000
+        : ENGINE_TIMEOUT_MS,
       [
         '--engine', engineVersion,
         '--strings',
@@ -2257,10 +2259,10 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
         // failing, and keep the work files so the other result can be attached.
         '--trace-fallback',
         '--keep-work',
-        '--max-runs', '16',
-        '--devirt-rounds', '200',
-        '--budget', '60',
-        '--timeout', '180',
+        '--max-runs', options.fast ? '3' : '16',
+        '--devirt-rounds', options.fast ? '70' : '200',
+        '--budget', options.fast ? '15' : '60',
+        '--timeout', options.fast ? '45' : '180',
       ],
       {
         env: {
@@ -2277,7 +2279,7 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
           DEVIRT_PROGRESS: '1',
           DEVIRT_ERRS: '1',
           DEVIRT_TB: '1',
-          DEVIRT_WALK_LIMIT: '750000',
+          DEVIRT_WALK_LIMIT: options.fast ? '300000' : '750000',
           // Small hosts: skip the extra walks of variable-count copy modelling
           // (fewer holes fixed, much less memory on big scripts)
           ...(process.env.DEOB_LOW_MEMORY === '1' || Buffer.byteLength(input.source, 'utf8') > 400_000
@@ -2413,7 +2415,8 @@ async function findSavedEngineOutput(tempRoot) {
 }
 
 async function processLuraph147(message, prompt, input) {
-  return processLuraph14x(message, prompt, input, '14.7');
+  // Fast profile: cap the run near two minutes and reduce repeated VM walks.
+  return processLuraph14x(message, prompt, input, '14.7', { fast: true });
 }
 
 async function processLuraph148(message, prompt, input) {

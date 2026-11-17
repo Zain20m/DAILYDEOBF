@@ -2261,9 +2261,9 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
         // return quickly. Complex samples may produce a partial lift; the
         // report records the reduced analysis budget rather than implying a full pass.
         '--max-runs', '2',
-        '--devirt-rounds', '80',
-        '--budget', '15',
-        '--timeout', '45',
+        '--devirt-rounds', '60',
+        '--budget', '10',
+        '--timeout', '25',
       ],
       {
         env: {
@@ -3230,7 +3230,7 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
           // Use one candidate and a short wall-clock cap for the fast profile.
           // The bot favours a quick partial result over multi-minute seed races.
           DEOB_FAST: '1',
-          DEOB_CANDIDATE_TIMEOUT_MS: '45000',
+          DEOB_CANDIDATE_TIMEOUT_MS: '35000',
           // Racing 3 python candidates triples peak memory; on large inputs
           // that gets the whole engine OOM-killed by the host, so run one.
           // The racing candidates usually agree exactly but triple peak memory
@@ -3238,7 +3238,7 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
           // when DEOB_LOW_MEMORY=1 is set for a small bot host.
           ...(process.env.DEOB_LOW_MEMORY === '1' || Buffer.byteLength(input.source, 'utf8') > 512_000
             ? { DEOB_PY_CANDIDATES: 'python:1' } : {}),
-          DEOB_CANDIDATE_IDLE_TIMEOUT_MS: '30000',
+          DEOB_CANDIDATE_IDLE_TIMEOUT_MS: '35000',
           // (no DEVIRT_LOADERS: it lifts Luraph's own loader VMs too, which
           // buried the script in thousands of lines of runtime code)
           DEVIRT_FULL_ROUNDS: '', // fast rounds: walk only, one full lift at the end (same result, ~2x faster)

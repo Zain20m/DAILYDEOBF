@@ -2864,6 +2864,7 @@ function normalize2HBJBinaryLiterals(source) {
 }
 
 async function process2HBJ(message, prompt, input) {
+  const startedAt = Date.now();
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-2hbj-'));
   const inputPath = path.join(tempRoot, 'input.lua');
   const outputDir = path.join(tempRoot, 'output');
@@ -3001,8 +3002,10 @@ async function process2HBJ(message, prompt, input) {
       if (size > 0 && size <= 7 * 1024 * 1024) files.push(new AttachmentBuilder(filePath, { name: attachmentName }));
     }
 
+    const previewText = buildDeobfPreview(await fs.readFile(outputPath, 'utf8'), Date.now() - startedAt);
     await message.reply({
-      content: '✅ **DAILY DEOBF · 2HBJ (Experimental)**\nThe imported 2HBJ pipeline finished.\nOutput size: ' + formatBytes(stat.size) + '\nAttached: reconstructed Luau, VM wrapper, disassembly and limitations report.\n\nThis tool bundle is sample-tuned; other 2HBJ builds may need manual mapping updates.',
+      content: '## 2HBJ Deobfuscated!\n\n' + previewText + '\n\n' +
+        '✅ **DAILY DEOBF · 2HBJ (Experimental)**\nThe imported 2HBJ pipeline finished.\nOutput size: ' + formatBytes(stat.size) + '\nAttached: reconstructed Luau, VM wrapper, disassembly and limitations report.\n\nThis tool bundle is sample-tuned; other 2HBJ builds may need manual mapping updates.',
       files,
       allowedMentions: { repliedUser: false },
     });

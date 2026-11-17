@@ -2223,6 +2223,7 @@ async function processLuraphV15(message, prompt, input, displayLabel = 'Luraph v
 }
 
 async function processLuraph14x(message, prompt, input, version, options = {}) {
+  const startedAt = Date.now();
   const versionTag = version.replace('.', '');
   // 14.3 runs through the 14.7 devirtualizer (same VM family); see processLuraph143
   const engineVersion = options.engineVersion || version;
@@ -2347,8 +2348,10 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
     ].join('\n');
     await fs.writeFile(reportPath, report, 'utf8');
 
+    const previewText = buildDeobfPreview(await fs.readFile(outputPath, 'utf8'), Date.now() - startedAt);
     await message.reply({
-      content: (isTrace || engineError ? '⚠️' : '✅') + ' **DAILY DEOBF · Luraph v' + version + '**\n' +
+      content: '## Luraph v' + version + ' Deobfuscated!\\n\\n' + previewText + '\\n\\n' +
+        (isTrace || engineError ? '⚠️' : '✅') + ' **DAILY DEOBF · Luraph v' + version + '**\n' +
         (engineError
           ? 'The engine stopped before finishing (' + (/SIGKILL|memory/i.test(String(engineError.message)) ? 'the server ran out of memory' : String(engineError.message || engineError).split('\n')[0].slice(0, 160)) +
             '), so this is what it had recovered by then' + (isTrace ? ' (a behaviour trace).' : ' (a partial VM lift).')

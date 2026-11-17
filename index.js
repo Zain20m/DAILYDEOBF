@@ -2257,13 +2257,10 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
         // failing, and keep the work files so the other result can be attached.
         '--trace-fallback',
         '--keep-work',
-        // Fast profile: cap trace retries and lifter work so ordinary jobs
-        // return quickly. Complex samples may produce a partial lift; the
-        // report records the reduced analysis budget rather than implying a full pass.
-        '--max-runs', '2',
-        '--devirt-rounds', '60',
-        '--budget', '10',
-        '--timeout', '25',
+        '--max-runs', '16',
+        '--devirt-rounds', '200',
+        '--budget', '60',
+        '--timeout', '180',
       ],
       {
         env: {

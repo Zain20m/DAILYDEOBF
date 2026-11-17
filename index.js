@@ -2250,7 +2250,7 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
       inputPath,
       outputPath,
       options.fast
-        ? 120_000
+        ? 210_000
         : ENGINE_TIMEOUT_MS,
       [
         '--engine', engineVersion,
@@ -2259,10 +2259,12 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
         // failing, and keep the work files so the other result can be attached.
         '--trace-fallback',
         '--keep-work',
-        '--max-runs', options.fast ? '3' : '16',
-        '--devirt-rounds', options.fast ? '70' : '200',
-        '--budget', options.fast ? '15' : '60',
-        '--timeout', options.fast ? '45' : '180',
+        // Balanced v14.7 profile: enough trap retries to capture more VM chunks,
+        // with a bounded runtime instead of the old 10+ minute worst case.
+        '--max-runs', options.fast ? '6' : '16',
+        '--devirt-rounds', options.fast ? '120' : '200',
+        '--budget', options.fast ? '30' : '60',
+        '--timeout', options.fast ? '60' : '180',
       ],
       {
         env: {
@@ -2279,11 +2281,15 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
           DEVIRT_PROGRESS: '1',
           DEVIRT_ERRS: '1',
           DEVIRT_TB: '1',
-          DEVIRT_WALK_LIMIT: options.fast ? '300000' : '750000',
-          // Small hosts: skip the extra walks of variable-count copy modelling
-          // (fewer holes fixed, much less memory on big scripts)
-          ...(process.env.DEOB_LOW_MEMORY === '1' || Buffer.byteLength(input.source, 'utf8') > 400_000
-            ? { DEVIRT_SYMBOLIC_FOR: '0' } : {}),
+          // Keep variable-count copy modelling enabled for fast v14.7 runs:
+          // turning it off on every >400 KB input was saving time but losing code.
+          // Respect an explicit low-memory setting; other versions retain the
+          // previous size-based safeguard.
+          ...(options.fast && process.env.DEOB_LOW_MEMORY !== '1'
+            ? { DEVIRT_SYMBOLIC_FOR: '1' }
+            : (process.env.DEOB_LOW_MEMORY === '1' ||
+               (!options.fast && Buffer.byteLength(input.source, 'utf8') > 400_000)
+              ? { DEVIRT_SYMBOLIC_FOR: '0' } : {})),
           ...(options.env || {}),
         },
         onProgress: progress.onLine,

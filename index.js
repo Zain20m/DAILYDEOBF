@@ -2178,7 +2178,7 @@ async function sendAnalysisOutput(message, input, config) {
     ? await fs.readFile(candidatePath, 'utf8').catch(() => '')
     : '';
   const previewBlock = previewSource ? buildDeobfPreview(previewSource, config.elapsedMs || 0) : '';
-  if (previewBlock) summary = '## ' + String(config.label || 'Script') + ' Deobfuscated!\\n\\n' + previewBlock + '\\n\\n' + summary;
+  if (previewBlock) summary = '## ' + String(config.label || 'Script') + ' Deobfuscated!\n\n' + previewBlock + '\n\n' + summary;
 
   await message.reply({
     embeds: [dailyEmbed(config.label + ' · Analysis result', summary.replace(/\*\*/g, ''), hasLiftedSource ? DAILY_COLORS.success : DAILY_COLORS.warning)],

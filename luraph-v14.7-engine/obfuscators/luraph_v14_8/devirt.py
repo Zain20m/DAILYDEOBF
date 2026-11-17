@@ -2175,12 +2175,26 @@ class ProtoLifter:
         return keys
 
     def top_marker(self, j):
-        """(start, tail) if `j` is the stack top after a variable-result copy."""
+        """(start, tail) if `j` is the stack top after a variable-result copy.
+
+        The bound can be recomputed by the VM loop (for example, `top = base +
+        count`) instead of reusing the exact Expr object created by the symbolic
+        copy recognizer. Compare rendered symbolic expressions as well as
+        object identity so equivalent bounds keep their variable-result tail.
+        """
         if isinstance(j, TopMarker):
             return j.start, j.tail
         new = getattr(self, "rtail_new", None)
-        if new is not None and j is new[2]:
-            return new[0], new[1]
+        if new is not None:
+            bound = new[2]
+            if j is bound:
+                return new[0], new[1]
+            if isinstance(j, Expr) and isinstance(bound, Expr):
+                try:
+                    if fmt_any(j) == fmt_any(bound):
+                        return new[0], new[1]
+                except Exception:
+                    pass
         return None
 
     def symbolic_for(self, st, scope, a, b, c, it):

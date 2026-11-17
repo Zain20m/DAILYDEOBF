@@ -3376,8 +3376,8 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
       elapsedMs: Date.now() - startedAt,
       stderr: dedicatedLogs,
       otherEngineStderr: '',
-      maxRuns: 16,
-      devirtRounds: 200,
+      maxRuns: 2,
+      devirtRounds: 60,
       loaderAnalysis: true,
       extraArtifacts,
       extraReportLines: [

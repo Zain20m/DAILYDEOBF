@@ -2421,8 +2421,7 @@ async function findSavedEngineOutput(tempRoot) {
 }
 
 async function processLuraph147(message, prompt, input) {
-  // Fast profile: balance recovery quality with a roughly 3.5-minute hard cap.
-  return processLuraph14x(message, prompt, input, '14.7', { fast: true });
+  return processLuraph14x(message, prompt, input, '14.7');
 }
 
 async function processLuraph148(message, prompt, input) {

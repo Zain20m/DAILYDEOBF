@@ -2326,6 +2326,7 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
         // failing, and keep the work files so the other result can be attached.
         '--trace-fallback',
         '--keep-work',
+        '--timeout', String(Number.isFinite(options.runtimeTimeoutSeconds) ? options.runtimeTimeoutSeconds : 120),
         // Balanced v14.7 profile: enough trap retries to capture more VM chunks,
         // with a bounded runtime instead of the old 10+ minute worst case.
         '--max-runs', options.fast ? '6' : '16',
@@ -2497,7 +2498,15 @@ async function processLuraph148(message, prompt, input) {
 }
 
 async function processLuraph149(message, prompt, input) {
-  return processLuraph14x(message, prompt, input, '14.9');
+  return processLuraph14x(message, prompt, input, '14.9', {
+    // v14.9 samples can keep the runtime busy longer than the older 60s
+    // default used by some deployed bot revisions. Give tracing a bounded
+    // window, while the loop watchdog remains enabled.
+    runtimeTimeoutSeconds: 180,
+    hardTimeoutMs: 240_000,
+    stallTimeoutMs: 120_000,
+    env: { DEOB_SPIN_CHECKS: '8' },
+  });
 }
 
 async function processLuraph143(message, prompt, input) {

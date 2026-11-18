@@ -1833,7 +1833,9 @@ async function startFulcrumWorkflow(message, inlineSource = null) {
       ENGINE_FULCRUM_CLI,
       inputPath,
       outputDir,
-      5 * 60_000
+      150_000,
+      [],
+      { stallTimeoutMs: 120_000 }
     );
 
     const recoveredPath = path.join(outputDir, 'recovered.lua');

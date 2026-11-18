@@ -3282,35 +3282,29 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
       ENGINE_151_CLI,
       target.inputPath,
       target.outputPath,
-      // Outer safety timeout for the entire selected-engine process.
-      ENGINE_TIMEOUT_MS,
+      // Discord-pack profile: allow the full v15.1 lift several minutes,
+      // while keeping one Python candidate to avoid multiplying peak RAM.
+      12 * 60_000,
       false,
       [
         '--plugin', 'luraph_v15',
         '--debug',
         '--strings',
-        // Fast profile: keep tracing and lifting bounded. Difficult inputs may
-        // return a partial result rather than monopolizing the bot for minutes.
-        '--max-runs', '2',
-        '--devirt-rounds', '60',
-        '--budget', '10',
-        '--timeout', '25',
+        '--max-runs', '12',
+        '--devirt-rounds', '200',
+        '--budget', '45',
+        '--timeout', '120',
         ...(gameId ? ['--cfg-json', JSON.stringify({ __superz_game_id: Number(gameId) })] : []),
       ],
       {
+        stallTimeoutMs: 180_000,
         env: {
-          // Use one candidate and a short wall-clock cap for the fast profile.
-          // The bot favours a quick partial result over multi-minute seed races.
+          // The ZIP's Discord runner uses one candidate by default. Keep that
+          // memory-safe behavior, but give a candidate time to finish a real lift.
           DEOB_FAST: '1',
-          DEOB_CANDIDATE_TIMEOUT_MS: '35000',
-          // Racing 3 python candidates triples peak memory; on large inputs
-          // that gets the whole engine OOM-killed by the host, so run one.
-          // The racing candidates usually agree exactly but triple peak memory
-          // (884 MB on a 785 KB file): one candidate for big inputs, or always
-          // when DEOB_LOW_MEMORY=1 is set for a small bot host.
-          ...(process.env.DEOB_LOW_MEMORY === '1' || Buffer.byteLength(input.source, 'utf8') > 512_000
-            ? { DEOB_PY_CANDIDATES: 'python:1' } : {}),
-          DEOB_CANDIDATE_IDLE_TIMEOUT_MS: '35000',
+          DEOB_PY_CANDIDATES: 'python:1',
+          DEOB_CANDIDATE_TIMEOUT_MS: '300000',
+          DEOB_CANDIDATE_IDLE_TIMEOUT_MS: '180000',
           // (no DEVIRT_LOADERS: it lifts Luraph's own loader VMs too, which
           // buried the script in thousands of lines of runtime code)
           DEVIRT_FULL_ROUNDS: '', // fast rounds: walk only, one full lift at the end (same result, ~2x faster)
@@ -3448,8 +3442,8 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
       elapsedMs: Date.now() - startedAt,
       stderr: dedicatedLogs,
       otherEngineStderr: '',
-      maxRuns: 2,
-      devirtRounds: 60,
+      maxRuns: 12,
+      devirtRounds: 200,
       loaderAnalysis: true,
       extraArtifacts,
       extraReportLines: [

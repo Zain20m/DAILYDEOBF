@@ -5,6 +5,7 @@ on:
     paths:
       - "upload/Luraph_v15_1_Deobfuscator_Newest.zip"
       - "upload/IMPORT_151_TRIGGER.txt"
+      - ".github/workflows/import-luraph151.yml"
   workflow_dispatch:
 
 permissions:

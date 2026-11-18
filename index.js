@@ -1046,6 +1046,7 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
   let completed = false;
   let failed = false;
   let lastEngineOutputAt = Date.now();
+  let lastMeaningfulProgressAt = Date.now();
   let phaseStartedAt = Date.now();
   let lastDiagnosticLine = '';
   let lastErrorLine = '';
@@ -1061,21 +1062,33 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
   }
 
   function advance(nextPhase, nextDetail) {
+    let changed = false;
     if (nextPhase) {
       const next = String(nextPhase);
-      if (next !== phase) phaseStartedAt = Date.now();
+      if (next !== phase) {
+        phaseStartedAt = Date.now();
+        changed = true;
+      }
       phase = next;
       const nextStage = stageFor(phase);
       if (nextStage !== null) stageIndex = Math.max(stageIndex, nextStage);
     }
-    if (nextDetail) detail = String(nextDetail);
+    if (nextDetail) {
+      const next = String(nextDetail);
+      if (next !== detail) changed = true;
+      detail = next;
+    }
+    if (changed) lastMeaningfulProgressAt = Date.now();
   }
 
   function updateCount(value, unit) {
     const count = Number(String(value).replaceAll(',', ''));
     if (!Number.isFinite(count) || count < 0) return;
-    workCount = Math.floor(count);
-    workLabel = unit || 'VM functions processed';
+    const nextCount = Math.floor(count);
+    const nextLabel = unit || 'VM functions processed';
+    if (nextCount !== workCount || nextLabel !== workLabel) lastMeaningfulProgressAt = Date.now();
+    workCount = nextCount;
+    workLabel = nextLabel;
   }
 
   // Compact status card: an embed (grey while running, green when done,
@@ -1211,6 +1224,7 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
     void publish(false);
   }
 
+  onLine.isStalled = (timeoutMs) => Date.now() - lastMeaningfulProgressAt >= timeoutMs;
   const timer = setInterval(() => { void publish(false); }, 1800);
 
   return {
@@ -1433,7 +1447,7 @@ function runCommand(command, args, cwd, timeoutMs, options = {}) {
     const outputArgIndex = args.findIndex((arg, index) =>
       (arg === '-o' || arg === '--output') && typeof args[index + 1] === 'string'
     );
-    const expectedOutputPath = outputArgIndex >= 0 ? path.resolve(cwd, args[outputArgIndex + 1]) : null;
+    const expectedOutputPath = outputArgIndex >= 0 ? path.resolve(cwd || process.cwd(), args[outputArgIndex + 1]) : null;
 
     child.stdout.on('data', (chunk) => {
       const text = chunk.toString();
@@ -1467,7 +1481,10 @@ function runCommand(command, args, cwd, timeoutMs, options = {}) {
     });
 
     const stallTimer = setInterval(() => {
-      if (stalled || timedOut || Date.now() - lastDistinctProgressAt < STALL_TIMEOUT_MS) return;
+      const progressStale = typeof options.onProgress?.isStalled === 'function'
+        ? options.onProgress.isStalled(STALL_TIMEOUT_MS)
+        : Date.now() - lastDistinctProgressAt >= STALL_TIMEOUT_MS;
+      if (stalled || timedOut || !progressStale) return;
       stalled = true;
       child.kill('SIGKILL');
     }, 5_000);

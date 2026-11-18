@@ -1424,9 +1424,28 @@ function runCommand(command, args, cwd, timeoutMs, options = {}) {
     let stderr = '';
     let pendingStderr = '';
     let timedOut = false;
+    let stalled = false;
+    let lastDistinctProgress = '';
+    let lastDistinctProgressAt = Date.now();
+    const STALL_TIMEOUT_MS = Number.isFinite(options.stallTimeoutMs)
+      ? Math.max(30_000, options.stallTimeoutMs)
+      : 180_000;
+    const outputArgIndex = args.findIndex((arg, index) =>
+      (arg === '-o' || arg === '--output') && typeof args[index + 1] === 'string'
+    );
+    const expectedOutputPath = outputArgIndex >= 0 ? path.resolve(cwd, args[outputArgIndex + 1]) : null;
 
     child.stdout.on('data', (chunk) => {
-      if (stdout.length < 512_000) stdout += chunk.toString().slice(0, 512_000 - stdout.length);
+      const text = chunk.toString();
+      if (stdout.length < 512_000) stdout += text.slice(0, 512_000 - stdout.length);
+      // Some engines report progress on stdout instead of stderr.
+      const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      for (const line of lines) {
+        if (line !== lastDistinctProgress) {
+          lastDistinctProgress = line;
+          lastDistinctProgressAt = Date.now();
+        }
+      }
     });
 
     child.stderr.on('data', (chunk) => {
@@ -1437,9 +1456,21 @@ function runCommand(command, args, cwd, timeoutMs, options = {}) {
       while ((newline = pendingStderr.indexOf('\n')) !== -1) {
         const line = pendingStderr.slice(0, newline).trim();
         pendingStderr = pendingStderr.slice(newline + 1);
-        if (line && options.onProgress) options.onProgress(line);
+        if (line) {
+          if (line !== lastDistinctProgress) {
+            lastDistinctProgress = line;
+            lastDistinctProgressAt = Date.now();
+          }
+          if (options.onProgress) options.onProgress(line);
+        }
       }
     });
+
+    const stallTimer = setInterval(() => {
+      if (stalled || timedOut || Date.now() - lastDistinctProgressAt < STALL_TIMEOUT_MS) return;
+      stalled = true;
+      child.kill('SIGKILL');
+    }, 5_000);
 
     const timer = setTimeout(() => {
       timedOut = true;
@@ -1448,14 +1479,31 @@ function runCommand(command, args, cwd, timeoutMs, options = {}) {
 
     child.once('error', (error) => {
       clearTimeout(timer);
+      clearInterval(stallTimer);
       error.stdout = stdout;
       error.stderr = stderr;
       reject(error);
     });
 
-    child.once('close', (code, signal) => {
+    child.once('close', async (code, signal) => {
       clearTimeout(timer);
-      if (pendingStderr.trim() && options.onProgress) options.onProgress(pendingStderr.trim());
+      clearInterval(stallTimer);
+      if (pendingStderr.trim()) {
+        const finalLine = pendingStderr.trim();
+        if (finalLine !== lastDistinctProgress) {
+          lastDistinctProgress = finalLine;
+          lastDistinctProgressAt = Date.now();
+        }
+        if (options.onProgress) options.onProgress(finalLine);
+      }
+      if (stalled && expectedOutputPath) {
+        const partial = await fs.stat(expectedOutputPath).catch(() => null);
+        if (partial && partial.isFile() && partial.size > 0) {
+          const marker = '\n[!] Engine stopped after ' + formatDuration(STALL_TIMEOUT_MS) +
+            ' without new progress; returning the output file already written.';
+          return resolve({ stdout, stderr: stderr + marker, stalled: true, partialOutput: true });
+        }
+      }
       if (timedOut || signal === 'SIGKILL') {
         // Only report a timeout when OUR timer fired. A SIGKILL we did not
         // send comes from the host (almost always the out-of-memory killer),

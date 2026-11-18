@@ -2318,7 +2318,7 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
       outputPath,
       options.fast
         ? 210_000
-        : ENGINE_TIMEOUT_MS,
+        : (Number.isFinite(options.hardTimeoutMs) ? options.hardTimeoutMs : ENGINE_TIMEOUT_MS),
       [
         '--engine', engineVersion,
         '--strings',
@@ -2360,6 +2360,7 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
           ...(options.env || {}),
         },
         onProgress: progress.onLine,
+        ...(Number.isFinite(options.stallTimeoutMs) ? { stallTimeoutMs: options.stallTimeoutMs } : {}),
       },
     ).catch(async (error) => {
       // Killed (out of memory / time) or crashed: send whatever the engine
@@ -2505,6 +2506,10 @@ async function processLuraph143(message, prompt, input) {
   // the sandbox are lifted too (DEVIRT_LIFT_UNRUN).
   return processLuraph14x(message, prompt, input, '14.3', {
     engineVersion: '14.7',
+    // 14.3 can spend many minutes inside one VM-lift round. Stop stalled
+    // runs early and let processLuraph14x return the last saved trace/lift.
+    hardTimeoutMs: 170_000,
+    stallTimeoutMs: 120_000,
     env: { DEVIRT_LIFT_UNRUN: '1' },
   });
 }

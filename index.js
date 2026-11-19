@@ -2291,6 +2291,15 @@ async function processLuraphV15(message, prompt, input, displayLabel = 'Luraph v
 
 async function processLuraph14x(message, prompt, input, version, options = {}) {
   const startedAt = Date.now();
+  const inputBytes = Buffer.byteLength(input.source, 'utf8');
+  // Large-file tiers: keep 500 KB+, 2 MB+ and 5 MB+ samples from inheriting
+  // the short-sample runtime and VM-spin limits. These remain bounded so a
+  // genuinely infinite/tamper loop cannot occupy a worker forever.
+  const largeFileTier = inputBytes >= 5 * 1024 * 1024 ? 3
+    : inputBytes >= 2 * 1024 * 1024 ? 2
+    : inputBytes >= 500 * 1024 ? 1 : 0;
+  const largeFileRuntimeSeconds = [180, 240, 360, 480][largeFileTier];
+  const largeFileSpinChecks = [8, 32, 64, 128][largeFileTier];
   const versionTag = version.replace('.', '');
   // 14.3 runs through the 14.7 devirtualizer (same VM family); see processLuraph143
   const engineVersion = options.engineVersion || version;
@@ -2331,8 +2340,10 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
         // with a bounded runtime instead of the old 10+ minute worst case.
         '--max-runs', options.fast ? '6' : '16',
         '--devirt-rounds', options.fast ? '120' : '200',
-        '--budget', options.fast ? '30' : '60',
-        '--timeout', options.fast ? '60' : '180',
+        // Give large protected payloads more trace time without removing the
+        // watchdog. 5 MB+ files receive the longest bounded runtime window.
+        '--budget', options.fast ? '30' : String([60, 90, 120, 150][largeFileTier]),
+        '--timeout', options.fast ? '60' : String(largeFileRuntimeSeconds),
       ],
       {
         env: {
@@ -2358,6 +2369,11 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
             : (process.env.DEOB_LOW_MEMORY === '1' ||
                (!options.fast && Buffer.byteLength(input.source, 'utf8') > 400_000)
               ? { DEVIRT_SYMBOLIC_FOR: '0' } : {})),
+          // The VM can execute long decoder loops without touching the fake
+          // environment. Raise the consecutive-idle threshold for large input
+          // tiers so legitimate constant decoding is not mistaken for a spin.
+          // The watchdog stays enabled and still catches truly endless loops.
+          DEOB_SPIN_CHECKS: String(largeFileSpinChecks),
           ...(options.env || {}),
         },
         onProgress: progress.onLine,

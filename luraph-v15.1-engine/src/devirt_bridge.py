@@ -16,8 +16,13 @@ if cmd == "pipeline":
         c = json.load(f)
 
     from obfuscators.base import Job
-    from obfuscators.luraph_v15 import driver
+    from obfuscators.luraph_v15 import driver as driver15
     import harness
+    obf = (c.get("obfuscator") or "").lower()
+    if "v14" in obf:
+        from obfuscators.luraph_v14 import driver
+    else:
+        driver = driver15
 
     class DummyArgs:
         DEFAULTS = {

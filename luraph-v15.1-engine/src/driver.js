@@ -148,7 +148,22 @@ async function run(job) {
   const text = trace.header(job.input, notes) + body;
 
   function writeTrace() {
-    job.write(job.tracePath, tidy.tidy(text, { preamble: !args.keepPreamble }));
+    const cleaned = tidy.tidy(text, { preamble: !args.keepPreamble });
+    const probeOnly =
+      /DescendantAdded:Connect/.test(cleaned) &&
+      /math_floor_precision/.test(cleaned) &&
+      !/\bfunction\s+[A-Za-z_]/.test(cleaned.replace(/function\s*\(/g, ''));
+    const banner = [
+      '-- ============================================================================',
+      '-- DAILY DEOBF · BEHAVIOUR TRACE ONLY — NOT RECOVERED SOURCE',
+      '-- The VM lifter did not emit readable function bodies for this sample.',
+      '-- Lines below are runtime probes (anti-tamper / environment checks), not the original script.',
+      '-- If protos.json was written, a later lift pass may still recover more.',
+      '-- ============================================================================',
+      '',
+    ].join('\n');
+    const out = probeOnly ? (banner + cleaned) : cleaned;
+    job.write(job.tracePath, out);
   }
 
   if (!devirtOn && !job.debug) {

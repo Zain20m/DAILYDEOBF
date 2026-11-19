@@ -2373,8 +2373,8 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
           // environment. Raise the consecutive-idle threshold for large input
           // tiers so legitimate constant decoding is not mistaken for a spin.
           // The watchdog stays enabled and still catches truly endless loops.
-          DEOB_SPIN_CHECKS: String(largeFileSpinChecks),
           ...(options.env || {}),
+          DEOB_SPIN_CHECKS: String(largeFileSpinChecks),
         },
         onProgress: progress.onLine,
         ...(Number.isFinite(options.stallTimeoutMs) ? { stallTimeoutMs: options.stallTimeoutMs } : {}),
@@ -2514,14 +2514,19 @@ async function processLuraph148(message, prompt, input) {
 }
 
 async function processLuraph149(message, prompt, input) {
+  const bytes = Buffer.byteLength(input.source, 'utf8');
+  // Keep the v14.9 watchdog, but scale its bounded runtime/stall windows for
+  // large files just like v14.7 and v14.8. The shared 14.x runner selects the
+  // matching spin-check tier from the actual input size.
   return processLuraph14x(message, prompt, input, '14.9', {
-    // v14.9 samples can keep the runtime busy longer than the older 60s
-    // default used by some deployed bot revisions. Give tracing a bounded
-    // window, while the loop watchdog remains enabled.
-    runtimeTimeoutSeconds: 180,
-    hardTimeoutMs: 240_000,
-    stallTimeoutMs: 120_000,
-    env: { DEOB_SPIN_CHECKS: '8' },
+    runtimeTimeoutSeconds: bytes >= 5 * 1024 * 1024 ? 480
+      : bytes >= 2 * 1024 * 1024 ? 360
+      : bytes >= 500 * 1024 ? 240 : 180,
+    hardTimeoutMs: bytes >= 5 * 1024 * 1024 ? ENGINE_TIMEOUT_MS
+      : bytes >= 2 * 1024 * 1024 ? 900_000
+      : bytes >= 500 * 1024 ? 600_000 : 240_000,
+    stallTimeoutMs: bytes >= 2 * 1024 * 1024 ? 240_000
+      : bytes >= 500 * 1024 ? 180_000 : 120_000,
   });
 }
 

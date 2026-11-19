@@ -14,13 +14,17 @@ function detectLuraph(source) {
   const head500 = source.slice(0, 500);
   const m = LURAPH_HEADER.exec(head500);
   if (m) {
-    return m[1] === '15' ? 1.0 : 0.3;
+    const major = parseInt(m[1], 10);
+    // v15+ = 1.0; v14.x = 1.0 via dedicated plugin; older = low score
+    if (major >= 15) return 1.0;
+    if (major === 14) return 0.95;
+    return 0.3;
   }
   const head = source.slice(0, 65536);
   const vm = VM_CHUNK_START.exec(head);
   if (vm) {
     const at = vm.index + vm[0].length - 'return setmetatable({'.length;
-    const chunkHead = source.slice(at, at + 200000);
+    const chunkHead = source.slice(at, at + 2000);
     if (LURAPH_VM_SHAPE.test(chunkHead) || source.slice(at, at + 200000).includes('LPH')) {
       return 0.8;
     }
@@ -67,11 +71,32 @@ function detectLuarmor(source) {
   return 0.0;
 }
 
+function detectLuraphV14(source) {
+  const head500 = source.slice(0, 500);
+  const m = LURAPH_HEADER.exec(head500);
+  if (m && m[1] === '14') return 1.0;
+  // Classic LPH ascii85 bootstrap used heavily on v14.x
+  if (/LPH\}/.test(source.slice(0, 2000)) && /Luraph decompression error/.test(source.slice(-800))) return 0.85;
+  return 0.0;
+}
+
+function detectLuraphV15(source) {
+  const head500 = source.slice(0, 500);
+  const m = LURAPH_HEADER.exec(head500);
+  if (m && parseInt(m[1], 10) >= 15) return 1.0;
+  return detectLuraph(source) >= 0.8 ? detectLuraph(source) : 0.0;
+}
+
 const PLUGINS = [
+  {
+    name: 'luraph_v14',
+    label: 'Luraph v14.x',
+    detect: detectLuraphV14,
+  },
   {
     name: 'luraph_v15',
     label: 'Luraph v15',
-    detect: detectLuraph,
+    detect: detectLuraphV15,
   },
   {
     name: 'luarmor_client',

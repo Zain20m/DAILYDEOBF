@@ -19,6 +19,18 @@ if (luraph151Setup.error || luraph151Setup.status !== 0) {
   throw new Error('Luraph 15.1 engine extraction failed: ' +
     (luraph151Setup.error ? luraph151Setup.error.message : 'setup script exited with code ' + luraph151Setup.status));
 }
+
+const luraph151Enhance = spawnSync(python, [path.join(__dirname, 'run-luraph151-envlog-enhancement.py')], {
+  cwd: root,
+  encoding: 'utf8',
+  maxBuffer: 2 * 1024 * 1024,
+});
+if (luraph151Enhance.stdout) process.stdout.write(luraph151Enhance.stdout);
+if (luraph151Enhance.stderr) process.stderr.write(luraph151Enhance.stderr);
+if (luraph151Enhance.error || luraph151Enhance.status !== 0) {
+  throw new Error('Luraph 15.1 env logger enhancement failed: ' +
+    (luraph151Enhance.error ? luraph151Enhance.error.message : 'enhancement script exited with code ' + luraph151Enhance.status));
+}
 const ib2Setup = spawnSync(python, [path.join(__dirname, 'setup-ib2-engine.py')], {
   cwd: root,
   encoding: 'utf8',

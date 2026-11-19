@@ -7,6 +7,18 @@ const { spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
 
 const python = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+
+const luraph151Setup = spawnSync(python, [path.join(__dirname, 'setup-luraph151-engine.py')], {
+  cwd: root,
+  encoding: 'utf8',
+  maxBuffer: 2 * 1024 * 1024,
+});
+if (luraph151Setup.stdout) process.stdout.write(luraph151Setup.stdout);
+if (luraph151Setup.stderr) process.stderr.write(luraph151Setup.stderr);
+if (luraph151Setup.error || luraph151Setup.status !== 0) {
+  throw new Error('Luraph 15.1 engine extraction failed: ' +
+    (luraph151Setup.error ? luraph151Setup.error.message : 'setup script exited with code ' + luraph151Setup.status));
+}
 const ib2Setup = spawnSync(python, [path.join(__dirname, 'setup-ib2-engine.py')], {
   cwd: root,
   encoding: 'utf8',

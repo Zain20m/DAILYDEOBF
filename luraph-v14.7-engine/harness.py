@@ -231,7 +231,7 @@ LAST_RAW = [""]     # complete runtime output of the last run (--raw)
 
 
 HEARTBEAT = 2       # seconds between the runtime's heartbeats (envlog checkBudget)
-STALL = 20          # no output for this long: stuck in pure script code (an endless loop)
+STALL = max(20, int(os.environ.get("DEOB_TRACE_STALL_SECONDS", "20")))  # configurable per input size
 
 
 def _communicate(cmd, timeout, stall):

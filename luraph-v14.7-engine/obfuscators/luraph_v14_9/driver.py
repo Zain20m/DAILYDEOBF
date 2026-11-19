@@ -483,11 +483,13 @@ def run(job):
     if not (devirt_on and not job.debug):
         write_trace()
     else:
-        # Lifting a big script can run out of memory or time on a small host.
-        # Save the behaviour trace first, so a killed run still leaves a
-        # result behind (skipped for huge traces: their readability pass is slow)
+        # Lifting a big script can run out of memory or hit the host timeout.
+        # Persist a usable fallback before starting the expensive VM walk. The
+        # Node wrapper attaches this file if the lift is killed or stalls.
+        # Keep a generous cap for pathological traces, but do not discard the
+        # fallback merely because the script crossed the old 20k-statement cap.
         try:
-            if trace.stmt_count(body) <= int(os.environ.get("DEOB_EARLY_TRACE_MAX", "20000")):
+            if trace.stmt_count(body) <= int(os.environ.get("DEOB_EARLY_TRACE_MAX", "100000")):
                 job.write(job.path(".trace.luau"), trace.render(text, args))
         except Exception as _ex:  # noqa: BLE001 - only a safety net
             print("[!] early trace failed: %s" % _ex, file=sys.stderr)

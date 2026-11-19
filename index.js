@@ -5136,43 +5136,124 @@ async function startEnvLogWorkflow(message, inlineText = null) {
       const why = result && result.failed ? String(result.failed.message || result.failed) : 'the sandbox produced no log';
       throw new Error('Environment log failed: ' + why.slice(0, 800));
     }
-    const header = log.split('\n').filter((line) => line.startsWith('--')).slice(0, 40);
-    const pick = (re) => { const m = header.find((line) => re.test(line)); return m ? m.replace(/^--\s*/, '') : null; };
+    const header = log.split(/\r?\n/).slice(0, 100);
+    const headerLine = (re) => header.find((line) => re.test(line)) || '';
+    const statusLine = headerLine(/^--\s*run status:/);
+    const status = statusLine.replace(/^--\s*run status:\s*/i, '') || 'unknown';
+    const statsLine = headerLine(/^--\s*\d+\s+statements recorded/i);
+    const statsMatch = statsLine.match(/(\d+)\s+statements recorded in\s+(.+)$/i);
     const listAfter = (title) => {
-      const i = header.findIndex((line) => line.toLowerCase().startsWith('-- ' + title));
-      if (i < 0) return [];
-      const out = [];
-      for (let j = i + 1; j < header.length && /^--\s{2,}/.test(header[j]); j++) out.push(header[j].replace(/^--\s+/, ''));
-      return out;
+      const index = header.findIndex((line) =>
+        line.replace(/^--\s*/, '').trim().toLowerCase() === title.toLowerCase() + ':'
+      );
+      if (index < 0) return [];
+      const values = [];
+      for (let i = index + 1; i < header.length && /^--\s{2,}/.test(header[i]); i++) {
+        const value = header[i].replace(/^--\s+/, '').trim();
+        if (value) values.push(value);
+      }
+      return [...new Set(values)];
     };
-    const urls = listAfter('urls requested');
-    const remotes = listAfter('remotes fired');
-    const lines = [
-      '**Status:** ' + (pick(/run status:/) || 'unknown').replace(/^run status:\s*/, ''),
-      '**Recorded:** ' + (pick(/statements recorded/) || 'n/a'),
-      '**Time:** ' + formatDuration(Date.now() - started),
+    const urls = listAfter('URLs requested').map((raw) => {
+      try {
+        const parsed = new URL(raw);
+        return parsed.host + parsed.pathname;
+      } catch {
+        return raw.slice(0, 160);
+      }
+    });
+    const remotes = listAfter('remotes fired/invoked');
+    const uniqueCalls = (regex) => [...new Set([...log.matchAll(regex)].map((match) => match[1]).filter(Boolean))];
+    const services = uniqueCalls(/\bgame\s*:\s*GetService\s*\(\s*['"]([^'"]+)['"]/gi);
+    const instances = uniqueCalls(/\bInstance\s*\.\s*new\s*\(\s*['"]([^'"]+)['"]/gi);
+    const countCall = (name) => [...log.matchAll(new RegExp('\\b' + name.replace(/\./g, '\\.') + '\\b', 'g'))].length;
+    const apiNames = [
+      'getgenv', 'getrenv', 'gethui', 'identifyexecutor', 'getrawmetatable',
+      'setrawmetatable', 'hookfunction', 'hookmetamethod', 'newcclosure',
+      'checkcaller', 'getgc', 'getreg', 'getconnections', 'firesignal',
+      'fireclickdetector', 'fireproximityprompt', 'setclipboard',
+      'queue_on_teleport', 'request', 'http_request', 'readfile', 'writefile',
+      'appendfile', 'delfile', 'isfile', 'isfolder', 'makefolder', 'listfiles',
+      'loadfile', 'dofile', 'loadstring', 'cloneref',
     ];
-    if (urls.length) lines.push('', '**URLs requested (' + urls.length + '):**', ...urls.slice(0, 8).map((u) => '`' + u.slice(0, 180) + '`'));
-    if (remotes.length) lines.push('', '**Remotes fired/invoked (' + remotes.length + '):**', remotes.slice(0, 20).map((r) => '`' + r.slice(0, 60) + '`').join(', '));
-    lines.push('', 'Offline sandbox: the script never touched the network or a real game. Branches it did not take are not in the log.');
-    const buffer = Buffer.from(log, 'utf8');
-    const files = buffer.length <= MAX_ATTACHMENT_PART_BYTES
-      ? [new AttachmentBuilder(buffer, { name: base + '_envlog.lua' })]
-      : makeSourceParts(buffer, base + '_envlog.lua').slice(0, 1)
-        .map((part) => new AttachmentBuilder(part.data, { name: part.name }));
-    // every string the script built (--strings), when there are any
+    const apiCalls = apiNames.map((name) => ({ name, count: countCall(name) })).filter((item) => item.count > 0);
+    const remoteCalls = ['FireServer', 'InvokeServer', 'FireClient', 'FireAllClients', 'OnClientEvent', 'OnServerEvent']
+      .map((name) => ({ name, count: countCall(name) })).filter((item) => item.count > 0);
+    const warnings = header.filter((line) =>
+      /warning:|non-standard globals|anti-tamper|aborted:|stopped in an endless loop|script error:/i.test(line)
+    ).map((line) => line.replace(/^--\s*/, '').trim());
+    if (statusLine && !/^--\s*run status:\s*finished\b/i.test(statusLine)) warnings.unshift(statusLine.replace(/^--\s*/, ''));
+    const brief = (items, empty, limit = 650) => {
+      if (!items.length) return empty;
+      const value = items.slice(0, 10).map((item) =>
+        typeof item === 'string' ? item : item.name + ' ×' + item.count
+      ).join('\n');
+      return (value + (items.length > 10 ? '\n… and ' + (items.length - 10) + ' more' : '')).slice(0, limit);
+    };
+    const elapsedMs = Date.now() - started;
+    const tick = String.fromCharCode(96);
+    const description = [
+      '**Result:** ' + status,
+      '**Input:** ' + formatBytes(Buffer.byteLength(input.source, 'utf8')) +
+        ' · SHA-256 ' + tick + sha256Hex(String(input.source)).slice(0, 16) + tick,
+      '**Trace:** ' + (statsMatch ? Number(statsMatch[1]).toLocaleString() + ' statements · engine ' + statsMatch[2] : 'statement count unavailable'),
+      '**Elapsed:** ' + formatDuration(elapsedMs),
+      '',
+      'HTTP calls are simulated in the offline sandbox, not sent. A source URL may be downloaded before execution. Only branches reached in this run are shown.',
+    ].join('\n');
+    const embed = dailyEmbed(
+      'Environment log · ' + base,
+      description,
+      /^finished\b/i.test(status) ? DAILY_COLORS.success : (warnings.length ? DAILY_COLORS.warning : DAILY_COLORS.primary)
+    );
+    embed.addFields(
+      { name: 'Network requests · ' + urls.length, value: brief(urls, 'None recorded.'), inline: true },
+      { name: 'Remotes · ' + remotes.length, value: brief(remotes, 'None recorded.'), inline: true },
+      {
+        name: 'Roblox objects',
+        value: ('**Services:** ' + (services.join(', ') || 'none') +
+          '\n**Instances:** ' + (instances.join(', ') || 'none')).slice(0, 800),
+        inline: false,
+      },
+      { name: 'Executor / filesystem APIs', value: brief(apiCalls, 'None found.'), inline: true },
+      { name: 'Remote method references', value: brief(remoteCalls, 'None found.'), inline: true },
+      {
+        name: 'Warnings / engine notes',
+        value: brief(warnings.concat(result && result.failed
+          ? ['Engine note: ' + String(result.failed.message || result.failed).split('\n')[0]]
+          : []), 'No warnings recorded.'),
+        inline: false,
+      }
+    );
+
+    const files = [];
+    const addParts = (data, filename) => {
+      const parts = splitUtf8Buffer(data, MAX_ATTACHMENT_PART_BYTES);
+      if (parts.length === 1) {
+        files.push(new AttachmentBuilder(parts[0], { name: filename }));
+        return;
+      }
+      const extension = path.extname(filename) || '.txt';
+      const stem = path.basename(filename, extension);
+      parts.forEach((part, index) => files.push(new AttachmentBuilder(part, {
+        name: stem + '.part' + String(index + 1).padStart(3, '0') + extension,
+      })));
+    };
+    addParts(Buffer.from(log, 'utf8'), base + '_envlog.lua');
+    let stringCount = 0;
     try {
       const strings = await fs.readFile(outputPath + '.strings.txt');
-      if (strings.length > 0 && strings.length <= 8 * 1024 * 1024) {
-        files.push(new AttachmentBuilder(strings, { name: base + '_strings.txt' }));
+      if (strings.length > 0) {
+        stringCount = strings.toString('utf8').split(/\r?\n/).filter(Boolean).length;
+        addParts(strings, base + '_strings.txt');
       }
     } catch {
-      // no strings file
+      // The strings file is optional; the complete main trace is still attached.
     }
-    await prompt.edit({
-      embeds: [dailyEmbed('Environment log · ' + base, lines.join('\n'), DAILY_COLORS.success)],
-      files,
-    });
+    if (stringCount) embed.addFields({ name: 'Recovered strings', value: stringCount.toLocaleString(), inline: true });
+    if (files.length > 10) throw new Error('Trace requires ' + files.length + ' attachments; Discord allows at most 10.');
+    await prompt.edit({ embeds: [embed], files });
+
   } catch (error) {
     await prompt.edit({ embeds: [dailyEmbed('Environment log', String(error.message || error).slice(0, 1500), DAILY_COLORS.danger)] }).catch(() => {});
   } finally {

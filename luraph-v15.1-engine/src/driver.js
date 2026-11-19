@@ -67,10 +67,13 @@ async function run(job) {
   for (let attempt = 1; attempt <= args.maxRuns; attempt++) {
     cfg = {
       time_budget: args.budget,
-      dump_strings: args.strings,
+      dump_strings: args.strings || process.env.DEOB_FULL_CAPTURE !== '0',
       executor: args.executor,
       skip_protos: skip,
       devirt: devirtOn,
+      full_capture: process.env.DEOB_FULL_CAPTURE !== '0',
+      call_log: process.env.DEOB_FULL_CAPTURE !== '0',
+      call_log_full: process.env.DEOB_FULL_CAPTURE !== '0',
     };
     if (args.inputText) cfg.input_text = args.inputText;
     if (args.preludeFile) cfg.prelude = require('fs').readFileSync(args.preludeFile, 'latin1');

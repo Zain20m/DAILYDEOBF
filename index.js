@@ -2375,6 +2375,10 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
           // The watchdog stays enabled and still catches truly endless loops.
           ...(options.env || {}),
           DEOB_SPIN_CHECKS: String(largeFileSpinChecks),
+          // The Luau harness heartbeat can pause during expensive VM dispatch
+          // or closure discovery. Give larger samples a longer no-heartbeat
+          // window before classifying the run as an invisible infinite loop.
+          DEOB_TRACE_STALL_SECONDS: String([60, 90, 120, 150][largeFileTier]),
         },
         onProgress: progress.onLine,
         ...(Number.isFinite(options.stallTimeoutMs) ? { stallTimeoutMs: options.stallTimeoutMs } : {}),

@@ -3,7 +3,7 @@ name: Replace Luraph 15.1 engine from newest upload
 on:
   push:
     paths:
-      - "upload/Luraph_v15_1_Deobfuscator_Newest.zip"
+      - "upload/Luraph_v15.1_Engine_Fixed.zip"
       - "upload/IMPORT_151_TRIGGER.txt"
       - ".github/workflows/import-luraph151.yml"
   workflow_dispatch:
@@ -36,7 +36,7 @@ jobs:
           import tempfile
 
           root = Path.cwd()
-          archive = root / "upload/Luraph_v15.1_Deobfuscator.zip"
+          archive = root / "upload/Luraph_v15.1_Engine_Fixed.zip"
           if not archive.is_file():
               raise SystemExit(f"Missing uploaded archive: {archive}")
 

@@ -3308,8 +3308,34 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
     return false;
   }
 
-  // The dedicated v15.1 engine run (also used as the fallback when legacy v15
-  // does not finish the lift: it follows loadstring'd VM chunks, legacy does not).
+  // Luraph v15 uses its own Python engine. Keep v15.1 on its separate
+  // Node/Python merged engine so the two version paths cannot cross.
+  function runLuraphV15Engine(target) {
+    const python = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+    return runCommand(
+      python,
+      [
+        ENGINE_V15_CLI,
+        target.inputPath,
+        '-o', target.outputPath,
+        '--obfuscator', 'luraph_v15',
+        '--debug',
+        '--strings',
+        '--max-runs', '12',
+        '--devirt-rounds', '200',
+        '--budget', '45',
+        '--timeout', '120',
+      ],
+      ENGINE_V15_DIR,
+      12 * 60_000,
+      {
+        stallTimeoutMs: 180_000,
+        onProgress: progress.onLine,
+      },
+    );
+  }
+
+  // The dedicated v15.1 engine run remains unchanged.
   function runLuraph151Engine(target) {
     return runEngine(
       ENGINE_151_DIR,
@@ -3357,9 +3383,8 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
   }
 
   const dedicated = await prepare('selected-v' + version);
-  // Both the v15 and v15.1 selections use the merged engine; the legacy v15
-  // lifter can emit error("devirt: value <UpList>...") stubs for valid closures.
-  const selectedEngineDir = ENGINE_151_DIR;
+  // Each selection uses its matching engine directory.
+  const selectedEngineDir = version === '15' ? ENGINE_V15_DIR : ENGINE_151_DIR;
   const inputBytes = Buffer.byteLength(input.source, 'utf8');
   const progress = createAnalysisProgress(
     prompt, input.filename, inputBytes, 'Luraph v' + version,
@@ -3390,10 +3415,11 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
     );
 
     try {
-      // Route both v15 and v15.1 through the merged engine. The legacy v15
-      // devirtualizer is retained in the repository for reference, but must
-      // not be allowed to produce the selected output for this command.
-      const result = await runLuraph151Engine(dedicated);
+      // Route v15 to the uploaded standalone Python engine, and v15.1
+      // exclusively to its existing dedicated engine.
+      const result = version === '15'
+        ? await runLuraphV15Engine(dedicated)
+        : await runLuraph151Engine(dedicated);
       dedicatedLogs += result.stderr || '';
     } catch (error) {
       dedicatedError = error;
@@ -3488,10 +3514,12 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
           : []),
         'deep_reconstruction_instructions.txt contains the requested behavior-preserving follow-up checklist.',
         version === '15'
-          ? 'The merged v15.1 engine was used for the Luraph v15 selection; the legacy v15 lifter was not used.'
-          : 'The merged v15.1 engine was used for the Luraph v15.1 selection.',
+          ? 'The standalone luraph-v15-engine Python engine was used. The v15.1 engine was not invoked.'
+          : 'The dedicated luraph-v15.1-engine was used.',
         'The checklist is an instruction for a separate reconstruction pass, not proof that every item was automatically completed.',
-        ...(gameId ? ['Target Universe/GameId supplied to the sandbox: ' + gameId + '.'] : ['No target Universe/GameId was supplied; game-locked builds may stop in their bootstrap layer.']),
+        ...(version === '15'
+          ? ['The standalone v15 engine used its bundled offline environment; the supplied GameId is not passed to this engine.']
+          : (gameId ? ['Target Universe/GameId supplied to the sandbox: ' + gameId + '.'] : ['No target Universe/GameId was supplied; game-locked builds may stop in their bootstrap layer.'])),
         ...((/buffer access out of bounds|size out of range/i).test(dedicatedLogs)
           ? ['Runtime stopped during bootstrap with a buffer bounds/size error. This is not a recovered source result.', 'For a game-locked script, retry with its correct public Roblox Universe/GameId. A FlowAuth key-gated loader that requires a live authorization handshake will only expose its offline loader behaviour; the bot does not emulate or bypass that handshake.']
           : []),

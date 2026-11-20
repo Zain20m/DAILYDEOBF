@@ -129,6 +129,9 @@ jobs:
           print("V15 SAMPLE LOG:\n" + result.stderr[-6000:])
           PY
 
+      - name: Check bot integration syntax
+        run: node --check index.js
+
       - name: Commit the new v15 engine
         shell: bash
         run: |

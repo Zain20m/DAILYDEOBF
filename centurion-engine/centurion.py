@@ -38,26 +38,26 @@ def find_luau_ast():
 
 def fingerprint(path):
     source = read_text(path)
-    tag_match = re.search(r"Centurion\\s+(v[\\d.]+)", source, re.IGNORECASE)
+    tag_match = re.search(r"Centurion\s+(v[\d.]+)", source, re.IGNORECASE)
     tag = ("Centurion " + tag_match.group(1)) if tag_match else "unknown"
 
     # Count syntax variants rather than requiring one minified spelling.
-    c3_refs = len(re.findall(r"\\bc3\\s*\\[", source))
+    c3_refs = len(re.findall(r"\bc3\s*\[", source))
     func_z = len(re.findall(
-        r"(?:=\\s*)?function\\s*\\(\\s*Z\\s*\\)", source
+        r"(?:=\s*)?function\s*\(\s*Z\s*\)", source
     ))
     result = {
         "file": os.path.basename(path),
         "bytes": len(source),
         "tag": tag,
         "sha8": hashlib.sha256(source.encode("latin-1")).hexdigest()[:16],
-        "h8": len(re.findall(r"\\bh8\\b", source)),
-        "getfenv": len(re.findall(r"\\bgetfenv\\b", source)),
-        "ha_refs": len(re.findall(r"\\bHA\\s*\\[", source)),
+        "h8": len(re.findall(r"\bh8\b", source)),
+        "getfenv": len(re.findall(r"\bgetfenv\b", source)),
+        "ha_refs": len(re.findall(r"\bHA\s*\[", source)),
         "c3_refs": c3_refs,
         "func_z": func_z,
-        "while_z": len(re.findall(r"\\bwhile\\s+z\\b", source, re.IGNORECASE)),
-        "invokeserver": len(re.findall(r"\\bInvokeServer\\b", source)),
+        "while_z": len(re.findall(r"\bwhile\s+z\b", source, re.IGNORECASE)),
+        "invokeserver": len(re.findall(r"\bInvokeServer\b", source)),
     }
 
     version = tag_match.group(1) if tag_match else ""

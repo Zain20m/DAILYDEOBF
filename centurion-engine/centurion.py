@@ -38,28 +38,45 @@ def find_luau_ast():
 
 def fingerprint(path):
     source = read_text(path)
-    match = re.search(r"Centurion (v[\d.]+)", source)
+    tag_match = re.search(r"Centurion\\s+(v[\\d.]+)", source, re.IGNORECASE)
+    tag = ("Centurion " + tag_match.group(1)) if tag_match else "unknown"
+
+    # Count syntax variants rather than requiring one minified spelling.
+    c3_refs = len(re.findall(r"\\bc3\\s*\\[", source))
+    func_z = len(re.findall(
+        r"(?:=\\s*)?function\\s*\\(\\s*Z\\s*\\)", source
+    ))
     result = {
         "file": os.path.basename(path),
         "bytes": len(source),
-        "tag": match.group(0) if match else "unknown",
+        "tag": tag,
         "sha8": hashlib.sha256(source.encode("latin-1")).hexdigest()[:16],
-        "h8": source.count("h8"),
-        "getfenv": source.count("getfenv"),
-        "ha_refs": len(re.findall(r"HA\[", source)),
-        "c3_refs": len(re.findall(r"c3\[", source)),
-        "func_z": len(re.findall(r"=function\(Z\)", source)),
-        "while_z": len(re.findall(r"while z", source)),
-        "invokeserver": source.count("InvokeServer"),
+        "h8": len(re.findall(r"\\bh8\\b", source)),
+        "getfenv": len(re.findall(r"\\bgetfenv\\b", source)),
+        "ha_refs": len(re.findall(r"\\bHA\\s*\\[", source)),
+        "c3_refs": c3_refs,
+        "func_z": func_z,
+        "while_z": len(re.findall(r"\\bwhile\\s+z\\b", source, re.IGNORECASE)),
+        "invokeserver": len(re.findall(r"\\bInvokeServer\\b", source)),
     }
-    if result["c3_refs"] >= 50 and result["func_z"] > 20:
-        result["route"] = "v6-static"
-    elif result["tag"] == "Centurion v6.1":
+
+    version = tag_match.group(1) if tag_match else ""
+    if version == "v6.1":
         result["route"] = "v6.1-sandbox"
+        result["route_reason"] = "The v6.1 version tag is present; its separate sandbox runtime is not bundled."
+    elif version == "v6" and c3_refs > 0:
+        result["route"] = "v6-static"
+        result["route_reason"] = "The v6 version tag and c3 factory-table references are present."
+    elif not version and c3_refs >= 8 and func_z >= 3:
+        result["route"] = "v6-static"
+        result["route_reason"] = "No version tag was found, but multiple c3 references and Z-parameter factories match the v6 static shape."
     else:
         result["route"] = "unknown"
+        result["route_reason"] = (
+            "Insufficient Centurion v6 evidence. A version tag, c3 table references, "
+            "and factory-function counts are reported for diagnosis."
+        )
     return result
-
 
 def esc_byte(value):
     if value == 34:

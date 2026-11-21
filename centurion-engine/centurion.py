@@ -70,10 +70,10 @@ def fingerprint(path):
     if version == "v6.1":
         result["route"] = "v6.1-sandbox"
         result["route_reason"] = "The v6.1 version tag is present; its separate sandbox runtime is not bundled."
-    elif version == "v6" and c3_refs > 0:
+    elif version in ("v6", "v6.0") and c3_refs > 0:
         result["route"] = "v6-static"
         result["route_reason"] = "The Centurion v6 c3 factory-table layout is present."
-    elif version == "v6" and returned_table and inline_functions > 0:
+    elif version in ("v6", "v6.0") and returned_table and inline_functions > 0:
         result["route"] = "v6-static-return-table"
         result["route_reason"] = "The Centurion v6 tag and returned-table function layout match the alternate v6 sample format."
     elif not version and c3_refs >= 8 and func_z >= 3:

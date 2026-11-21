@@ -34,6 +34,24 @@ class CenturionRegressionTests(unittest.TestCase):
         result = self.fingerprint_for("-- Centurion v6\n" + factories)
         self.assertEqual(result["route"], "v6-static")
 
+    def test_v6_tag_does_not_require_large_hardcoded_counts(self):
+        source = "-- Centurion v6\\nc3[1] = function ( Z ) return Z end\\n"
+        result = self.fingerprint_for(source)
+        self.assertEqual(result["route"], "v6-static")
+
+    def test_v6_structural_fallback_allows_whitespace_and_missing_tag(self):
+        factories = "\\n".join(
+            "c3 [%d] = function ( Z ) return Z end" % index
+            for index in range(8)
+        )
+        result = self.fingerprint_for(factories)
+        self.assertEqual(result["route"], "v6-static")
+
+    def test_fingerprint_explains_unknown_route(self):
+        result = self.fingerprint_for("local ordinary = true\\n")
+        self.assertEqual(result["route"], "unknown")
+        self.assertIn("route_reason", result)
+
     def test_escape_decoder_does_not_modify_comments_or_long_strings(self):
         source = r'''local a = "\x41"
 -- keep "\x42" in this comment

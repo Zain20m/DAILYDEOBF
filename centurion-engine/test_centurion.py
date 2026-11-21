@@ -43,6 +43,11 @@ return({getfenv(),function(a) return a end,function(b) return b end})
         self.assertTrue(result["returned_table"])
         self.assertGreater(result["inline_functions"], 0)
 
+    def test_v60_tag_is_supported_for_returned_table_layout(self):
+        source = "-- Centurion v6.0\\nreturn({getfenv(),function(a) return a end})"
+        result = self.fingerprint_for(source)
+        self.assertEqual(result["route"], "v6-static-return-table")
+
     def test_returned_table_function_spans_are_harvested(self):
         function_one = {"type": "AstExprFunction", "location": "1, 10 - 1, 25"}
         function_two = {"type": "AstExprFunction", "location": "1, 30 - 1, 45"}

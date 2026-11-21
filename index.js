@@ -3181,9 +3181,18 @@ async function processCenturion(message, prompt, input) {
         'Adding placeholder files will not enable v6.1.'
       );
     } else if (fingerprint.route !== 'v6-static') {
+      const details = [
+        'tag=' + String(fingerprint.tag || 'unknown'),
+        'c3_refs=' + String(fingerprint.c3_refs ?? 0),
+        'factory_functions=' + String(fingerprint.func_z ?? 0),
+        'HA_refs=' + String(fingerprint.ha_refs ?? 0),
+        'getfenv=' + String(fingerprint.getfenv ?? 0),
+        String(fingerprint.route_reason || ''),
+      ].filter(Boolean).join('; ');
       throw new Error(
-        'Centurion did not recognize this script as a supported v6/v6.1 build. ' +
-        'Detected route: ' + String(fingerprint.route || 'unknown') + '.'
+        'Centurion fingerprint did not match a supported route. ' +
+        'Detected route: ' + String(fingerprint.route || 'unknown') +
+        '. Diagnostics: ' + details + '.'
       );
     }
 

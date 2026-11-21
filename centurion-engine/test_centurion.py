@@ -34,6 +34,39 @@ class CenturionRegressionTests(unittest.TestCase):
         result = self.fingerprint_for("-- Centurion v6\n" + factories)
         self.assertEqual(result["route"], "v6-static")
 
+    def test_v6_returned_table_layout_is_detected(self):
+        source = """-- This file was obfuscated using Centurion v6
+return({getfenv(),function(a) return a end,function(b) return b end})
+"""
+        result = self.fingerprint_for(source)
+        self.assertEqual(result["route"], "v6-static-return-table")
+        self.assertTrue(result["returned_table"])
+        self.assertGreater(result["inline_functions"], 0)
+
+    def test_returned_table_function_spans_are_harvested(self):
+        function_one = {"type": "AstExprFunction", "location": "1, 10 - 1, 25"}
+        function_two = {"type": "AstExprFunction", "location": "1, 30 - 1, 45"}
+        ast = {
+            "type": "AstStatBlock",
+            "body": [{
+                "type": "AstStatReturn",
+                "list": [{
+                    "type": "AstExprGroup",
+                    "expression": {
+                        "type": "AstExprTable",
+                        "items": [
+                            {"type": "AstExprTableItem", "value": {"type": "AstExprCall"}},
+                            {"type": "AstExprTableItem", "value": function_one},
+                            {"type": "AstExprTableItem", "value": function_two},
+                        ],
+                    },
+                }],
+            }],
+        }
+        with patch.object(centurion, "parse_ast", return_value=ast):
+            spans = centurion.harvest_return_table_spans_ast("x" * 60)
+        self.assertEqual(spans, [(2, 10, 25), (3, 30, 45)])
+
     def test_v6_tag_does_not_require_large_hardcoded_counts(self):
         source = "-- Centurion v6\nc3[1] = function ( Z ) return Z end\n"
         result = self.fingerprint_for(source)

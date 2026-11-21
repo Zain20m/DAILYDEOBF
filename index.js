@@ -3174,13 +3174,15 @@ async function processCenturion(message, prompt, input) {
       throw new Error('Centurion returned an unreadable fingerprint result.');
     }
 
+    const isCenturionV6Static = ['v6-static', 'v6-static-return-table'].includes(fingerprint.route);
+
     if (fingerprint.route === 'v6.1-sandbox') {
       throw new Error(
         'This is a Centurion v6.1 build, but this bot currently contains only the v6 static adapter. ' +
         'The original v6.1 path expects sandbox-copy-luraph/harness.py, and its runtime code is not wired into this adapter. ' +
         'Adding placeholder files will not enable v6.1.'
       );
-    } else if (fingerprint.route !== 'v6-static') {
+    } else if (!isCenturionV6Static) {
       const details = [
         'tag=' + String(fingerprint.tag || 'unknown'),
         'c3_refs=' + String(fingerprint.c3_refs ?? 0),
@@ -3210,7 +3212,7 @@ async function processCenturion(message, prompt, input) {
     );
 
     const entries = await fs.readdir(outputDir);
-    const preferred = fingerprint.route === 'v6-static'
+    const preferred = isCenturionV6Static
       ? entries.find((name) => name.endsWith('_deobf_stage1.lua'))
       : (entries.find((name) => name.endsWith('_deobf_clean.lua')) ||
          entries.find((name) => name.endsWith('_maximal.lua')) ||
@@ -3229,11 +3231,11 @@ async function processCenturion(message, prompt, input) {
       throw new Error('Centurion output is empty or exceeds the 18 MB output limit.');
     }
     await prependDailyDeobfHeader(outputPath);
-    const outputName = fingerprint.route === 'v6-static'
+    const outputName = isCenturionV6Static
       ? 'Centurion_v6_stage1.luau'
       : 'Centurion_v6_1_result.luau';
     const factoryMatch = String(result.stdout || '').match(/"factories"\s*:\s*(\d+)/);
-    const detail = fingerprint.route === 'v6-static'
+    const detail = isCenturionV6Static
       ? '\nExtracted payload factories: ' + (factoryMatch ? factoryMatch[1] : 'see file') +
         '\n⚠️ Stage-one static extraction only. It is not represented as complete runnable source.'
       : '\nCenturion v6.1 offline analysis produced a Luau candidate. Review it before treating it as complete.';

@@ -35,12 +35,12 @@ class CenturionRegressionTests(unittest.TestCase):
         self.assertEqual(result["route"], "v6-static")
 
     def test_v6_tag_does_not_require_large_hardcoded_counts(self):
-        source = "-- Centurion v6\\nc3[1] = function ( Z ) return Z end\\n"
+        source = "-- Centurion v6\nc3[1] = function ( Z ) return Z end\n"
         result = self.fingerprint_for(source)
         self.assertEqual(result["route"], "v6-static")
 
     def test_v6_structural_fallback_allows_whitespace_and_missing_tag(self):
-        factories = "\\n".join(
+        factories = "\n".join(
             "c3 [%d] = function ( Z ) return Z end" % index
             for index in range(8)
         )
@@ -48,7 +48,7 @@ class CenturionRegressionTests(unittest.TestCase):
         self.assertEqual(result["route"], "v6-static")
 
     def test_fingerprint_explains_unknown_route(self):
-        result = self.fingerprint_for("local ordinary = true\\n")
+        result = self.fingerprint_for("local ordinary = true\n")
         self.assertEqual(result["route"], "unknown")
         self.assertIn("route_reason", result)
 

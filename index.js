@@ -3187,6 +3187,8 @@ async function processCenturion(message, prompt, input) {
         'tag=' + String(fingerprint.tag || 'unknown'),
         'c3_refs=' + String(fingerprint.c3_refs ?? 0),
         'factory_functions=' + String(fingerprint.func_z ?? 0),
+        'inline_functions=' + String(fingerprint.inline_functions ?? 0),
+        'returned_table=' + String(Boolean(fingerprint.returned_table)),
         'HA_refs=' + String(fingerprint.ha_refs ?? 0),
         'getfenv=' + String(fingerprint.getfenv ?? 0),
         String(fingerprint.route_reason || ''),
@@ -3199,8 +3201,8 @@ async function processCenturion(message, prompt, input) {
     }
 
     await progress.setPhase(
-      'Extracting Centurion v6 factories',
-      'The static route extracts payload factory functions and decodes string escapes. This is a stage-one result, not a complete runnable reconstruction.'
+      'Extracting Centurion v6 payload functions',
+      'The static route extracts function bodies from the detected v6 layout and decodes string escapes. This is a stage-one result, not a complete runnable reconstruction.'
     );
 
     const result = await runCommand(
@@ -3236,7 +3238,7 @@ async function processCenturion(message, prompt, input) {
       : 'Centurion_v6_1_result.luau';
     const factoryMatch = String(result.stdout || '').match(/"factories"\s*:\s*(\d+)/);
     const detail = isCenturionV6Static
-      ? '\nExtracted payload factories: ' + (factoryMatch ? factoryMatch[1] : 'see file') +
+      ? '\nExtracted payload functions: ' + (factoryMatch ? factoryMatch[1] : 'see file') +
         '\n⚠️ Stage-one static extraction only. It is not represented as complete runnable source.'
       : '\nCenturion v6.1 offline analysis produced a Luau candidate. Review it before treating it as complete.';
 

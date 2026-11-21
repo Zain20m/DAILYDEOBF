@@ -46,18 +46,24 @@ def fingerprint(path):
     func_z = len(re.findall(
         r"(?:=\s*)?function\s*\(\s*Z\s*\)", source
     ))
+    returned_table = bool(re.search(
+        r"\\breturn\\s*\\(?\\s*\\{\\s*getfenv\\s*\\(", source, re.IGNORECASE
+    ))
+    inline_functions = len(re.findall(r"\\bfunction\\s*\\(", source))
     result = {
         "file": os.path.basename(path),
         "bytes": len(source),
         "tag": tag,
         "sha8": hashlib.sha256(source.encode("latin-1")).hexdigest()[:16],
-        "h8": len(re.findall(r"\bh8\b", source)),
-        "getfenv": len(re.findall(r"\bgetfenv\b", source)),
-        "ha_refs": len(re.findall(r"\bHA\s*\[", source)),
+        "h8": len(re.findall(r"\\bh8\\b", source)),
+        "getfenv": len(re.findall(r"\\bgetfenv\\b", source)),
+        "ha_refs": len(re.findall(r"\\bHA\\s*\\[", source)),
         "c3_refs": c3_refs,
         "func_z": func_z,
-        "while_z": len(re.findall(r"\bwhile\s+z\b", source, re.IGNORECASE)),
-        "invokeserver": len(re.findall(r"\bInvokeServer\b", source)),
+        "inline_functions": inline_functions,
+        "returned_table": returned_table,
+        "while_z": len(re.findall(r"\\bwhile\\s+z\\b", source, re.IGNORECASE)),
+        "invokeserver": len(re.findall(r"\\bInvokeServer\\b", source)),
     }
 
     version = tag_match.group(1).lower() if tag_match else ""
@@ -66,16 +72,16 @@ def fingerprint(path):
         result["route_reason"] = "The v6.1 version tag is present; its separate sandbox runtime is not bundled."
     elif version == "v6" and c3_refs > 0:
         result["route"] = "v6-static"
-        result["route_reason"] = "The v6 version tag and c3 factory-table references are present."
+        result["route_reason"] = "The Centurion v6 c3 factory-table layout is present."
+    elif version == "v6" and returned_table and inline_functions > 0:
+        result["route"] = "v6-static-return-table"
+        result["route_reason"] = "The Centurion v6 tag and returned-table function layout match the alternate v6 sample format."
     elif not version and c3_refs >= 8 and func_z >= 3:
         result["route"] = "v6-static"
         result["route_reason"] = "No version tag was found, but multiple c3 references and Z-parameter factories match the v6 static shape."
     else:
         result["route"] = "unknown"
-        result["route_reason"] = (
-            "Insufficient Centurion v6 evidence. A version tag, c3 table references, "
-            "and factory-function counts are reported for diagnosis."
-        )
+        result["route_reason"] = "Insufficient Centurion v6 evidence. Checked c3 factories and the alternate returned-table layout."
     return result
 
 def esc_byte(value):
@@ -212,29 +218,26 @@ def clean_escapes(code):
     return "".join(out)
 
 
-def harvest_table_spans_ast(source, table_name):
+def parse_ast(source):
     ast_tool = find_luau_ast()
     tmp = None
+    result = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="latin-1",
-            newline="\n",
-            prefix="centurion-ast-",
-            suffix=".lua",
-            delete=False,
+            mode="w", encoding="latin-1", newline="\\n",
+            prefix="centurion-ast-", suffix=".lua", delete=False,
         ) as stream:
             stream.write(source)
             tmp = stream.name
-        result = subprocess.run(
-            [ast_tool, tmp], capture_output=True, timeout=120, check=False
-        )
+        result = subprocess.run([ast_tool, tmp], capture_output=True, timeout=120, check=False)
     finally:
         if tmp:
             try:
                 os.remove(tmp)
             except OSError:
                 pass
+    if result is None:
+        raise RuntimeError("luau-ast did not run.")
     ast = None
     for encoding in ("utf-8", "utf-16", "latin-1"):
         try:
@@ -245,7 +248,20 @@ def harvest_table_spans_ast(source, table_name):
     if ast is None:
         detail = result.stderr.decode("utf-8", "replace")[-500:]
         raise RuntimeError("luau-ast did not return valid JSON. " + detail)
+    return ast
 
+
+def ast_span(node):
+    location = node.get("location", "") if isinstance(node, dict) else ""
+    try:
+        start, end = location.split(" - ")
+        return int(start.split(",")[1]), int(end.split(",")[1])
+    except Exception:
+        return None
+
+
+def harvest_table_spans_ast(source, table_name):
+    ast = parse_ast(source)
     spans = []
 
     def walk(node):
@@ -260,24 +276,15 @@ def harvest_table_spans_ast(source, table_name):
                         if target.get("type") != "AstExprIndex":
                             continue
                         expression = target.get("expr")
-                        if not isinstance(expression, dict):
+                        if not isinstance(expression, dict) or expression.get("type") != "AstExprGlobal":
                             continue
-                        if expression.get("type") != "AstExprGlobal":
+                        if expression.get("global") != table_name or value.get("type") != "AstExprFunction":
                             continue
-                        if expression.get("global") != table_name:
-                            continue
-                        if value.get("type") != "AstExprFunction":
-                            continue
-                        location = value.get("location", "")
-                        try:
-                            start, end = location.split(" - ")
-                            start = int(start.split(",")[1])
-                            end = int(end.split(",")[1])
-                        except Exception:
-                            continue
-                        index = target.get("index")
-                        number = index.get("value") if isinstance(index, dict) else index
-                        spans.append((number, start, end))
+                        span = ast_span(value)
+                        if span:
+                            index = target.get("index")
+                            number = index.get("value") if isinstance(index, dict) else index
+                            spans.append((number, span[0], span[1]))
             for child in node.values():
                 walk(child)
         elif isinstance(node, list):
@@ -289,40 +296,100 @@ def harvest_table_spans_ast(source, table_name):
     return spans
 
 
-def deobfuscate_v6_static(input_path, output_dir):
+def harvest_return_table_spans_ast(source):
+    """Extract direct function values from a returned array table."""
+    ast = parse_ast(source)
+    return_nodes = []
+
+    def collect_returns(node):
+        if isinstance(node, dict):
+            if node.get("type") == "AstStatReturn":
+                return_nodes.append(node)
+                return
+            for child in node.values():
+                collect_returns(child)
+        elif isinstance(node, list):
+            for child in node:
+                collect_returns(child)
+
+    collect_returns(ast)
+
+    def unwrap(node):
+        while isinstance(node, dict) and node.get("type") in (
+            "AstExprGroup", "AstExprParen", "AstExprTypeAssertion"
+        ):
+            children = [value for value in node.values() if isinstance(value, dict)]
+            if not children:
+                break
+            node = children[0]
+        return node
+
+    for return_node in return_nodes:
+        returned = return_node.get("list", return_node.get("values", []))
+        if not isinstance(returned, list) or not returned:
+            continue
+        table = unwrap(returned[0])
+        if not isinstance(table, dict) or table.get("type") != "AstExprTable":
+            continue
+        items = table.get("items", table.get("entries", table.get("fields", [])))
+        if not isinstance(items, list):
+            continue
+        spans = []
+        for position, item in enumerate(items, 1):
+            if not isinstance(item, dict):
+                continue
+            value = item.get("value", item.get("expression", item.get("expr")))
+            if value is None and str(item.get("type", "")).endswith("TableItem"):
+                candidates = [child for child in item.values() if isinstance(child, dict)]
+                value = candidates[-1] if candidates else None
+            if not isinstance(value, dict) or value.get("type") != "AstExprFunction":
+                continue
+            span = ast_span(value)
+            if span:
+                spans.append((position, span[0], span[1]))
+        if spans:
+            return spans
+    return []
+def deobfuscate_v6_static(input_path, output_dir, route="v6-static"):
     source = read_text(input_path)
-    spans = harvest_table_spans_ast(source, "c3")
+    if route == "v6-static-return-table":
+        spans = harvest_return_table_spans_ast(source)
+        table_name = "returned_table"
+    else:
+        spans = harvest_table_spans_ast(source, "c3")
+        table_name = "c3"
     if not spans:
-        raise RuntimeError("No Centurion v6 c3 factory functions were found by the Luau AST parser.")
+        expected = "direct function entries in the returned table" if table_name == "returned_table" else "c3 factory functions"
+        raise RuntimeError("No Centurion v6 " + expected + " were found by the Luau AST parser.")
     header = (
-        "--[[ PARTIAL Centurion v6 static extraction: %s\n"
-        "   Extracted %d payload factory functions and decoded string escapes.\n"
-        "   Factory imports and VM boot order are not reconstructed by this stage.\n"
-        "   This file is an analysis result, not a complete runnable script. ]]\n\n"
-        "local c3 = {}\n"
-    ) % (os.path.basename(input_path), len(spans))
+        "--[[ PARTIAL Centurion v6 static extraction: %s\\n"
+        "   Layout: %s\\n"
+        "   Extracted %d function bodies and decoded string escapes.\\n"
+        "   VM boot order and runtime dependencies are not reconstructed.\\n"
+        "   This is an analysis result, not a complete runnable script. ]]\\n\\n"
+        "local %s = {}\\n"
+    ) % (os.path.basename(input_path), table_name, len(spans), table_name)
     parts = [header]
     for number, start, end in spans:
-        parts.append("-- ===== c3[%s] =====\nc3[%s]=" % (number, number) + clean_escapes(source[start:end]))
-    output = "\n\n".join(parts)
-    output = re.sub(r"\bconst\b", "local", output)
+        parts.append("-- ===== %s[%s] =====\\n%s[%s]=" % (table_name, number, table_name, number) + clean_escapes(source[start:end]))
+    output = "\\n\\n".join(parts)
+    output = re.sub(r"\\bconst\\b", "local", output)
     base = os.path.splitext(os.path.basename(input_path))[0]
     output_path = os.path.join(output_dir, base + "_deobf_stage1.lua")
     index_path = os.path.join(output_dir, base + "_deobf_index.txt")
-    with open(output_path, "w", encoding="utf-8", newline="\n") as stream:
-        stream.write(output + ("" if output.endswith("\n") else "\n"))
+    with open(output_path, "w", encoding="utf-8", newline="\\n") as stream:
+        stream.write(output + ("" if output.endswith("\\n") else "\\n"))
     index = [
         "-- Centurion v6 static index",
-        "-- payload factories extracted: %d" % len(spans),
+        "-- layout: %s" % table_name,
+        "-- function bodies extracted: %d" % len(spans),
         "-- InvokeServer calls: %d" % output.count("InvokeServer"),
         "-- FireServer calls: %d" % output.count("FireServer"),
         "-- output is stage-one static extraction, not full reconstruction",
     ]
-    with open(index_path, "w", encoding="utf-8", newline="\n") as stream:
-        stream.write("\n".join(index) + "\n")
-    return {"verdict": "PARTIAL", "factories": len(spans), "files": [output_path, index_path]}
-
-
+    with open(index_path, "w", encoding="utf-8", newline="\\n") as stream:
+        stream.write("\\n".join(index) + "\\n")
+    return {"verdict": "PARTIAL", "factories": len(spans), "layout": table_name, "files": [output_path, index_path]}
 def main(argv):
     if len(argv) < 3 or argv[1] not in ("fingerprint", "deobfuscate"):
         print("Usage: centurion.py fingerprint <file> | deobfuscate <file> --out-dir DIR")
@@ -352,7 +419,7 @@ def main(argv):
             "reason": "unknown family (not Centurion v6/v6.1 shape)",
         }, indent=1))
         return 3
-    result = deobfuscate_v6_static(input_path, output_dir)
+    result = deobfuscate_v6_static(input_path, output_dir, detected["route"])
     print(json.dumps({"fingerprint": detected, **result}, indent=1))
     return 0
 

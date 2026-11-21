@@ -47,23 +47,23 @@ def fingerprint(path):
         r"(?:=\s*)?function\s*\(\s*Z\s*\)", source
     ))
     returned_table = bool(re.search(
-        r"\\breturn\\s*\\(?\\s*\\{\\s*getfenv\\s*\\(", source, re.IGNORECASE
+        r"\breturn\s*\(?\s*\{\s*getfenv\s*\(", source, re.IGNORECASE
     ))
-    inline_functions = len(re.findall(r"\\bfunction\\s*\\(", source))
+    inline_functions = len(re.findall(r"\bfunction\s*\(", source))
     result = {
         "file": os.path.basename(path),
         "bytes": len(source),
         "tag": tag,
         "sha8": hashlib.sha256(source.encode("latin-1")).hexdigest()[:16],
-        "h8": len(re.findall(r"\\bh8\\b", source)),
-        "getfenv": len(re.findall(r"\\bgetfenv\\b", source)),
-        "ha_refs": len(re.findall(r"\\bHA\\s*\\[", source)),
+        "h8": len(re.findall(r"\bh8\b", source)),
+        "getfenv": len(re.findall(r"\bgetfenv\b", source)),
+        "ha_refs": len(re.findall(r"\bHA\s*\[", source)),
         "c3_refs": c3_refs,
         "func_z": func_z,
         "inline_functions": inline_functions,
         "returned_table": returned_table,
-        "while_z": len(re.findall(r"\\bwhile\\s+z\\b", source, re.IGNORECASE)),
-        "invokeserver": len(re.findall(r"\\bInvokeServer\\b", source)),
+        "while_z": len(re.findall(r"\bwhile\s+z\b", source, re.IGNORECASE)),
+        "invokeserver": len(re.findall(r"\bInvokeServer\b", source)),
     }
 
     version = tag_match.group(1).lower() if tag_match else ""
@@ -224,7 +224,7 @@ def parse_ast(source):
     result = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w", encoding="latin-1", newline="\\n",
+            mode="w", encoding="latin-1", newline="\n",
             prefix="centurion-ast-", suffix=".lua", delete=False,
         ) as stream:
             stream.write(source)
@@ -362,23 +362,23 @@ def deobfuscate_v6_static(input_path, output_dir, route="v6-static"):
         expected = "direct function entries in the returned table" if table_name == "returned_table" else "c3 factory functions"
         raise RuntimeError("No Centurion v6 " + expected + " were found by the Luau AST parser.")
     header = (
-        "--[[ PARTIAL Centurion v6 static extraction: %s\\n"
-        "   Layout: %s\\n"
-        "   Extracted %d function bodies and decoded string escapes.\\n"
-        "   VM boot order and runtime dependencies are not reconstructed.\\n"
-        "   This is an analysis result, not a complete runnable script. ]]\\n\\n"
-        "local %s = {}\\n"
+        "--[[ PARTIAL Centurion v6 static extraction: %s\n"
+        "   Layout: %s\n"
+        "   Extracted %d function bodies and decoded string escapes.\n"
+        "   VM boot order and runtime dependencies are not reconstructed.\n"
+        "   This is an analysis result, not a complete runnable script. ]]\n\n"
+        "local %s = {}\n"
     ) % (os.path.basename(input_path), table_name, len(spans), table_name)
     parts = [header]
     for number, start, end in spans:
-        parts.append("-- ===== %s[%s] =====\\n%s[%s]=" % (table_name, number, table_name, number) + clean_escapes(source[start:end]))
-    output = "\\n\\n".join(parts)
-    output = re.sub(r"\\bconst\\b", "local", output)
+        parts.append("-- ===== %s[%s] =====\n%s[%s]=" % (table_name, number, table_name, number) + clean_escapes(source[start:end]))
+    output = "\n\n".join(parts)
+    output = re.sub(r"\bconst\b", "local", output)
     base = os.path.splitext(os.path.basename(input_path))[0]
     output_path = os.path.join(output_dir, base + "_deobf_stage1.lua")
     index_path = os.path.join(output_dir, base + "_deobf_index.txt")
-    with open(output_path, "w", encoding="utf-8", newline="\\n") as stream:
-        stream.write(output + ("" if output.endswith("\\n") else "\\n"))
+    with open(output_path, "w", encoding="utf-8", newline="\n") as stream:
+        stream.write(output + ("" if output.endswith("\n") else "\n"))
     index = [
         "-- Centurion v6 static index",
         "-- layout: %s" % table_name,
@@ -387,8 +387,8 @@ def deobfuscate_v6_static(input_path, output_dir, route="v6-static"):
         "-- FireServer calls: %d" % output.count("FireServer"),
         "-- output is stage-one static extraction, not full reconstruction",
     ]
-    with open(index_path, "w", encoding="utf-8", newline="\\n") as stream:
-        stream.write("\\n".join(index) + "\\n")
+    with open(index_path, "w", encoding="utf-8", newline="\n") as stream:
+        stream.write("\n".join(index) + "\n")
     return {"verdict": "PARTIAL", "factories": len(spans), "layout": table_name, "files": [output_path, index_path]}
 def main(argv):
     if len(argv) < 3 or argv[1] not in ("fingerprint", "deobfuscate"):
@@ -413,7 +413,7 @@ def main(argv):
             "reason": "Centurion v6.1 requires the sandbox-copy-luraph runtime folder, which was not included in the uploaded archive.",
         }, indent=1))
         return 3
-    if detected["route"] != "v6-static":
+    if detected["route"] not in ("v6-static", "v6-static-return-table"):
         print(json.dumps({
             "verdict": "NEEDS",
             "reason": "unknown family (not Centurion v6/v6.1 shape)",

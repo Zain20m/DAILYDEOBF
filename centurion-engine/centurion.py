@@ -38,7 +38,7 @@ def find_luau_ast():
 
 def fingerprint(path):
     source = read_text(path)
-    tag_match = re.search(r"Centurion\s+(v[\d.]+)", source, re.IGNORECASE)
+    tag_match = re.search(r"Centurion\s*\(?\s*(v[\d.]+)", source, re.IGNORECASE)
     tag = ("Centurion " + tag_match.group(1)) if tag_match else "unknown"
 
     # Count syntax variants rather than requiring one minified spelling.
@@ -60,7 +60,7 @@ def fingerprint(path):
         "invokeserver": len(re.findall(r"\bInvokeServer\b", source)),
     }
 
-    version = tag_match.group(1) if tag_match else ""
+    version = tag_match.group(1).lower() if tag_match else ""
     if version == "v6.1":
         result["route"] = "v6.1-sandbox"
         result["route_reason"] = "The v6.1 version tag is present; its separate sandbox runtime is not bundled."

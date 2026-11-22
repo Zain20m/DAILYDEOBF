@@ -4445,7 +4445,7 @@ class Program:
         unique_seen = 0
         plateau = 0
         last_progress_report = time.monotonic()
-        proto_pid = dump.pid_of_table.get(getattr(lf.proto, "tid", None))
+        proto_pid = self.dump.pid_of_table.get(getattr(lf.proto, "tid", None))
         proto_label = "#%s" % proto_pid if proto_pid is not None else "t%s" % getattr(lf.proto, "tid", "?")
         while work and len(order) < limit:
             k = work.popleft()

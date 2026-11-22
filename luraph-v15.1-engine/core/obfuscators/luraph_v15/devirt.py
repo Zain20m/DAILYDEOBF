@@ -4444,6 +4444,9 @@ class Program:
         nerr = 0
         unique_seen = 0
         plateau = 0
+        last_progress_report = time.monotonic()
+        proto_pid = dump.pid_of_table.get(getattr(lf.proto, "tid", None))
+        proto_label = "#%s" % proto_pid if proto_pid is not None else "t%s" % getattr(lf.proto, "tid", "?")
         while work and len(order) < limit:
             k = work.popleft()
             inwork.discard(k)
@@ -4487,6 +4490,12 @@ class Program:
 
                     break
             steps += 1
+            now = time.monotonic()
+            if now - last_progress_report >= 2.5:
+                print("[*] walk progress: proto %s, %s states visited (%s pending), %s steps processed" %
+                      (proto_label, format(len(order), ","), format(len(work), ","), format(steps, ",")),
+                      file=sys.stderr, flush=True)
+                last_progress_report = now
             if steps > limit * 20:
                 break
             if lf.stack_base is not None and len(order) > STACK_WALK_MAX and getattr(st, "carry", None):
@@ -5185,7 +5194,7 @@ def collect_requests(source, protos_path, chunk_paths=(), cache=None, fetch=None
         if t is not None:
             live[(t.tid, vmid, fkey)] = (path, ent)
     kept = {}
-    stats = {"functions": 0, "errors": 0, "fallbacks": 0, "walked": 0}
+    stats = {"functions": 0, "errors": 0, "fallbacks": 0, "walked": 0, "started": 0}
     requests = set()
     bw, tw = PatchLog(), PatchLog()
     dump.fetcher = fetch
@@ -5213,6 +5222,14 @@ def collect_requests(source, protos_path, chunk_paths=(), cache=None, fetch=None
             ent = found[1]
             kids, ebw, etw = use
         else:
+            # Count a proto as soon as its walk begins, not only after the
+            # entire SCCP traversal returns. This makes long-running functions
+            # visible in the live progress stream without claiming completion.
+            stats["started"] += 1
+            pid = dump.pid_of_table.get(proto.tid)
+            proto_label = "#%s" % pid if pid is not None else "t%s" % proto.tid
+            print("[*] walk start: proto %s, %d functions started" %
+                  (proto_label, stats["started"]), file=sys.stderr, flush=True)
             ent = _walk_one(prog, vm, vmobj, proto, pkey, init_facts=init_facts)
             stats["walked"] += 1
             key = pkey.get(proto.tid)

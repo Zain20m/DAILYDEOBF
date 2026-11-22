@@ -1179,9 +1179,14 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
     }
     let match;
 
-    if ((match = line.match(/walk progress: proto ([^,]+), ([\d,]+) states visited \(([\d,]+) pending\)/i))) {
+    if ((match = line.match(/walk progress: proto ([^,]+), ([\d,]+) states visited \(([\d,]+) pending\)(?:, ([\d,]+) steps processed)?/i))) {
       advance('Reconstructing Luau control flow',
-        'Proto ' + match[1] + ' · ' + match[2] + ' states visited · ' + match[3] + ' queued.');
+        'Proto ' + match[1] + ' · ' + match[2] + ' states visited · ' + match[3] + ' queued' +
+        (match[4] ? ' · ' + match[4] + ' steps processed' : '') + '.');
+    } else if ((match = line.match(/walk start: proto ([^,]+), ([\d,]+) functions started/i))) {
+      updateCount(match[2], 'VM functions started');
+      advance('Lifting VM functions',
+        'Started walking proto ' + match[1] + '. Completed walks are reported separately at the end of each round.');
     } else if ((match = line.match(/obfuscator:\s*(.+)/i))) {
       advance('Fingerprinting the input', 'Matched engine: ' + match[1].slice(0, 100));
     } else if ((match = line.match(/tracing .*?\(run\s+(\d+)\)/i))) {

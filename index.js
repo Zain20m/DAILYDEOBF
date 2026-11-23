@@ -137,7 +137,7 @@ const slashCommands = [
       .setName('compress')
       .setDescription('Enable Cryon output compression')
       .setRequired(false))
-    .toJSON(),,
+    .toJSON(),
   new SlashCommandBuilder()
     .setName('setup')
     .setDescription('Configure the dedicated .fetch and .beautify channels')
@@ -4901,9 +4901,9 @@ async function enforceCommandChannel(message, key) {
 async function getCommandInput(message, inlineText, prompt) {
   if (message.attachments.first()) return inputFromAttachment(message.attachments.first());
   if (inlineText && inlineText.trim()) {
-    const match = inlineText.match(/https?:\\/\\/[^\\s"'<>]+/i);
+    const match = inlineText.match(/https?:\/\/[^\s"'<>]+/i);
     if (match) {
-      const url = match[0].replace(/[)\\]},.;]+$/g, '');
+      const url = match[0].replace(/[)\]},.;]+$/g, '');
       return { source: '', filename: path.basename(new URL(url).pathname) || 'loader.lua', url, originalText: inlineText };
     }
     return { source: inlineText, filename: 'pasted-script.lua', originalText: inlineText };
@@ -5544,31 +5544,6 @@ async function startWorkflow(message, inlineText = null) {
     }
   }
 
-  // Send the exact source received (for example get1.lua) before any
-  // payload scanning or engine selection. Keep the analysis input unchanged.
-  if (input.source && !input.pendingUrlFailure && input.url) {
-    const originalName = String(input.filename || 'original-input.lua')
-      .replace(/[\\/\\\\]/g, '_')
-      .replace(/[\r\n]/g, '')
-      .slice(0, 100) || 'original-input.lua';
-    try {
-      await message.reply({
-        content: '**Original file received:** ' + originalName,
-        files: [{
-          attachment: Buffer.from(String(input.source), 'utf8'),
-          name: originalName,
-        }],
-        allowedMentions: { repliedUser: false },
-      });
-    } catch (error) {
-      await message.reply({
-        content: '⚠️ I downloaded the original file, but Discord would not accept the attachment: ' +
-          String(error && error.message || error).slice(0, 500),
-        allowedMentions: { repliedUser: false },
-      }).catch(() => {});
-    }
-  }
-
 
   let targetResolution = null;
   if (input.source && !input.pendingUrlFailure) {
@@ -5810,26 +5785,6 @@ async function startWorkflow(message, inlineText = null) {
         await processVantarmorFetcher(message, prompt, await getWorkflowInput());
       } catch (error) {
         await showDeobfFailure(message, prompt, 'Universal Loader Fetcher failed', error);
-      }
-      return;
-    }
-    if (interaction.customId === 'deobf-luaprotect:' + message.author.id) {
-      await interaction.deferUpdate();
-      componentCollector.stop('selected');
-      try {
-        await processLuaProtectFetcher(message, prompt, await getWorkflowInput());
-      } catch (error) {
-        await showDeobfFailure(message, prompt, 'LuaProtect Fetcher failed', error);
-      }
-      return;
-    }
-    if (interaction.customId === `deobf-jnkie:${message.author.id}`) {
-      await interaction.deferUpdate();
-      componentCollector.stop('selected');
-      try {
-        await processJnkIeFetcher(message, prompt, await getWorkflowInput());
-      } catch (error) {
-        await showDeobfFailure(message, prompt, 'JNKIE Fetcher failed', error);
       }
       return;
     }

@@ -331,24 +331,52 @@ def harvest_return_table_spans_ast(source):
         table = unwrap(returned[0])
         if not isinstance(table, dict) or table.get("type") != "AstExprTable":
             continue
-        items = table.get("items", table.get("entries", table.get("fields", [])))
+        items = table.get("items", table.get("entries", table.get("fields")))
+        if not isinstance(items, list):
+            # AST serializer versions have used different property names for
+            # the array of table fields. Locate the field list structurally.
+            items = next((
+                child for child in table.values()
+                if isinstance(child, list) and any(
+                    isinstance(entry, dict) and
+                    str(entry.get("type", "")).endswith("TableItem")
+                    for entry in child
+                )
+            ), None)
         if not isinstance(items, list):
             continue
+
+        def first_function(node):
+            if isinstance(node, dict):
+                if node.get("type") == "AstExprFunction":
+                    return node
+                for key, child in node.items():
+                    if key in ("type", "location"):
+                        continue
+                    found = first_function(child)
+                    if found is not None:
+                        return found
+            elif isinstance(node, list):
+                for child in node:
+                    found = first_function(child)
+                    if found is not None:
+                        return found
+            return None
+
         spans = []
         for position, item in enumerate(items, 1):
             if not isinstance(item, dict):
                 continue
             value = item.get("value", item.get("expression", item.get("expr")))
-            if value is None and str(item.get("type", "")).endswith("TableItem"):
-                candidates = [child for child in item.values() if isinstance(child, dict)]
-                value = candidates[-1] if candidates else None
-            # Luau's AST can wrap a table value in one or more grouping,
-            # parentheses, or type-assertion nodes. Unwrap the value too,
-            # not only the returned table expression.
-            value = unwrap(value)
-            if not isinstance(value, dict) or value.get("type") != "AstExprFunction":
+            # Don't assume a particular serializer field name for the value.
+            # Search this table item, but stop at the first function so nested
+            # closures inside its body are not mistaken for separate entries.
+            function_node = first_function(value) if value is not None else None
+            if function_node is None:
+                function_node = first_function(item)
+            if function_node is None:
                 continue
-            span = ast_span(value)
+            span = ast_span(function_node)
             if span:
                 spans.append((position, span[0], span[1]))
         if spans:

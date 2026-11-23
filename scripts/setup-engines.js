@@ -31,36 +31,44 @@ if (ib2Setup.error || ib2Setup.status !== 0) {
     (ib2Setup.error ? ib2Setup.error.message : 'setup script exited with code ' + ib2Setup.status));
 }
 
-const ironveilSetup = spawnSync(python, [path.join(__dirname, 'setup-ironveil.py')], {
-  cwd: root,
-  encoding: 'utf8',
-  maxBuffer: 2 * 1024 * 1024,
-});
-if (ironveilSetup.stdout) process.stdout.write(ironveilSetup.stdout);
-if (ironveilSetup.stderr) process.stderr.write(ironveilSetup.stderr);
-if (ironveilSetup.error || ironveilSetup.status !== 0) {
-  throw new Error('IronVeil source extraction failed: ' +
-    (ironveilSetup.error ? ironveilSetup.error.message : 'setup script exited with code ' + ironveilSetup.status));
-}
-
-const ironveilCompiler = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');
-if (!fs.existsSync(ironveilCompiler)) {
-  throw new Error('IronVeil requires TypeScript. Install dependencies with npm install.');
-}
-const ironveilBuild = spawnSync(process.execPath, [
-  ironveilCompiler,
-  '-p',
-  path.join(root, 'ironveil-engine', 'tsconfig.json'),
-], {
-  cwd: path.join(root, 'ironveil-engine'),
-  encoding: 'utf8',
-  maxBuffer: 4 * 1024 * 1024,
-});
-if (ironveilBuild.stdout) process.stdout.write(ironveilBuild.stdout);
-if (ironveilBuild.stderr) process.stderr.write(ironveilBuild.stderr);
-if (ironveilBuild.error || ironveilBuild.status !== 0) {
-  throw new Error('IronVeil TypeScript build failed: ' +
-    (ironveilBuild.error ? ironveilBuild.error.message : 'tsc exited with code ' + ironveilBuild.status));
+const ironveilArchive = path.join(root, 'upload', 'ironveil-main 2.zip');
+if (!fs.existsSync(ironveilArchive)) {
+  console.log('IronVeil archive not present; its engine option will report unavailable.');
+} else {
+  const ironveilSetup = spawnSync(python, [path.join(__dirname, 'setup-ironveil.py')], {
+    cwd: root,
+    encoding: 'utf8',
+    maxBuffer: 2 * 1024 * 1024,
+  });
+  if (ironveilSetup.stdout) process.stdout.write(ironveilSetup.stdout);
+  if (ironveilSetup.stderr) process.stderr.write(ironveilSetup.stderr);
+  if (ironveilSetup.error || ironveilSetup.status !== 0) {
+    console.warn('IronVeil setup warning: ' +
+      (ironveilSetup.error ? ironveilSetup.error.message : 'setup script exited with code ' + ironveilSetup.status) +
+      '. Its engine option may be unavailable.');
+  } else {
+    const ironveilCompiler = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');
+    if (!fs.existsSync(ironveilCompiler)) {
+      console.warn('IronVeil requires TypeScript; skipping its build.');
+    } else {
+      const ironveilBuild = spawnSync(process.execPath, [
+        ironveilCompiler,
+        '-p',
+        path.join(root, 'ironveil-engine', 'tsconfig.json'),
+      ], {
+        cwd: path.join(root, 'ironveil-engine'),
+        encoding: 'utf8',
+        maxBuffer: 4 * 1024 * 1024,
+      });
+      if (ironveilBuild.stdout) process.stdout.write(ironveilBuild.stdout);
+      if (ironveilBuild.stderr) process.stderr.write(ironveilBuild.stderr);
+      if (ironveilBuild.error || ironveilBuild.status !== 0) {
+        console.warn('IronVeil TypeScript build warning: ' +
+          (ironveilBuild.error ? ironveilBuild.error.message : 'tsc exited with code ' + ironveilBuild.status) +
+          '. Its engine option may be unavailable.');
+      }
+    }
+  }
 }
 
 
@@ -220,6 +228,10 @@ function cleanPythonCache(directory) {
 for (const engine of engines) {
   const base = path.join(root, engine.directory);
   if (!fs.existsSync(base) || !fs.statSync(base).isDirectory()) {
+    if (engine.label === 'IronBrew 2') {
+      console.log('IronBrew 2 engine directory is missing; its engine option will report unavailable.');
+      continue;
+    }
     throw new Error(engine.label + ' engine directory is missing.');
   }
 
@@ -243,7 +255,8 @@ for (const engine of engines) {
 const ib2Runtime = process.platform === 'win32'
   ? (process.arch === 'arm64' ? 'runtimes/win-arm64/native/lua54.dll' : 'runtimes/win-x64/native/lua54.dll')
   : (process.arch === 'arm64' ? 'runtimes/linux-arm64/native/liblua54.so' : 'runtimes/linux-x64/native/liblua54.so');
-if (!fs.existsSync(path.join(root, 'ib2deobf', ib2Runtime))) {
+if (fs.existsSync(path.join(root, 'ib2deobf')) &&
+    !fs.existsSync(path.join(root, 'ib2deobf', ib2Runtime))) {
   throw new Error('IronBrew 2 is missing its platform runtime: ' + ib2Runtime);
 }
 

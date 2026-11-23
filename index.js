@@ -4954,7 +4954,7 @@ function helpText() {
     '',
     'COMMANDS',
     '.deobf [URL/file] - analyze protected Lua/Luau; direct HTTP/HTTPS links are supported',
-    '.get [URL/file] - scan source and fetch discovered links; direct HTTP/HTTPS links are supported',\n    '.fetch [URL/file] - LuaProtect and JNKIE provider fetchers only',\n    '.beautify [file/code] - format and semantically clean Luau with Beautify',\n    '/setup - set the dedicated .fetch and .beautify channels',
+    '.get [URL/file] - scan source and fetch discovered links; direct HTTP/HTTPS links are supported',
     '.fetch [URL/file] - LuaProtect and JNKIE provider fetchers only',
     '.beautify [file/code] - format and semantically clean Luau with Beautify',
     '/setup - set the dedicated .fetch and .beautify channels',

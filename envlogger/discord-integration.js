@@ -262,6 +262,17 @@ async function startEnvLogWorkflow(message, inlineText, deps) {
     }
 
     const dynLog = dynamic.log || '';
+    const capturedSources = [];
+    const captureRe = /--\\s*--- begin dump \\[(\\d+)\\] ---\\r?\\n([\\s\\S]*?)\\r?\\n--\\s*--- end dump \\[(\\d+)\\] ---/g;
+    let captureMatch;
+    while ((captureMatch = captureRe.exec(dynLog))) {
+      if (captureMatch[1] !== captureMatch[3]) continue;
+      const body = captureMatch[2]
+        .split(/\\r?\\n/)
+        .map((line) => line.replace(/^--\\s*\\| ?/, ''))
+        .join('\\n');
+      if (body.trim()) capturedSources.push({ index: Number(captureMatch[1]), source: body });
+    }
     const fullReport = buildTextReport(base + '.lua', source, analysis, dynLog);
 
     const section = (name) => {
@@ -334,7 +345,21 @@ async function startEnvLogWorkflow(message, inlineText, deps) {
         name: stem + '.part' + String(index + 1).padStart(3, '0') + extension,
       })));
     };
+    for (const capture of capturedSources) {
+      const suffix = String(capture.index).padStart(2, '0');
+      addParts(capture.source, base + '_captured_' + suffix + '.lua');
+    }
     addParts(fullReport, base + '_envlog.txt');
+    if (capturedSources.length) {
+      embed.addFields({
+        name: 'Recovered code files',
+        value: capturedSources.map((capture) =>
+          base + '_captured_' + String(capture.index).padStart(2, '0') + '.lua · ' +
+          formatBytes(Buffer.byteLength(capture.source, 'utf8'))
+        ).join('\n').slice(0, 900),
+        inline: false,
+      });
+    }
     if (files.length > 10) throw new Error('Trace requires ' + files.length + ' attachments; Discord allows at most 10.');
 
     await prompt.edit({ embeds: [embed], files });

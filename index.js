@@ -4777,11 +4777,34 @@ async function getCommandInput(message, inlineText, prompt) {
   });
 }
 async function startDedicatedFetch(message, inlineText) {
-  const prompt = await message.reply({ embeds: [dailyEmbed('Provider fetch', 'Checking the LuaProtect/JNKIE reference...', DAILY_COLORS.primary)], allowedMentions: { repliedUser: false } });
-  const input = await getCommandInput(message, inlineText, prompt);
+  const rawInput = String(inlineText || '').trim();
+  const providerMatch = rawInput.match(/^(luaprotect|jnkie)\\b\\s*/i);
+  const selectedProvider = providerMatch ? providerMatch[1].toLowerCase() : null;
+  const providerInput = providerMatch ? rawInput.slice(providerMatch[0].length).trim() : rawInput;
+
+  const providerLabel = selectedProvider === 'luaprotect' ? 'LuaProtect'
+    : selectedProvider === 'jnkie' ? 'JNKIE' : 'LuaProtect/JNKIE';
+  const prompt = await message.reply({
+    embeds: [dailyEmbed('Provider fetch', selectedProvider
+      ? 'Selected **' + providerLabel + '**. Waiting for its loader/source...'
+      : 'Choose a provider in the command or send a supported provider URL...', DAILY_COLORS.primary)],
+    allowedMentions: { repliedUser: false },
+  });
+  const input = await getCommandInput(message, providerInput || null, prompt);
   const combined = [input.originalText, input.source, input.url].filter(Boolean).join('\n');
+
   const luaProtectUrl = input.url || extractLuaProtectRunnerUrl(combined);
   const jnkieUrl = input.url || extractJnkIeDownloadUrl(combined);
+
+  if (selectedProvider === 'luaprotect') {
+    await processLuaProtectFetcher(message, prompt, { ...input, url: input.url || extractLuaProtectRunnerUrl(combined) });
+    return;
+  }
+  if (selectedProvider === 'jnkie') {
+    await processJnkIeFetcher(message, prompt, { ...input, url: input.url || extractJnkIeDownloadUrl(combined) });
+    return;
+  }
+
   if (luaProtectUrl && /luaprotect\\.dev/i.test(luaProtectUrl)) {
     await processLuaProtectFetcher(message, prompt, { ...input, url: luaProtectUrl });
     return;
@@ -4790,7 +4813,7 @@ async function startDedicatedFetch(message, inlineText) {
     await processJnkIeFetcher(message, prompt, { ...input, url: jnkieUrl });
     return;
   }
-  throw new Error('.fetch supports LuaProtect and JNKIE URLs only. Provider-required keys/HWIDs must be supplied by the script owner; access checks are not bypassed.');
+  throw new Error('Choose a provider with .fetch luaprotect or .fetch jnkie, then attach/paste its loader or URL. Provider-required keys/HWIDs must be supplied by the script owner; access checks are not bypassed.');
 }
 async function startBeautify(message, inlineText) {
   const prompt = await message.reply({ embeds: [dailyEmbed('Beautify', 'Reading the source file...', DAILY_COLORS.primary)], allowedMentions: { repliedUser: false } });
@@ -4821,7 +4844,8 @@ function helpText() {
     'COMMANDS',
     '.deobf [URL/file] - analyze protected Lua/Luau; direct HTTP/HTTPS links are supported',
     '.get [URL/file] - scan source and fetch discovered links; direct HTTP/HTTPS links are supported',
-    '.fetch [URL/file] - LuaProtect and JNKIE provider fetchers only',
+    '.fetch luaprotect [URL/file] - choose the LuaProtect fetcher',
+    '.fetch jnkie [URL/file] - choose the JNKIE fetcher (provider URL auto-detection also works)',
     '.beautify [file/code] - format and semantically clean Luau with Beautify',
     '/setup - set the dedicated .fetch and .beautify channels',
     '.purelua',

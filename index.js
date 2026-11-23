@@ -5962,7 +5962,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const lines = [];
     if (saved.fetch) lines.push('.fetch: <#' + saved.fetch + '>');
     if (saved.beautify) lines.push('.beautify: <#' + saved.beautify + '>');
-    await interaction.reply({ content: 'Channel setup saved.\\n' + (lines.join('\n') || 'No channels changed.'), ephemeral: true });
+    await interaction.reply({ content: 'Channel setup saved.\n' + (lines.join('\n') || 'No channels changed.'), ephemeral: true });
     return;
   }
   if (interaction.commandName === 'purelua') {

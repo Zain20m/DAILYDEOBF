@@ -297,7 +297,7 @@ def harvest_table_spans_ast(source, table_name):
 
 
 def harvest_return_table_spans_ast(source):
-    """Extract direct function values from a returned array table."""
+    """Extract function entries from a returned array table across AST schemas."""
     ast = parse_ast(source)
     return_nodes = []
 
@@ -318,70 +318,69 @@ def harvest_return_table_spans_ast(source):
         while isinstance(node, dict) and node.get("type") in (
             "AstExprGroup", "AstExprParen", "AstExprTypeAssertion"
         ):
-            children = [value for value in node.values() if isinstance(value, dict)]
+            children = [
+                value for key, value in node.items()
+                if key not in ("type", "location") and isinstance(value, dict)
+            ]
             if not children:
                 break
             node = children[0]
         return node
 
-    for return_node in return_nodes:
-        returned = return_node.get("list", return_node.get("values", []))
-        if not isinstance(returned, list) or not returned:
-            continue
-        table = unwrap(returned[0])
-        if not isinstance(table, dict) or table.get("type") != "AstExprTable":
-            continue
-        items = table.get("items", table.get("entries", table.get("fields")))
-        if not isinstance(items, list):
-            # AST serializer versions have used different property names for
-            # the array of table fields. Locate the field list structurally.
-            items = next((
-                child for child in table.values()
-                if isinstance(child, list) and any(
-                    isinstance(entry, dict) and
-                    str(entry.get("type", "")).endswith("TableItem")
-                    for entry in child
-                )
-            ), None)
-        if not isinstance(items, list):
-            continue
+    def find_returned_tables(node):
+        """Find table expressions without depending on return-value field names."""
+        found = []
+        def visit(value):
+            if isinstance(value, dict):
+                value = unwrap(value)
+                if not isinstance(value, dict):
+                    return
+                if value.get("type") == "AstExprTable":
+                    found.append(value)
+                    return
+                for key, child in value.items():
+                    if key not in ("type", "location"):
+                        visit(child)
+            elif isinstance(value, list):
+                for child in value:
+                    visit(child)
+        visit(node)
+        return found
 
-        def first_function(node):
+    def direct_table_functions(table):
+        """Collect each function value, stopping at it so nested closures aren't entries."""
+        functions = []
+        def visit(node):
             if isinstance(node, dict):
                 if node.get("type") == "AstExprFunction":
-                    return node
+                    functions.append(node)
+                    return
                 for key, child in node.items():
-                    if key in ("type", "location"):
-                        continue
-                    found = first_function(child)
-                    if found is not None:
-                        return found
+                    if key not in ("type", "location"):
+                        visit(child)
             elif isinstance(node, list):
                 for child in node:
-                    found = first_function(child)
-                    if found is not None:
-                        return found
-            return None
+                    visit(child)
+        # Traverse all table payload fields. This supports serializer variants
+        # where entries are named items, fields, array, or stored directly.
+        for key, child in table.items():
+            if key not in ("type", "location"):
+                visit(child)
+        return functions
 
-        spans = []
-        for position, item in enumerate(items, 1):
-            if not isinstance(item, dict):
-                continue
-            value = item.get("value", item.get("expression", item.get("expr")))
-            # Don't assume a particular serializer field name for the value.
-            # Search this table item, but stop at the first function so nested
-            # closures inside its body are not mistaken for separate entries.
-            function_node = first_function(value) if value is not None else None
-            if function_node is None:
-                function_node = first_function(item)
-            if function_node is None:
-                continue
-            span = ast_span(function_node)
-            if span:
-                spans.append((position, span[0], span[1]))
-        if spans:
-            return spans
+    for return_node in return_nodes:
+        for table in find_returned_tables(return_node):
+            functions = direct_table_functions(table)
+            spans = []
+            for position, function_node in enumerate(functions, 1):
+                span = ast_span(function_node)
+                if span:
+                    spans.append((position, span[0], span[1]))
+            if spans:
+                spans.sort(key=lambda item: item[1])
+                return spans
     return []
+
 def deobfuscate_v6_static(input_path, output_dir, route="v6-static"):
     source = read_text(input_path)
     if route == "v6-static-return-table":

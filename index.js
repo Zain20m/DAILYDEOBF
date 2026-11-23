@@ -4777,43 +4777,63 @@ async function getCommandInput(message, inlineText, prompt) {
   });
 }
 async function startDedicatedFetch(message, inlineText) {
-  const rawInput = String(inlineText || '').trim();
-  const providerMatch = rawInput.match(/^(luaprotect|jnkie)\b\s*/i);
-  const selectedProvider = providerMatch ? providerMatch[1].toLowerCase() : null;
-  const providerInput = providerMatch ? rawInput.slice(providerMatch[0].length).trim() : rawInput;
-
-  const providerLabel = selectedProvider === 'luaprotect' ? 'LuaProtect'
-    : selectedProvider === 'jnkie' ? 'JNKIE' : 'LuaProtect/JNKIE';
   const prompt = await message.reply({
-    embeds: [dailyEmbed('Provider fetch', selectedProvider
-      ? 'Selected **' + providerLabel + '**. Waiting for its loader/source...'
-      : 'Choose a provider in the command or send a supported provider URL...', DAILY_COLORS.primary)],
+    embeds: [dailyEmbed('Provider fetch', 'Send a LuaProtect or JNKIE URL/file, then choose which fetcher to use.', DAILY_COLORS.primary)],
     allowedMentions: { repliedUser: false },
   });
-  const input = await getCommandInput(message, providerInput || null, prompt);
+  const input = await getCommandInput(message, inlineText, prompt);
   const combined = [input.originalText, input.source, input.url].filter(Boolean).join('\n');
 
-  const luaProtectUrl = input.url || extractLuaProtectRunnerUrl(combined);
-  const jnkieUrl = input.url || extractJnkIeDownloadUrl(combined);
+  const providerRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('fetch-provider-luaprotect:' + message.author.id)
+      .setLabel('LuaProtect')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('fetch-provider-jnkie:' + message.author.id)
+      .setLabel('JNKIE')
+      .setStyle(ButtonStyle.Secondary),
+  );
+
+  await prompt.edit({
+    embeds: [dailyEmbed('Choose a fetcher', 'Input received: **' +
+      (input.filename || (input.url ? new URL(input.url).hostname : 'pasted Lua source')) +
+      '**\n\nWhich provider should DAILYDEOBF use?', DAILY_COLORS.primary)],
+    components: [providerRow],
+  });
+
+  let choice;
+  try {
+    choice = await prompt.awaitMessageComponent({
+      time: PICKER_WAIT_MS,
+      filter: (interaction) =>
+        interaction.user.id === message.author.id &&
+        (interaction.customId === 'fetch-provider-luaprotect:' + message.author.id ||
+         interaction.customId === 'fetch-provider-jnkie:' + message.author.id),
+    });
+  } catch {
+    await prompt.edit({
+      embeds: [dailyEmbed('Fetcher selection timed out', 'Run .fetch again and choose a provider within 2 minutes.', DAILY_COLORS.danger)],
+      components: [],
+    }).catch(() => {});
+    throw new Error('Fetcher selection timed out.');
+  }
+
+  const selectedProvider = choice.customId.includes('luaprotect') ? 'luaprotect' : 'jnkie';
+  await choice.update({
+    embeds: [dailyEmbed('Provider selected', 'Running the **' +
+      (selectedProvider === 'luaprotect' ? 'LuaProtect' : 'JNKIE') + '** fetcher...', DAILY_COLORS.primary)],
+    components: [],
+  });
 
   if (selectedProvider === 'luaprotect') {
-    await processLuaProtectFetcher(message, prompt, { ...input, url: input.url || extractLuaProtectRunnerUrl(combined) });
-    return;
-  }
-  if (selectedProvider === 'jnkie') {
-    await processJnkIeFetcher(message, prompt, { ...input, url: input.url || extractJnkIeDownloadUrl(combined) });
+    const url = input.url || extractLuaProtectRunnerUrl(combined);
+    await processLuaProtectFetcher(message, prompt, { ...input, url });
     return;
   }
 
-  if (luaProtectUrl && /luaprotect\.dev/i.test(luaProtectUrl)) {
-    await processLuaProtectFetcher(message, prompt, { ...input, url: luaProtectUrl });
-    return;
-  }
-  if (jnkieUrl && /jnkie\.com/i.test(jnkieUrl)) {
-    await processJnkIeFetcher(message, prompt, { ...input, url: jnkieUrl });
-    return;
-  }
-  throw new Error('Choose a provider with .fetch luaprotect or .fetch jnkie, then attach/paste its loader or URL. Provider-required keys/HWIDs must be supplied by the script owner; access checks are not bypassed.');
+  const url = input.url || extractJnkIeDownloadUrl(combined);
+  await processJnkIeFetcher(message, prompt, { ...input, url });
 }
 async function startBeautify(message, inlineText) {
   const prompt = await message.reply({ embeds: [dailyEmbed('Beautify', 'Reading the source file...', DAILY_COLORS.primary)], allowedMentions: { repliedUser: false } });
@@ -4844,8 +4864,7 @@ function helpText() {
     'COMMANDS',
     '.deobf [URL/file] - analyze protected Lua/Luau; direct HTTP/HTTPS links are supported',
     '.get [URL/file] - scan source and fetch discovered links; direct HTTP/HTTPS links are supported',
-    '.fetch luaprotect [URL/file] - choose the LuaProtect fetcher',
-    '.fetch jnkie [URL/file] - choose the JNKIE fetcher (provider URL auto-detection also works)',
+    '.fetch [URL/file] - choose LuaProtect or JNKIE with the buttons',
     '.beautify [file/code] - format and semantically clean Luau with Beautify',
     '/setup - set the dedicated .fetch and .beautify channels',
     '.purelua',

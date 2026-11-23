@@ -342,6 +342,10 @@ def harvest_return_table_spans_ast(source):
             if value is None and str(item.get("type", "")).endswith("TableItem"):
                 candidates = [child for child in item.values() if isinstance(child, dict)]
                 value = candidates[-1] if candidates else None
+            # Luau's AST can wrap a table value in one or more grouping,
+            # parentheses, or type-assertion nodes. Unwrap the value too,
+            # not only the returned table expression.
+            value = unwrap(value)
             if not isinstance(value, dict) or value.get("type") != "AstExprFunction":
                 continue
             span = ast_span(value)

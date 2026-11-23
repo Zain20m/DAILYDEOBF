@@ -4888,7 +4888,7 @@ async function readGuildSettings() {
   catch { return {}; }
 }
 async function writeGuildSettings(settings) {
-  await fs.writeFile(GUILD_SETTINGS_PATH, JSON.stringify(settings, null, 2) + '\\n', { mode: 0o600 });
+  await fs.writeFile(GUILD_SETTINGS_PATH, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 });
 }
 async function enforceCommandChannel(message, key) {
   if (!message.guild) { await message.reply('This command can only be used inside a server.'); return false; }
@@ -4913,7 +4913,7 @@ async function getCommandInput(message, inlineText, prompt) {
 async function startDedicatedFetch(message, inlineText) {
   const prompt = await message.reply({ embeds: [dailyEmbed('Provider fetch', 'Checking the LuaProtect/JNKIE reference...', DAILY_COLORS.primary)], allowedMentions: { repliedUser: false } });
   const input = await getCommandInput(message, inlineText, prompt);
-  const combined = [input.originalText, input.source, input.url].filter(Boolean).join('\\n');
+  const combined = [input.originalText, input.source, input.url].filter(Boolean).join('\n');
   const luaProtectUrl = input.url || extractLuaProtectRunnerUrl(combined);
   const jnkieUrl = input.url || extractJnkIeDownloadUrl(combined);
   if (luaProtectUrl && /luaprotect\\.dev/i.test(luaProtectUrl)) {
@@ -5009,17 +5009,15 @@ async function sendLuaProtectRunnerBody(message, prompt, sourceText, directUrl =
   const outputPath = path.join(os.tmpdir(), 'daily-luaprotect-' + message.id + '.lua');
   try {
     await fs.writeFile(outputPath, data, { mode: 0o600 });
-    await message.reply({
+    await prompt.edit({
       embeds: [dailyEmbed(
         'LuaProtect source downloaded',
         (isCdnRunner ? 'Retrieved the supplied CDN runner link.' : 'Retrieved runner body **' + loaderUrl.pathname.split('/').pop() + '**.') + ' Downloaded ' + formatBytes(data.length) + ' of source.',
         DAILY_COLORS.success
       )],
       files: [new AttachmentBuilder(outputPath, { name: 'luaprotect_runner.lua' })],
-      allowedMentions: { repliedUser: false },
+      components: [],
     });
-    await sendAutomaticPureLuau(message, recovered, 'luaprotect_runner.lua', 'LuaProtect runner fetch');
-    await prompt.edit({ content: '✅ LuaProtect source downloaded. The automatic PureLuau pass was also attempted.', components: [] }).catch(() => {});
   } finally {
     await fs.rm(outputPath, { force: true }).catch(() => {});
   }
@@ -5060,7 +5058,7 @@ async function processJnkIeFetcher(message, prompt, input) {
         'You have 2 minutes. Do not send your Discord password or other account credentials.'
       );
     } catch {
-      throw new Error('JNKIE requires an HWID, but I could not DM you. Enable DMs from this server and run .deobf again.');
+      throw new Error('JNKIE requires an HWID, but I could not DM you. Enable DMs from this server and run .fetch again.');
     }
 
     const collector = dm.channel.createMessageCollector({
@@ -5074,12 +5072,12 @@ async function processJnkIeFetcher(message, prompt, input) {
         if (!collected.size) resolve(null);
       });
     });
-    if (!supplied) throw new Error('Timed out waiting for the HWID DM. Run .deobf again to retry.');
+    if (!supplied) throw new Error('Timed out waiting for the HWID DM. Run .fetch again to retry.');
 
     const hwid = supplied.content.trim();
     await supplied.delete().catch(() => {});
     if (!hwid || hwid.length > 512 || /[\r\n]/.test(hwid)) {
-      throw new Error('The supplied HWID was empty or invalid. Run .deobf again.');
+      throw new Error('The supplied HWID was empty or invalid. Run .fetch again.');
     }
 
     await dm.channel.send('HWID received. Retrying JNKIE delivery now.');
@@ -5098,7 +5096,7 @@ async function processJnkIeFetcher(message, prompt, input) {
     files.push(new AttachmentBuilder(errorData, { name: 'delivery_error.txt' }));
   }
 
-  await message.reply({
+  await prompt.edit({
     embeds: [dailyEmbed(
       complete ? 'JNKIE payload fetched' : 'JNKIE stage-one loader saved',
       complete
@@ -5108,20 +5106,8 @@ async function processJnkIeFetcher(message, prompt, input) {
       complete ? DAILY_COLORS.success : DAILY_COLORS.warning
     )],
     files,
-    allowedMentions: { repliedUser: false },
-  });
-  await sendAutomaticPureLuau(
-    message,
-    result.source,
-    filename,
-    complete ? 'JNKIE payload fetch' : 'JNKIE stage-one loader fetch'
-  );
-  await prompt.edit({
-    content: complete
-      ? '✅ JNKIE payload attached as **' + filename + '**. Automatic PureLuau readability processing was also attempted.'
-      : '⚠️ JNKIE stage one attached as **' + filename + '**. Automatic PureLuau readability processing was also attempted; see the delivery response if one was returned.',
     components: [],
-  }).catch(() => {});
+  });
 }
 
 async function processVantarmorFetcher(message, prompt, input) {
@@ -5976,7 +5962,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const lines = [];
     if (saved.fetch) lines.push('.fetch: <#' + saved.fetch + '>');
     if (saved.beautify) lines.push('.beautify: <#' + saved.beautify + '>');
-    await interaction.reply({ content: 'Channel setup saved.\\n' + (lines.join('\\n') || 'No channels changed.'), ephemeral: true });
+    await interaction.reply({ content: 'Channel setup saved.\\n' + (lines.join('\n') || 'No channels changed.'), ephemeral: true });
     return;
   }
   if (interaction.commandName === 'purelua') {

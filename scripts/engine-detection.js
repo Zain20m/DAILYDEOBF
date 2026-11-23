@@ -148,9 +148,6 @@ function detectEngineSuggestion(source) {
   if (/obfuscated\s+(?:by|with|using)\s+Fulcrum|\bpolsec\.net\b/i.test(header)) {
     return result('fulcrum', 'Fulcrum / Polsec', 'high', 'The file header names Fulcrum (polsec.net).');
   }
-  if (/2hbj'?s?\s+obfuscator/i.test(header)) {
-    return result('2hbj', '2HBJ', 'high', 'The file declares obfuscator="...2hbj\'s obfuscator...".');
-  }
   const centurion = header.match(/\bCenturion\s+(v[\d.]+)/i) || text.slice(0, 50000).match(/\bCenturion\s+(v[\d.]+)/i);
   if (centurion) {
     return result('centurion', 'Centurion ' + centurion[1], /6\.1/.test(centurion[1]) ? 'medium' : 'high',

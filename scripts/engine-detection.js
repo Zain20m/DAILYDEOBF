@@ -38,8 +38,7 @@ function result(engine, label, confidence, reason, alternatives = []) {
   return { engine, label, confidence, reason, alternatives: alternatives.filter((id) => id && id !== engine) };
 }
 
-// The header: leading blank lines and comments, plus the first statement
-// (2HBJ stores its banner in an obfuscator="..." string there).
+// The header: leading blank lines and comments, plus the first statement.
 function headerOf(text) {
   const m = /^(?:\s*(?:--\[(=*)\[[\s\S]*?\]\1\]|--[^\n]*))*/.exec(text);
   const comments = m ? m[0] : '';
@@ -174,10 +173,10 @@ function detectEngineSuggestion(source) {
   // Loader stubs for hosted scripts.
   const small = text.length < 20000;
   if (/jnkie\.com/i.test(text.slice(0, 20000))) {
-    return result('jnkie', 'JNKIE loader', 'high', 'The script fetches its payload from jnkie.com; the JNKIE fetcher downloads the real script.');
+    return result(null, 'JNKIE loader', 'high', 'This is a JNKIE loader. Use `.fetch` in the configured fetch channel to retrieve the provider-authorized payload.');
   }
   if (/luaprotect\.dev/i.test(text.slice(0, 20000))) {
-    return result('luaprotect', 'LuaProtect loader', 'high', 'The script loads from luaprotect.dev; the LuaProtect fetcher downloads the real script.');
+    return result(null, 'LuaProtect loader', 'high', 'This is a LuaProtect loader. Use `.fetch` in the configured fetch channel to retrieve the runner body.');
   }
   if (/vantarmor/i.test(text.slice(0, 20000))) {
     return result('vantarmor', 'Vantarmor', 'medium', 'The script references Vantarmor.');
@@ -193,9 +192,6 @@ function detectEngineSuggestion(source) {
 
   if (count(text.slice(0, 400000), /\bc3\[/g) >= 50 && count(text.slice(0, 400000), /=function\(Z\)/g) > 20) {
     return result('centurion', 'Centurion v6', 'medium', 'No header, but the file has the Centurion v6 c3[...] factory layout.');
-  }
-  if (/^return\s*\(\s*function\s*\(\.\.\.\)\s*obfuscator\s*=/.test(bodyStart)) {
-    return result('2hbj', '2HBJ', 'medium', 'The file has the 2HBJ wrapper layout (return(function(...) obfuscator=...).');
   }
   {
     // Fulcrum: every function opens with a numeric-for "constant unpacking"

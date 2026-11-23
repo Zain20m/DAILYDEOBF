@@ -4644,7 +4644,46 @@ async function startEnvLogWorkflow(message, inlineText = null) {
         name: stem + '.part' + String(index + 1).padStart(3, '0') + extension,
       })));
     };
-    addParts(Buffer.from(log, 'utf8'), base + '_envlog.lua');
+    // Keep the Discord attachment readable: the full engine trace repeats
+    // static metadata and can include enormous captured-source previews.
+    const compactLines = [];
+    const pick = (regex, fallback = '') => {
+      const match = log.match(regex);
+      return match ? String(match[1] || '').trim() : fallback;
+    };
+    const compactObfuscator = pick(/^--\\s*obfuscator:\\s*(.+)$/im, 'unknown');
+    const compactStatus = pick(/^--\\s*status:\\s*(.+)$/im, status);
+    const compactStats = pick(/^--\\s*ENVLOGGER report\\s+stmts=(\\d+)\\s+elapsed=([^\\s]+)\\s+source=(\\d+)\\s+bytes/im, '');
+    const compactServices = [...new Set([...log.matchAll(/^--\\s{2,}([A-Za-z0-9_]+)\\s+x\\d+\\s*$/gm)].map((m) => m[1]))];
+    const captureSection = log.split(/^--\\s*loadstring captures:\\s*$/im)[1]?.split(/^--\\s*unknown globals:/im)[0] || '';
+    const captures = [...captureSection.matchAll(/^--\\s*\\[\\d+\\]\\s+(\\d+)\\s+bytes/im)].map((m) => Number(m[1]));
+    const unknownSection = log.split(/^--\\s*unknown globals:\\s*$/im)[1]?.split(/^--\\s*(?:trace:|errors:|antivm)/im)[0] || '';
+    const unknowns = [...unknownSection.matchAll(/^--\\s{2,}([A-Za-z_][A-Za-z0-9_]*)\\s+x(\\d+)/gm)]
+      .map((m) => m[1] + ' ×' + m[2]);
+    const antiVm = [...new Set([...log.matchAll(/ANTIVM\\s+([^\\r\\n]+)/gi)].map((m) => m[1].trim()))];
+    const errorsSection = log.split(/^--\\s*errors:\\s*$/im)[1]?.split(/^--\\s*(?:trace:|BOOT)/im)[0] || '';
+    const errors = errorsSection.split(/\\r?\\n/)
+      .map((line) => line.replace(/^--\\s*/, '').trim())
+      .filter((line) => line && !/^errors:?$/i.test(line))
+      .slice(0, 3);
+    compactLines.push('ENVLOGGER | ' + base);
+    compactLines.push('Obfuscator: ' + compactObfuscator);
+    compactLines.push('Input: ' + formatBytes(Buffer.byteLength(input.source, 'utf8')));
+    compactLines.push('Status: ' + compactStatus);
+    if (compactStats) {
+      const stats = compactStats.match(/^(\\d+)\\s+elapsed=([^\\s]+)\\s+source=(\\d+)$/);
+      if (stats) compactLines.push('Sandbox: ' + stats[1] + ' statements · ' + stats[2] + 's');
+    }
+    if (captures.length) compactLines.push('Captured loadstring: ' + captures.length + ' (' + captures.map(formatBytes).join(', ') + ')');
+    if (antiVm.length) compactLines.push('Anti-VM: ' + antiVm.slice(0, 2).join('; '));
+    if (unknowns.length) compactLines.push('Unknown globals: ' + unknowns.slice(0, 6).join(', '));
+    if (compactServices.length) compactLines.push('Services: ' + compactServices.slice(0, 8).join(', '));
+    if (errors.length) compactLines.push('Errors: ' + errors.join(' | '));
+    if (!captures.length && !antiVm.length && !unknowns.length && !errors.length) {
+      compactLines.push('No notable runtime events recorded.');
+    }
+    const compactLog = compactLines.join('\\n') + '\\n';
+    addParts(Buffer.from(compactLog, 'utf8'), base + '_envlog.txt');
     let stringCount = 0;
     try {
       const strings = await fs.readFile(outputPath + '.strings.txt');

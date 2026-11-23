@@ -4,6 +4,12 @@ on:
   push:
     paths:
       - 'index.js'
+      - 'scripts/setup-beautify.js'
+      - 'scripts/engine-detection.js'
+      - 'scripts/setup-engines.js'
+      - 'scripts/beautify.py'
+      - 'scripts/luau_ast.py'
+      - 'beautify-requirements.txt'
       - 'fulcrum-engine/**'
       - 'pureluau.js'
       - 'scripts/automatic-pureluau.js'
@@ -25,6 +31,9 @@ jobs:
           node-version: 20
       - run: |
           node --check index.js
+          node --check scripts/setup-beautify.js
+          node --check scripts/engine-detection.js
+          node --check scripts/setup-engines.js
           node --check pureluau.js
           node --check scripts/automatic-pureluau.js
           node --check scripts/test-automatic-pureluau.js
@@ -32,5 +41,5 @@ jobs:
 
       - name: Check Fulcrum Python engine
         run: |
-          python3 -m py_compile fulcrum-engine/*.py
+          python3 -m py_compile fulcrum-engine/*.py scripts/beautify.py scripts/luau_ast.py
           python3 fulcrum-engine/fulcrum_deobf.py --help

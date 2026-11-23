@@ -4653,7 +4653,7 @@ async function startEnvLogWorkflow(message, inlineText = null) {
     };
     const compactObfuscator = pick(/^--\\s*obfuscator:\\s*(.+)$/im, 'unknown');
     const compactStatus = pick(/^--\\s*status:\\s*(.+)$/im, status);
-    const compactStats = pick(/^--\\s*ENVLOGGER report\\s+stmts=(\\d+)\\s+elapsed=([^\\s]+)\\s+source=(\\d+)\\s+bytes/im, '');
+    const compactStats = log.match(/^--\\s*ENVLOGGER report\\s+stmts=(\\d+)\\s+elapsed=([^\\s]+)\\s+source=(\\d+)\\s+bytes/im);
     const compactServices = [...new Set([...log.matchAll(/^--\\s{2,}([A-Za-z0-9_]+)\\s+x\\d+\\s*$/gm)].map((m) => m[1]))];
     const captureSection = log.split(/^--\\s*loadstring captures:\\s*$/im)[1]?.split(/^--\\s*unknown globals:/im)[0] || '';
     const captures = [...captureSection.matchAll(/^--\\s*\\[\\d+\\]\\s+(\\d+)\\s+bytes/im)].map((m) => Number(m[1]));
@@ -4670,10 +4670,7 @@ async function startEnvLogWorkflow(message, inlineText = null) {
     compactLines.push('Obfuscator: ' + compactObfuscator);
     compactLines.push('Input: ' + formatBytes(Buffer.byteLength(input.source, 'utf8')));
     compactLines.push('Status: ' + compactStatus);
-    if (compactStats) {
-      const stats = compactStats.match(/^(\\d+)\\s+elapsed=([^\\s]+)\\s+source=(\\d+)$/);
-      if (stats) compactLines.push('Sandbox: ' + stats[1] + ' statements · ' + stats[2] + 's');
-    }
+    if (compactStats) compactLines.push('Sandbox: ' + compactStats[1] + ' statements · ' + compactStats[2]);
     if (captures.length) compactLines.push('Captured loadstring: ' + captures.length + ' (' + captures.map(formatBytes).join(', ') + ')');
     if (antiVm.length) compactLines.push('Anti-VM: ' + antiVm.slice(0, 2).join('; '));
     if (unknowns.length) compactLines.push('Unknown globals: ' + unknowns.slice(0, 6).join(', '));

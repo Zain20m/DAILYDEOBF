@@ -4908,7 +4908,36 @@ async function getCommandInput(message, inlineText, prompt) {
     }
     return { source: inlineText, filename: 'pasted-script.lua', originalText: inlineText };
   }
-  return collectGetInput(message, prompt);
+
+  await prompt.edit({
+    embeds: [dailyEmbed('Waiting for input', 'Attach a Lua/Luau file, paste source, or send a supported provider URL.', DAILY_COLORS.primary)],
+    components: [],
+  });
+  const collector = message.channel.createMessageCollector({
+    filter: (reply) => reply.author.id === message.author.id && reply.channelId === message.channelId,
+    time: INPUT_WAIT_MS,
+    max: 1,
+  });
+  return new Promise((resolve, reject) => {
+    collector.once('collect', async (reply) => {
+      try {
+        const attachment = reply.attachments.first();
+        if (attachment) { resolve(await inputFromAttachment(attachment)); return; }
+        const content = String(reply.content || '').trim();
+        if (!content) throw new Error('Attach a file or paste source text.');
+        const match = content.match(/https?:\/\/[^\s"'<>]+/i);
+        if (match) {
+          const url = match[0].replace(/[)\]},.;]+$/g, '');
+          resolve({ source: '', filename: path.basename(new URL(url).pathname) || 'loader.lua', url, originalText: content });
+          return;
+        }
+        resolve({ source: content, filename: 'pasted-script.lua', originalText: content });
+      } catch (error) { reject(error); }
+    });
+    collector.once('end', (collected) => {
+      if (!collected.size) reject(new Error('Input timed out. Run the command again.'));
+    });
+  });
 }
 async function startDedicatedFetch(message, inlineText) {
   const prompt = await message.reply({ embeds: [dailyEmbed('Provider fetch', 'Checking the LuaProtect/JNKIE reference...', DAILY_COLORS.primary)], allowedMentions: { repliedUser: false } });

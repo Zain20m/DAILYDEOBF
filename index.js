@@ -4289,61 +4289,6 @@ async function startGetWorkflow(message, inlineSource = null) {
     });
     totalBytes += data.length;
   }
-  const duplicateGroups = [...contentHashes.entries()].filter(([, item]) => item && item.name)
-    .map(([hash, first]) => ({
-      hash,
-      first,
-      matches: resolution.captures.filter((capture) => capture.sha256 === hash),
-    }))
-    .filter((group) => group.matches.length > 1);
-
-  const discoveryLines = (resolution.discoveries || []).map((item, index) => {
-    const details = [
-      String(index + 1).padStart(3, '0') + '.',
-      reportUrl(item.url),
-      'depth=' + item.depth,
-      'status=' + item.status,
-    ];
-    if (item.filename) details.push('file=' + item.filename);
-    if (item.correctedFrom) {
-      details.push('auto-fixed=' + reportUrl(item.correctedFrom) + ' -> ' + reportUrl(item.url));
-    }
-    if (item.error) details.push('error=' + item.error.replace(/[\r\n]+/g, ' ').slice(0, 500));
-    return details.join(' | ');
-  });
-
-  const captureLines = resolution.captures.map((capture) => [
-    capture.name,
-    'depth=' + capture.depth,
-    'exact-bytes=' + (capture.exactBytes ?? Buffer.byteLength(capture.source, 'utf8')),
-    'display-size=' + formatBytes(capture.exactBytes ?? Buffer.byteLength(capture.source, 'utf8')),
-    'sha256=' + (capture.sha256 || sha256Hex(Buffer.from(capture.source, 'utf8'))),
-    capture.duplicateOf ? 'identical-content-to=' + capture.duplicateOf : 'unique-content-in-this-run',
-    'origin=' + reportUrl(capture.url || ''),
-    'final=' + reportUrl(capture.finalUrl || capture.url || ''),
-    'http=' + (capture.statusCode || 'n/a'),
-    'content-type=' + (capture.contentType || 'unknown'),
-    capture.inline ? 'inline source' : 'downloaded source',
-  ].join(' | '));
-
-  const failureLines = resolution.failures.map((failure, index) =>
-    String(index + 1).padStart(3, '0') + '. ' + reportUrl(failure.url) +
-    ' | depth=' + (failure.depth ?? 0) +
-    ' | ' + String(failure.message || 'Unknown error').replace(/[\r\n]+/g, ' ').slice(0, 700)
-  );
-
-  const httpSpyEntries = extractHttpSpyEntries(input.source, input.filename || 'input.lua');
-  for (const capture of resolution.captures) {
-    if (capture.source) httpSpyEntries.push(...extractHttpSpyEntries(capture.source, capture.name));
-  }
-  const uniqueSpyEntries = [...new Map(httpSpyEntries.map((entry) =>
-    [[entry.filename, entry.line, entry.method, entry.url].join('|'), entry]
-  )).values()];
-  const httpSpyLines = uniqueSpyEntries.map((entry, index) =>
-    String(index + 1).padStart(3, '0') + '. ' + entry.filename +
-    ':' + entry.line + ' | ' + entry.method + ' | ' + redactSpyUrl(entry.url)
-  );
-
   if (input.source && input.source.trim() && !/^https?:\/\/\S+$/i.test(input.source.trim())) {
     const originalBytes = Buffer.from(input.source, 'utf8');
     if (originalBytes.length <= MAX_OUTPUT_BYTES) {

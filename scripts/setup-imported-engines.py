@@ -69,11 +69,28 @@ def install_luraph_152():
     shutil.rmtree(temp, ignore_errors=True)
     temp.mkdir(parents=True, exist_ok=True)
     try:
+        # Archives may contain a wrapper folder (for example,
+        # deobf-luraph-15.2/deob/...) instead of placing "deob/" at ZIP root.
+        # Extract safe members first, then locate the actual Node project by
+        # its entry-point pair rather than assuming one exact archive layout.
         with zipfile.ZipFile(LURAPH_ZIP) as zf:
-            extract_selected(LURAPH_ZIP, temp, ("deob/",))
-        source = temp / "deob"
-        if not (source / "deob.js").is_file() or not (source / "src" / "driver.js").is_file():
-            raise RuntimeError("Uploaded Luraph 15.2 archive is missing its Node engine entry points.")
+            extract_selected(LURAPH_ZIP, temp, ())
+        candidates = [
+            entry.parent
+            for entry in temp.rglob("deob.js")
+            if (entry.parent / "src" / "driver.js").is_file()
+        ]
+        if not candidates:
+            discovered = [
+                str(path.relative_to(temp))
+                for path in temp.rglob("*.js")
+            ][:20]
+            detail = ", ".join(discovered) if discovered else "no JavaScript files found"
+            raise RuntimeError(
+                "Uploaded Luraph 15.2 archive does not contain a folder with "
+                "both deob.js and src/driver.js. Discovered: " + detail
+            )
+        source = min(candidates, key=lambda path: len(path.parts))
         shutil.rmtree(target, ignore_errors=True)
         shutil.copytree(source, target)
         (target / ".dailydeobf-source-sha256").write_text(wanted + "\n")

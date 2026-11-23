@@ -38,7 +38,6 @@ const crypto = require('node:crypto');
 const { inspectLiftText } = require('./scripts/lift-validation');
 const { convertToPureLuau } = require('./pureluau');
 const { createAutomaticPureLuauResult } = require('./scripts/automatic-pureluau');
-const { detectFlowAuthLuraphVersion } = require('./scripts/flowauth-version');
 const { detectEngineSuggestion } = require('./scripts/engine-detection');
 const { repairIronVeilSource } = require('./scripts/ironveil-auto-repair');
 const {
@@ -77,9 +76,6 @@ const ENGINE_IB2_DIR = path.join(__dirname, 'ib2deobf');
 const ENGINE_IB2_DLL = path.join(ENGINE_IB2_DIR, 'LuaAnalysis.Ironbrew2.dll');
 const ENGINE_IRONVEIL_DIR = path.join(__dirname, 'ironveil-engine');
 const ENGINE_IRONVEIL_CLI = path.join(ENGINE_IRONVEIL_DIR, 'dist', 'cli.js');
-const ENGINE_2HBJ_DIR = path.join(__dirname, '2hbj-engine');
-const ENGINE_2HBJ_TOOLS = path.join(ENGINE_2HBJ_DIR, 'tools');
-const ENGINE_2HBJ_RUN = path.join(ENGINE_2HBJ_TOOLS, 'run.sh');
 const activeUsers = new Set();
 const pendingMsgReplies = new Map();
 const commandGuildId = process.env.GUILD_ID || '';
@@ -141,7 +137,14 @@ const slashCommands = [
       .setName('compress')
       .setDescription('Enable Cryon output compression')
       .setRequired(false))
-    .toJSON(),
+    .toJSON(),,
+  new SlashCommandBuilder()
+    .setName('setup')
+    .setDescription('Configure the dedicated .fetch and .beautify channels')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addChannelOption((option) => option.setName('fetch_channel').setDescription('Channel for .fetch').addChannelTypes(ChannelType.GuildText).setRequired(false))
+    .addChannelOption((option) => option.setName('beautify_channel').setDescription('Channel for .beautify').addChannelTypes(ChannelType.GuildText).setRequired(false))
+    .toJSON()
 ];
 
 if (!TOKEN) {
@@ -2897,254 +2900,6 @@ async function processIronbrew2(message, prompt, input) {
   }
 }
 
-// The bundled 2HBJ parser predates Luau's binary integer literal syntax.
- // Normalize only numeric tokens; leave quoted strings and both Lua comment forms untouched.
-function normalize2HBJBinaryLiterals(source) {
-  const text = String(source || '');
-  let output = '';
-  let i = 0;
-
-  function longBracketAt(index) {
-    if (text[index] !== '[') return null;
-    let cursor = index + 1;
-    while (text[cursor] === '=') cursor += 1;
-    if (text[cursor] !== '[') return null;
-    const equals = text.slice(index + 1, cursor);
-    return { end: cursor + 1, close: ']' + equals + ']' };
-  }
-
-  function copyLongBracket(index, opener) {
-    const closeAt = text.indexOf(opener.close, opener.end);
-    const end = closeAt < 0 ? text.length : closeAt + opener.close.length;
-    output += text.slice(index, end);
-    return end;
-  }
-
-  while (i < text.length) {
-    const char = text[i];
-
-    if (char === "'" || char === '"') {
-      const quote = char;
-      const start = i++;
-      while (i < text.length) {
-        if (text[i] === '\\') {
-          i = Math.min(text.length, i + 2);
-          continue;
-        }
-        if (text[i++] === quote) break;
-      }
-      output += text.slice(start, i);
-      continue;
-    }
-
-    if (char === '-' && text[i + 1] === '-') {
-      const opener = longBracketAt(i + 2);
-      if (opener) {
-        i = copyLongBracket(i, opener);
-      } else {
-        const newline = text.indexOf('\n', i + 2);
-        const end = newline < 0 ? text.length : newline;
-        output += text.slice(i, end);
-        i = end;
-      }
-      continue;
-    }
-
-    if (char === '[') {
-      const opener = longBracketAt(i);
-      if (opener) {
-        i = copyLongBracket(i, opener);
-        continue;
-      }
-    }
-
-    const previous = i > 0 ? text[i - 1] : '';
-    if (char === '0' && (text[i + 1] === 'b' || text[i + 1] === 'B') &&
-        !/[A-Za-z0-9_.]/.test(previous)) {
-      let end = i + 2;
-      while (/[01_]/.test(text[end] || '')) end += 1;
-      const rawDigits = text.slice(i + 2, end);
-      const digits = rawDigits.replace(/_/g, '');
-      const next = text[end] || '';
-      const validSeparators = rawDigits.length > 0 &&
-        !rawDigits.endsWith('_') && !rawDigits.includes('__');
-      if (/[01]/.test(digits) && validSeparators && !/[A-Za-z0-9_]/.test(next)) {
-        const decimal = Number('0b' + digits);
-        if (Number.isFinite(decimal)) {
-          output += String(decimal);
-          i = end;
-          continue;
-        }
-      }
-    }
-
-    output += char;
-    i += 1;
-  }
-
-  return output;
-}
-
-async function process2HBJ(message, prompt, input) {
-  const startedAt = Date.now();
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-2hbj-'));
-  const inputPath = path.join(tempRoot, 'input.lua');
-  const outputDir = path.join(tempRoot, 'output');
-  const outputPath = path.join(outputDir, 'out.lua');
-  const python = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
-  const vendorPython = path.join(__dirname, 'vendor', 'python');
-  const pythonPath = [vendorPython, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter);
-  const pythonEnv = { PYTHONPATH: pythonPath };
-  const progress = createAnalysisProgress(
-    prompt, input.filename, Buffer.byteLength(input.source || '', 'utf8'), '2HBJ (Experimental)'
-  );
-
-  try {
-    if (!String(input.source || '').trim()) throw new Error('The 2HBJ engine needs a Lua/Luau source file.');
-    // Do not use the vendor directory's existence as proof that Lupa installed:
-    // a failed earlier pip attempt can leave that directory empty.
-    const toolsReady = await fs.stat(ENGINE_2HBJ_RUN).then((value) => value.isFile()).catch(() => false);
-    const pythonWrapperReady = await Promise.all(['python', 'python3'].map((name) =>
-      fs.stat(path.join(ENGINE_2HBJ_TOOLS, name)).then((value) => value.isFile()).catch(() => false)
-    )).then((values) => values.every(Boolean));
-    let lupaReady = false;
-    try {
-      await runCommand(
-        python, ['-c', 'import lupa.luajit21'],
-        ENGINE_2HBJ_DIR, 30_000, { env: pythonEnv }
-      );
-      lupaReady = true;
-    } catch (error) {
-      console.warn('[2HBJ setup] LuaJIT import check failed; rerunning setup: ' +
-        String(error.message || error).slice(0, 500));
-    }
-
-    if (!toolsReady || !pythonWrapperReady || !lupaReady) {
-      // Some hosts start index.js directly and skip the npm start setup hook.
-      // Prepare the bundled engine whenever either the tools or actual import is missing.
-      const setupPath = path.join(__dirname, 'scripts', 'setup-2hbj-engine.py');
-      let setup;
-      try {
-        setup = await runCommand(
-          python, [setupPath], __dirname, 180_000, { env: pythonEnv }
-        );
-      } catch (error) {
-        throw new Error('2HBJ automatic setup failed: ' +
-          String(error.message || error).slice(0, 2200));
-      }
-      if (setup.stdout) console.log('[2HBJ setup] ' + String(setup.stdout).trim());
-      if (setup.stderr) console.warn('[2HBJ setup] ' + String(setup.stderr).trim());
-      if (!await fs.stat(ENGINE_2HBJ_RUN).then((value) => value.isFile()).catch(() => false)) {
-        throw new Error('2HBJ setup ran but tools/run.sh is still missing. Setup output: ' +
-          String(setup.stderr || setup.stdout || '(no output)').slice(-1800));
-      }
-    }
-    await fs.mkdir(outputDir, { recursive: true });
-    const normalizedSource = normalize2HBJBinaryLiterals(input.source);
-    await fs.writeFile(inputPath, normalizedSource, { encoding: 'utf8', mode: 0o600 });
-    await progress.start();
-    await progress.setPhase(
-      'Checking the 2HBJ LuaJIT dependency',
-      'Verifying the bundled LuaJIT bridge before starting the imported decompiler.'
-    );
-    try {
-      await runCommand(python, ['-c', 'import lupa.luajit21'], ENGINE_2HBJ_DIR, 30_000, { env: pythonEnv });
-    } catch (error) {
-      throw new Error('2HBJ could not load the project-local Lupa LuaJIT 2.1 package. Check the deployment log for the setup installer output. ' + String(error.message || error).slice(0, 700));
-    }
-
-    await progress.setPhase(
-      'Running the 2HBJ VM analysis pipeline',
-      'Preparing the wrapper, dumping VM prototypes, mapping handlers and rebuilding Lua control flow.'
-    );
-    let result;
-    try {
-      result = await runCommand(
-        'bash', [ENGINE_2HBJ_RUN, inputPath, outputDir], ENGINE_2HBJ_DIR, ENGINE_TIMEOUT_MS,
-        { env: { PYTHON_BIN: 'python3', PATH: [ENGINE_2HBJ_TOOLS, process.env.PATH || ''].filter(Boolean).join(path.delimiter), ...pythonEnv }, onProgress: progress.onLine }
-      );
-    } catch (engineError) {
-      // Preserve the generated code that instr.py failed to instrument.
-      const intermediatePath = path.join(outputDir, 'stage2_jit.lua');
-      try {
-        const intermediateStat = await fs.stat(intermediatePath);
-        if (intermediateStat.isFile() && intermediateStat.size > 0 &&
-            intermediateStat.size <= MAX_OUTPUT_BYTES) {
-          await message.reply({
-            content: '⚠️ 2HBJ diagnostic attached\nThe VM wrapper was generated, but this 2HBJ build did not match the bundled instrumentation. This is the generated stage2_jit.lua, not recovered source.',
-            files: [new AttachmentBuilder(await fs.readFile(intermediatePath), {
-              name: '2hbj-stage2_jit.lua',
-            })],
-            allowedMentions: { repliedUser: false },
-          });
-        } else {
-          console.warn('[2HBJ diagnostic] stage2_jit.lua is empty or exceeds the attachment limit.');
-        }
-      } catch (diagnosticError) {
-        console.warn('[2HBJ diagnostic] Could not attach stage2_jit.lua: ' +
-          String(diagnosticError.message || diagnosticError).slice(0, 500));
-      }
-      throw engineError;
-    }
-    const stat = await fs.stat(outputPath).catch(() => null);
-    if (!stat || !stat.isFile() || !stat.size) {
-      throw new Error('2HBJ finished without producing out.lua. ' + String(result.stderr || result.stdout || '').slice(-1400));
-    }
-    if (stat.size > MAX_OUTPUT_BYTES) throw new Error('2HBJ output exceeds the 18 MB attachment limit.');
-    await prependDailyDeobfHeader(outputPath);
-
-    const reportPath = path.join(outputDir, '2hbj-report.txt');
-    const report = [
-      'DAILY DEOBF · 2HBJ (experimental)',
-      'Input: ' + input.filename,
-      'Result: imported 2HBJ VM decompilation pipeline',
-      'Output bytes: ' + stat.size,
-      '',
-      'The included tool bundle says the protected script itself is not executed by its dump stage; it inspects the VM loader and reconstructs source from dumped prototypes.',
-      'Important limitation: the supplied bundle is tuned to its included 2HBJ sample. Its instructions say stage2.js string/alphabet mappings, instr.py instrumentation patterns and the disasm.py opcode table may need manual changes for other builds. Treat this output as experimental, not guaranteed complete source.',
-      'The 2HBJ input is normalized for binary integer literals before parsing because the bundled parser does not recognize Luau 0b/0B numeric syntax.',
-      'The included README notes that anti-tamper code may remain above the recovered script in out.lua.',
-      '',
-      'Engine diagnostics:',
-      String(result.stdout || result.stderr || '').slice(-7000) || '(No diagnostics emitted.)',
-    ].join('\n');
-    await fs.writeFile(reportPath, report, 'utf8');
-
-    const files = [
-      new AttachmentBuilder(outputPath, { name: '2HBJ_deobfuscated.luau' }),
-      new AttachmentBuilder(reportPath, { name: '2HBJ_report.txt' }),
-    ];
-    for (const [filename, attachmentName] of [
-      ['stage2.lua', '2HBJ_vm_wrapper.lua'],
-      ['disasm.txt', '2HBJ_vm_disassembly.txt'],
-      ['handlers_used.txt', '2HBJ_handlers_used.txt'],
-    ]) {
-      const filePath = path.join(outputDir, filename);
-      const size = await fs.stat(filePath).then((value) => value.size).catch(() => 0);
-      if (size > 0 && size <= 7 * 1024 * 1024) files.push(new AttachmentBuilder(filePath, { name: attachmentName }));
-    }
-
-    const previewText = buildDeobfPreview(await fs.readFile(outputPath, 'utf8'), Date.now() - startedAt);
-    await message.reply({
-      content: '## 2HBJ Deobfuscated!\n\n' + previewText + '\n\n' +
-        '✅ **DAILY DEOBF · 2HBJ (Experimental)**\nThe imported 2HBJ pipeline finished.\nOutput size: ' + formatBytes(stat.size) + '\nAttached: reconstructed Luau, VM wrapper, disassembly and limitations report.\n\nThis tool bundle is sample-tuned; other 2HBJ builds may need manual mapping updates.',
-      files,
-      allowedMentions: { repliedUser: false },
-    });
-    await progress.complete('The 2HBJ reconstruction and supporting analysis files were attached.');
-    await prompt.edit({
-      content: '✅ 2HBJ analysis finished. Review the report for the sample-specific limitations.',
-      components: [],
-    }).catch(() => {});
-  } catch (error) {
-    await progress.fail(error);
-    throw error;
-  } finally {
-    progress.stop();
-    await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
-  }
-}
-
 async function processCenturion(message, prompt, input) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-centurion-'));
   const inputPath = path.join(tempRoot, 'input.lua');
@@ -3630,33 +3385,6 @@ async function collectLuraphGameId(message, prompt, label = 'Luraph') {
   });
 }
 
-async function processFlowAuth(message, prompt, input) {
-  const detected = detectFlowAuthLuraphVersion(input.source);
-  if (detected.unsupported) {
-    await prompt.edit({
-      content: 'FlowAuth detected Luraph v' + detected.version + ', but this bot now supports only Luraph v15 and v15.1.',
-      components: [],
-    });
-    return;
-  }
-  const displayVersion = 'Luraph v' + detected.version;
-  const versionNote = detected.explicit
-    ? 'Version identified by ' + detected.detectedBy + '.'
-    : 'No Luraph version marker was found. Trying the current v15.1 engine.';
-
-  await prompt.edit({
-    content: '🧬 **FlowAuth selected**\n' + versionNote +
-      '\nUsing the matching Luraph analysis engine: **' + displayVersion + '**.',
-    components: [],
-  });
-
-  const gameId = await collectLuraphGameId(message, prompt, 'FlowAuth');
-  if (detected.version === '15') {
-    return processLuraphV15(message, prompt, input, 'FlowAuth · Luraph v15', gameId);
-  }
-  return processLuraph151(message, prompt, input, gameId);
-}
-
 async function collectGetInput(message, prompt) {
   const collector = message.channel.createMessageCollector({
     filter: (reply) => reply.author.id === message.author.id && reply.channelId === message.channelId,
@@ -4115,11 +3843,6 @@ async function startGetWorkflow(message, inlineSource = null) {
     input = await collectGetInput(message, prompt);
   }
 
-  const luaProtectStub = extractLuaProtectRunnerUrl(String(input.source || '') + '\n' + String(input.originalText || ''));
-  if (luaProtectStub) {
-    await sendLuaProtectRunnerBody(message, prompt, input.source || input.originalText || '', luaProtectStub);
-    return;
-  }
 
   let sourceToScan = input.source;
   const correction = !firstAttachment
@@ -4195,8 +3918,6 @@ async function startGetWorkflow(message, inlineSource = null) {
         };
       }
       const credentialText = String(input.originalText || '') + '\n' + String(input.source || '');
-      const luaProtectSource = await fetchLuaProtectLoaderSource(rawUrl);
-      if (luaProtectSource !== null) return { source: luaProtectSource, finalUrl: rawUrl, contentType: 'application/lua', status: 200 };
       const vantarmorSource = await fetchVantarmorLoaderSource(rawUrl, credentialText);
       if (vantarmorSource !== null) {
         return {
@@ -4204,15 +3925,6 @@ async function startGetWorkflow(message, inlineSource = null) {
           finalUrl: rawUrl,
           contentType: 'application/lua',
           status: 200,
-        };
-      }
-      const jnkieResult = await fetchJnkIeLoaderSource(rawUrl, credentialText);
-      if (jnkieResult !== null) {
-        return {
-          source: jnkieResult.source,
-          finalUrl: jnkieResult.finalUrl || rawUrl,
-          contentType: jnkieResult.complete ? 'application/lua' : 'application/lua; JNKIE stage-one only',
-          status: jnkieResult.complete ? 200 : 206,
         };
       }
       const rootOptions = input.url && rawUrl === input.url ? (input.curlOptions || {}) : {};
@@ -4224,18 +3936,6 @@ async function startGetWorkflow(message, inlineSource = null) {
         forceRobloxUserAgent: true,
       });
       const fetchedSource = decodeSource(fetched.bytes);
-      const nestedLuaProtectUrl = extractLuaProtectRunnerUrl(fetchedSource);
-      if (nestedLuaProtectUrl) {
-        const runnerSource = await fetchLuaProtectLoaderSource(nestedLuaProtectUrl);
-        if (runnerSource !== null) {
-          return {
-            source: runnerSource,
-            finalUrl: nestedLuaProtectUrl,
-            contentType: 'application/lua',
-            status: 200,
-          };
-        }
-      }
       return {
         source: fetchedSource,
         finalUrl: fetched.finalUrl || rawUrl,
@@ -5179,13 +4879,84 @@ async function sendRobloxEnvironmentLogger(message) {
   });
 }
 
+
+const GUILD_SETTINGS_PATH = path.join(__dirname, 'guild-settings.json');
+const BEAUTIFY_CLI = path.join(__dirname, 'scripts', 'beautify.py');
+
+async function readGuildSettings() {
+  try { return JSON.parse(await fs.readFile(GUILD_SETTINGS_PATH, 'utf8')); }
+  catch { return {}; }
+}
+async function writeGuildSettings(settings) {
+  await fs.writeFile(GUILD_SETTINGS_PATH, JSON.stringify(settings, null, 2) + '\\n', { mode: 0o600 });
+}
+async function enforceCommandChannel(message, key) {
+  if (!message.guild) { await message.reply('This command can only be used inside a server.'); return false; }
+  const settings = await readGuildSettings();
+  const channelId = settings[message.guild.id] && settings[message.guild.id][key];
+  if (!channelId) { await message.reply('An admin must run /setup and configure the .' + key + ' channel first.'); return false; }
+  if (message.channelId !== channelId) { await message.reply('Please use .' + key + ' in <#' + channelId + '>.'); return false; }
+  return true;
+}
+async function getCommandInput(message, inlineText, prompt) {
+  if (message.attachments.first()) return inputFromAttachment(message.attachments.first());
+  if (inlineText && inlineText.trim()) {
+    const match = inlineText.match(/https?:\\/\\/[^\\s"'<>]+/i);
+    if (match) {
+      const url = match[0].replace(/[)\\]},.;]+$/g, '');
+      return { source: '', filename: path.basename(new URL(url).pathname) || 'loader.lua', url, originalText: inlineText };
+    }
+    return { source: inlineText, filename: 'pasted-script.lua', originalText: inlineText };
+  }
+  return collectGetInput(message, prompt);
+}
+async function startDedicatedFetch(message, inlineText) {
+  const prompt = await message.reply({ embeds: [dailyEmbed('Provider fetch', 'Checking the LuaProtect/JNKIE reference...', DAILY_COLORS.primary)], allowedMentions: { repliedUser: false } });
+  const input = await getCommandInput(message, inlineText, prompt);
+  const combined = [input.originalText, input.source, input.url].filter(Boolean).join('\\n');
+  const luaProtectUrl = input.url || extractLuaProtectRunnerUrl(combined);
+  const jnkieUrl = input.url || extractJnkIeDownloadUrl(combined);
+  if (luaProtectUrl && /luaprotect\\.dev/i.test(luaProtectUrl)) {
+    await processLuaProtectFetcher(message, prompt, { ...input, url: luaProtectUrl });
+    return;
+  }
+  if (jnkieUrl && /jnkie\\.com/i.test(jnkieUrl)) {
+    await processJnkIeFetcher(message, prompt, { ...input, url: jnkieUrl });
+    return;
+  }
+  throw new Error('.fetch supports LuaProtect and JNKIE URLs only. Provider-required keys/HWIDs must be supplied by the script owner; access checks are not bypassed.');
+}
+async function startBeautify(message, inlineText) {
+  const prompt = await message.reply({ embeds: [dailyEmbed('Beautify', 'Reading the source file...', DAILY_COLORS.primary)], allowedMentions: { repliedUser: false } });
+  const input = await getCommandInput(message, inlineText, prompt);
+  const source = String(input.source || '');
+  if (!source.trim()) throw new Error('Attach a .lua/.luau/.txt file or paste source after .beautify.');
+  if (Buffer.byteLength(source, 'utf8') > MAX_INPUT_BYTES) throw new Error('Input exceeds the 18 MB limit.');
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-beautify-'));
+  try {
+    const inputPath = path.join(temp, path.basename(input.filename || 'input.lua').replace(/[^A-Za-z0-9._-]/g, '_'));
+    const outputPath = path.join(temp, 'beautified.lua');
+    await fs.writeFile(inputPath, source, 'utf8');
+    await prompt.edit({ embeds: [dailyEmbed('Beautify', 'Running AST-backed naming and full-file formatting...', DAILY_COLORS.primary)] });
+    const python = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+    const result = await runCommand(python, [BEAUTIFY_CLI, inputPath, '-o', outputPath, '--report', '--formatter', 'auto'], __dirname, 180_000);
+    const stat = await fs.stat(outputPath).catch(() => null);
+    if (!stat || !stat.isFile() || !stat.size) throw new Error('Beautify produced no output. ' + String(result.stderr || result.stdout || '').slice(-500));
+    if (stat.size > MAX_OUTPUT_BYTES) throw new Error('Beautified output exceeds the attachment limit.');
+    await prompt.edit({ embeds: [dailyEmbed('Beautify complete', 'Full file processed · ' + formatBytes(stat.size) + ' output.', DAILY_COLORS.success)], files: [new AttachmentBuilder(outputPath, { name: 'beautified.lua' })], components: [] });
+  } finally { await fs.rm(temp, { recursive: true, force: true }).catch(() => {}); }
+}
+
 function helpText() {
   return [
     'DAILY DEOBF',
     '',
     'COMMANDS',
     '.deobf [URL/file] - analyze protected Lua/Luau; direct HTTP/HTTPS links are supported',
-    '.get [URL/file] - scan source and fetch discovered links; direct HTTP/HTTPS links are supported',
+    '.get [URL/file] - scan source and fetch discovered links; direct HTTP/HTTPS links are supported',\n    '.fetch [URL/file] - LuaProtect and JNKIE provider fetchers only',\n    '.beautify [file/code] - format and semantically clean Luau with Beautify',\n    '/setup - set the dedicated .fetch and .beautify channels',
+    '.fetch [URL/file] - LuaProtect and JNKIE provider fetchers only',
+    '.beautify [file/code] - format and semantically clean Luau with Beautify',
+    '/setup - set the dedicated .fetch and .beautify channels',
     '.purelua',
     '.l [URL/file/code] - environment log: run the script in the offline sandbox and log what it does',
     '.l studio - Roblox Studio environment diagnostic script',
@@ -5579,8 +5350,6 @@ async function resolveDeobfTargetSource(input) {
         };
       }
       const credentialText = String(input.originalText || '') + '\n' + rootSource;
-      const luaProtectSource = await fetchLuaProtectLoaderSource(rawUrl);
-      if (luaProtectSource !== null) return { source: luaProtectSource, finalUrl: rawUrl, contentType: 'application/lua', status: 200 };
       const vantarmorSource = await fetchVantarmorLoaderSource(rawUrl, credentialText);
       if (vantarmorSource !== null) {
         return {
@@ -5588,15 +5357,6 @@ async function resolveDeobfTargetSource(input) {
           finalUrl: rawUrl,
           contentType: 'application/lua',
           status: 200,
-        };
-      }
-      const jnkieResult = await fetchJnkIeLoaderSource(rawUrl, credentialText);
-      if (jnkieResult !== null) {
-        return {
-          source: jnkieResult.source,
-          finalUrl: jnkieResult.finalUrl || rawUrl,
-          contentType: jnkieResult.complete ? 'application/lua' : 'application/lua; JNKIE stage-one only',
-          status: jnkieResult.complete ? 200 : 206,
         };
       }
       const fetched = await fetchPublicText(rawUrl, { forceRobloxUserAgent: true });
@@ -5808,40 +5568,6 @@ async function startWorkflow(message, inlineText = null) {
     }
   }
 
-  // LuaProtect stubs are launchers, not the protected payload. Resolve the
-  // embedded runner hash before plain-Lua detection or engine selection.
-  if (input.source && !input.pendingUrlFailure) {
-    const luaProtectRunnerUrl = extractLuaProtectRunnerUrl(input.source);
-    if (luaProtectRunnerUrl) {
-      await prompt.edit({
-        embeds: [dailyEmbed(
-          'LuaProtect bootstrap detected',
-          'Extracted the runner hash from the stub. Downloading the actual runner body before analysis...',
-          DAILY_COLORS.primary
-        )],
-      });
-      const runnerSource = await fetchLuaProtectLoaderSource(luaProtectRunnerUrl);
-      if (runnerSource === null) throw new Error('LuaProtect runner URL could not be resolved.');
-      input = {
-        ...input,
-        source: runnerSource,
-        filename: 'luaprotect_runner.lua',
-        url: luaProtectRunnerUrl,
-        originalInput: {
-          source: input.source,
-          filename: input.filename,
-          url: input.url || null,
-        },
-        selectedTarget: {
-          source: runnerSource,
-          filename: 'luaprotect_runner.lua',
-          url: luaProtectRunnerUrl,
-          bytes: Buffer.byteLength(runnerSource, 'utf8'),
-          depth: 1,
-        },
-      };
-    }
-  }
 
   let targetResolution = null;
   if (input.source && !input.pendingUrlFailure) {
@@ -5892,10 +5618,6 @@ async function startWorkflow(message, inlineText = null) {
   const chooseRows = [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`deobf-flowauth:${message.author.id}`)
-        .setLabel('FlowAuth')
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
         .setCustomId(`deobf-luraph-menu:${message.author.id}`)
         .setLabel(isLuraphSuggestion ? 'Recommended: Luraph' : 'Luraph')
         .setStyle(isLuraphSuggestion ? ButtonStyle.Success : ButtonStyle.Secondary),
@@ -5919,10 +5641,6 @@ async function startWorkflow(message, inlineText = null) {
         .setCustomId(`deobf-cancel:${message.author.id}`)
         .setLabel('Cancel')
         .setStyle(ButtonStyle.Secondary),
-    ),
-    new ActionRowBuilder().addComponents(
-      engineButton(new ButtonBuilder()
-        .setCustomId(`deobf-2hbj:${message.author.id}`), '2hbj', '2HBJ (Experimental)'),
     ),
   ];
   const luraphVersionRows = [
@@ -5973,7 +5691,6 @@ async function startWorkflow(message, inlineText = null) {
         (engineSuggestion.engine ? ' → green button is the recommended engine' : ' → no engine here fits this file') +
         ((engineSuggestion.alternatives || []).length ? '; blue buttons are worth trying next' : '') + '.\n' + engineSuggestion.reason
       : '**Detector:** no known obfuscator signature or VM layout was found.',
-    '**2HBJ option:** Experimental imported VM decompiler. The bundled mappings are tuned to the supplied sample and may not match every 2HBJ build.',
     '',
     input.pendingUrlFailure ? '**Input ready**' : '**Payload scan complete**',
     input.selectedTarget
@@ -6216,16 +5933,6 @@ async function startWorkflow(message, inlineText = null) {
       componentCollector.stop('cancelled');
       return;
     }
-    if (interaction.customId === `deobf-flowauth:${message.author.id}`) {
-      await interaction.deferUpdate();
-      componentCollector.stop('selected');
-      try {
-        await processFlowAuth(message, prompt, await getWorkflowInput());
-      } catch (error) {
-        await showDeobfFailure(message, prompt, 'FlowAuth analysis failed', error);
-      }
-      return;
-    }
     if (interaction.customId === `deobf-ironbrew1:${message.author.id}`) {
       await interaction.deferUpdate();
       componentCollector.stop('selected');
@@ -6243,16 +5950,6 @@ async function startWorkflow(message, inlineText = null) {
         await processIronbrew2(message, prompt, await getWorkflowInput());
       } catch (error) {
         await showDeobfFailure(message, prompt, 'IronBrew 2 failed', error);
-      }
-      return;
-    }
-    if (interaction.customId === `deobf-2hbj:${message.author.id}`) {
-      await interaction.deferUpdate();
-      componentCollector.stop('selected');
-      try {
-        await process2HBJ(message, prompt, await getWorkflowInput());
-      } catch (error) {
-        await showDeobfFailure(message, prompt, '2HBJ (Experimental) failed', error);
       }
       return;
     }
@@ -6297,14 +5994,14 @@ async function startWorkflow(message, inlineText = null) {
 
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`DAILY DEOBF is online as ${readyClient.user.tag}`);
-  console.log('Prefix commands: .deobf, .get, .help');
+  console.log('Prefix commands: .deobf, .get, .fetch, .beautify, .help');
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
     const route = commandGuildId
       ? Routes.applicationGuildCommands(readyClient.user.id, commandGuildId)
       : Routes.applicationCommands(readyClient.user.id);
     await rest.put(route, { body: slashCommands });
-    console.log('Registered /purelua and /obf slash commands.');
+    console.log('Registered /purelua, /obf and /setup slash commands.');
   } catch (error) {
     console.error('Slash-command registration failed:', error.message);
   }
@@ -6312,6 +6009,24 @@ client.once(Events.ClientReady, async (readyClient) => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
+  if (interaction.commandName === 'setup') {
+    if (!interaction.guildId || !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+      await interaction.reply({ content: 'You need Manage Server permission to configure channels.', ephemeral: true }); return;
+    }
+    const fetchChannel = interaction.options.getChannel('fetch_channel');
+    const beautifyChannel = interaction.options.getChannel('beautify_channel');
+    const settings = await readGuildSettings();
+    settings[interaction.guildId] = settings[interaction.guildId] || {};
+    if (fetchChannel) settings[interaction.guildId].fetch = fetchChannel.id;
+    if (beautifyChannel) settings[interaction.guildId].beautify = beautifyChannel.id;
+    await writeGuildSettings(settings);
+    const saved = settings[interaction.guildId];
+    const lines = [];
+    if (saved.fetch) lines.push('.fetch: <#' + saved.fetch + '>');
+    if (saved.beautify) lines.push('.beautify: <#' + saved.beautify + '>');
+    await interaction.reply({ content: 'Channel setup saved.\\n' + (lines.join('\\n') || 'No channels changed.'), ephemeral: true });
+    return;
+  }
   if (interaction.commandName === 'purelua') {
     await handlePureLuauCommand(interaction);
     return;
@@ -6479,6 +6194,21 @@ client.on(Events.MessageCreate, async (message) => {
     } finally {
       activeUsers.delete(message.author.id);
     }
+    return;
+  }
+
+  if (command === '.fetch' || command === '.beautify') {
+    const key = command.slice(1);
+    if (!await enforceCommandChannel(message, key)) return;
+    if (activeUsers.has(message.author.id)) { await message.reply('You already have an active job.'); return; }
+    activeUsers.add(message.author.id);
+    try {
+      const inline = content.slice(command.length).trim() || null;
+      if (key === 'fetch') await startDedicatedFetch(message, inline);
+      else await startBeautify(message, inline);
+    } catch (error) {
+      await message.reply('❌ ' + String(error.message || error).slice(0, 1200)).catch(() => {});
+    } finally { activeUsers.delete(message.author.id); }
     return;
   }
 

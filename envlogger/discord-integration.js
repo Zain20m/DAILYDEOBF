@@ -263,14 +263,14 @@ async function startEnvLogWorkflow(message, inlineText, deps) {
 
     const dynLog = dynamic.log || '';
     const capturedSources = [];
-    const captureRe = /--\\s*--- begin dump \\[(\\d+)\\] ---\\r?\\n([\\s\\S]*?)\\r?\\n--\\s*--- end dump \\[(\\d+)\\] ---/g;
+    const captureRe = /--\s*--- begin dump \[(\d+)\] ---\r?\n([\s\S]*?)\r?\n--\s*--- end dump \[(\d+)\] ---/g;
     let captureMatch;
     while ((captureMatch = captureRe.exec(dynLog))) {
       if (captureMatch[1] !== captureMatch[3]) continue;
       const body = captureMatch[2]
-        .split(/\\r?\\n/)
-        .map((line) => line.replace(/^--\\s*\\| ?/, ''))
-        .join('\\n');
+        .split(/\r?\n/)
+        .map((line) => line.replace(/^--\s*\| ?/, ''))
+        .join('\n');
       if (body.trim()) capturedSources.push({ index: Number(captureMatch[1]), source: body });
     }
     const fullReport = buildTextReport(base + '.lua', source, analysis, dynLog);

@@ -4939,7 +4939,7 @@ async function startBeautify(message, inlineText) {
     await fs.writeFile(inputPath, source, 'utf8');
     await prompt.edit({ embeds: [dailyEmbed('Beautify', 'Running AST-backed naming and full-file formatting...', DAILY_COLORS.primary)] });
     const python = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
-    const result = await runCommand(python, [BEAUTIFY_CLI, inputPath, '-o', outputPath, '--report', '--formatter', 'auto'], __dirname, 180_000);
+    const result = await runCommand(python, [BEAUTIFY_CLI, inputPath, '-o', outputPath, '--report', '--formatter', 'auto'], __dirname, 180_000, { env: { PATH: [path.join(__dirname, 'node_modules', '.bin'), process.env.PATH || ''].join(path.delimiter) } });
     const stat = await fs.stat(outputPath).catch(() => null);
     if (!stat || !stat.isFile() || !stat.size) throw new Error('Beautify produced no output. ' + String(result.stderr || result.stdout || '').slice(-500));
     if (stat.size > MAX_OUTPUT_BYTES) throw new Error('Beautified output exceeds the attachment limit.');

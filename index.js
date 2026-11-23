@@ -4778,7 +4778,7 @@ async function getCommandInput(message, inlineText, prompt) {
 }
 async function startDedicatedFetch(message, inlineText) {
   const rawInput = String(inlineText || '').trim();
-  const providerMatch = rawInput.match(/^(luaprotect|jnkie)\b\\s*/i);
+  const providerMatch = rawInput.match(/^(luaprotect|jnkie)\b\s*/i);
   const selectedProvider = providerMatch ? providerMatch[1].toLowerCase() : null;
   const providerInput = providerMatch ? rawInput.slice(providerMatch[0].length).trim() : rawInput;
 

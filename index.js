@@ -3297,7 +3297,7 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
           ? ['The standalone v15 engine used its bundled offline environment; the supplied GameId is not passed to this engine.']
           : (gameId ? ['Target Universe/GameId supplied to the sandbox: ' + gameId + '.'] : ['No target Universe/GameId was supplied; game-locked builds may stop in their bootstrap layer.'])),
         ...((/buffer access out of bounds|size out of range/i).test(dedicatedLogs)
-          ? ['Runtime stopped during bootstrap with a buffer bounds/size error. This is not a recovered source result.', 'For a game-locked script, retry with its correct public Roblox Universe/GameId. A FlowAuth key-gated loader that requires a live authorization handshake will only expose its offline loader behaviour; the bot does not emulate or bypass that handshake.']
+          ? ['Runtime stopped during bootstrap with a buffer bounds/size error. This is not a recovered source result.', 'For a game-locked script, retry with its correct public Roblox Universe/GameId.']
           : []),
       ],
     });
@@ -3315,7 +3315,7 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
         : (summary.hasLiftCandidate
           ? '⚠️ Luraph v' + version + ' finished with a partial VM lift. It is not marked as recovered source.'
           : (bootstrapBoundsError
-            ? '⚠️ The sandbox stopped before VM capture (buffer bounds/size error). This is not deobfuscated source. For game-locked scripts, retry with the correct Universe/GameId; a live FlowAuth auth handshake cannot be reconstructed offline.'
+            ? '⚠️ The sandbox stopped before VM capture (buffer bounds/size error). This is not deobfuscated source. For game-locked scripts, retry with the correct Universe/GameId.'
             : '⚠️ Luraph v' + version + ' finished without a full VM lift. Check the trace and analysis report.')),
       components: [],
     });
@@ -4928,7 +4928,8 @@ async function startDedicatedFetch(message, inlineText) {
 }
 async function startBeautify(message, inlineText) {
   const prompt = await message.reply({ embeds: [dailyEmbed('Beautify', 'Reading the source file...', DAILY_COLORS.primary)], allowedMentions: { repliedUser: false } });
-  const input = await getCommandInput(message, inlineText, prompt);
+  let input = await getCommandInput(message, inlineText, prompt);
+  if (!input.source && input.url) input = await inputFromUrlText(input.url);
   const source = String(input.source || '');
   if (!source.trim()) throw new Error('Attach a .lua/.luau/.txt file or paste source after .beautify.');
   if (Buffer.byteLength(source, 'utf8') > MAX_INPUT_BYTES) throw new Error('Input exceeds the 18 MB limit.');
@@ -5631,10 +5632,6 @@ async function startWorkflow(message, inlineText = null) {
     new ActionRowBuilder().addComponents(
       engineButton(new ButtonBuilder()
         .setCustomId(`deobf-vantarmor:${message.author.id}`), 'vantarmor', 'Vantarmor / Universal'),
-      engineButton(new ButtonBuilder()
-        .setCustomId(`deobf-luaprotect:${message.author.id}`), 'luaprotect', 'LuaProtect Fetcher'),
-      engineButton(new ButtonBuilder()
-        .setCustomId(`deobf-jnkie:${message.author.id}`), 'jnkie', 'JNKIE Fetcher'),
       engineButton(new ButtonBuilder()
         .setCustomId(`deobf-fulcrum:${message.author.id}`), 'fulcrum', 'Fulcrum / Polsec'),
       new ButtonBuilder()

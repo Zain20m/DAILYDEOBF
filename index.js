@@ -1,5 +1,8 @@
 'use strict';
 
+// Load credentials from the project .env file before reading process.env.
+require('dotenv').config();
+
 // Separate Python v15 and beta 15.1 pipelines with live analysis progress.
 
 const {

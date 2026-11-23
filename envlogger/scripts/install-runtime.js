@@ -1,9 +1,5 @@
 #!/usr/bin/env node
-const fs = require("fs");
-const zlib = require("zlib");
+const { spawnSync } = require("child_process");
 const path = require("path");
-const b64 = "placeholder_will_replace";
-const out = path.join(__dirname, "..", "runtime", "envlogger.luau");
-fs.mkdirSync(path.dirname(out), { recursive: true });
-fs.writeFileSync(out, zlib.inflateSync(Buffer.from(b64, "base64")));
-console.log("wrote", out, fs.statSync(out).size);
+const r = spawnSync(process.execPath, [path.join(__dirname, "..", "runtime", "chunks", "assemble.js")], { stdio: "inherit" });
+process.exit(r.status || 0);

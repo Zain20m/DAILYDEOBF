@@ -72,6 +72,33 @@ return({getfenv(),function(a) return a end,function(b) return b end})
             spans = centurion.harvest_return_table_spans_ast("x" * 60)
         self.assertEqual(spans, [(2, 10, 25), (3, 30, 45)])
 
+    def test_returned_table_harvest_unwraps_function_values(self):
+        wrapped_function = {
+            "type": "AstExprGroup",
+            "expression": {
+                "type": "AstExprTypeAssertion",
+                "expression": {"type": "AstExprFunction", "location": "1, 20 - 1, 40"},
+            },
+        }
+        ast = {
+            "type": "AstStatBlock",
+            "body": [{
+                "type": "AstStatReturn",
+                "list": [{
+                    "type": "AstExprGroup",
+                    "expression": {
+                        "type": "AstExprTable",
+                        "items": [
+                            {"type": "AstExprTableItem", "value": wrapped_function},
+                        ],
+                    },
+                }],
+            }],
+        }
+        with patch.object(centurion, "parse_ast", return_value=ast):
+            spans = centurion.harvest_return_table_spans_ast("x" * 60)
+        self.assertEqual(spans, [(1, 20, 40)])
+
     def test_v6_tag_does_not_require_large_hardcoded_counts(self):
         source = "-- Centurion v6\nc3[1] = function ( Z ) return Z end\n"
         result = self.fingerprint_for(source)

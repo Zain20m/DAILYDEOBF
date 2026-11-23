@@ -6,6 +6,16 @@ const { spawnSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
 
+const importedSetup = spawnSync(process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3'), [
+  path.join(__dirname, 'setup-imported-engines.py'),
+], { cwd: root, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
+if (importedSetup.stdout) process.stdout.write(importedSetup.stdout);
+if (importedSetup.stderr) process.stderr.write(importedSetup.stderr);
+if (importedSetup.error || importedSetup.status !== 0) {
+  throw new Error('Imported deobfuscator engine setup failed: ' +
+    (importedSetup.error ? importedSetup.error.message : 'setup script exited with code ' + importedSetup.status));
+}
+
 const python = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
 
 const luraph151Setup = spawnSync(python, [path.join(__dirname, 'setup-luraph151-engine.py')], {

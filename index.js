@@ -39,6 +39,7 @@ const { inspectLiftText } = require('./scripts/lift-validation');
 const { convertToPureLuau } = require('./pureluau');
 const { createAutomaticPureLuauResult } = require('./scripts/automatic-pureluau');
 const { detectEngineSuggestion } = require('./scripts/engine-detection');
+const { execute: executeImportedEngine } = require('./scripts/imported-engine-runner');
 const { repairIronVeilSource } = require('./scripts/ironveil-auto-repair');
 const {
   resolveStaticSources,
@@ -63,6 +64,8 @@ const ENGINE_TIMEOUT_MS = 25 * 60_000;
 const ENGINE_V15_DIR = path.join(__dirname, 'luraph-v15-engine');
 const ENGINE_V15_CLI = path.join(ENGINE_V15_DIR, 'deob.py');
 const ENGINE_151_DIR = path.join(__dirname, 'luraph-v15.1-engine');
+const ENGINE_152_DIR = path.join(__dirname, 'luraph-v15.2-engine');
+const ENGINE_152_CLI = path.join(ENGINE_152_DIR, 'deob.js');
 const ENGINE_151_CLI = path.join(ENGINE_151_DIR, 'deob.js');
 const ENGINE_V147_DIR = path.join(__dirname, 'luraph-v14.7-engine');
 const ENGINE_V147_CLI = path.join(ENGINE_V147_DIR, 'cli.py');
@@ -2096,6 +2099,90 @@ async function sendAnalysisOutput(message, input, config) {
 }
 
 
+
+async function processImportedEngine(message, prompt, input, engineId, label) {
+  const startedAt = Date.now();
+  const progress = createAnalysisProgress(prompt, input.filename,
+    Buffer.byteLength(input.source, 'utf8'), label, { displayLabel: label });
+  try {
+    await progress.start();
+    await progress.setPhase('Loading ' + label, 'Running the imported engine adapter with a bounded execution time.');
+    const result = await executeImportedEngine(engineId, input.source, input.filename);
+    const output = Buffer.from(result.output.endsWith('\n') ? result.output : result.output + '\n', 'utf8');
+    if (!output.length || output.length > MAX_OUTPUT_BYTES) throw new Error('Engine output is empty or exceeds the 18 MB Discord attachment limit.');
+    const outputName = label.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '') + '_deobfuscated.lua';
+    const details = result.stats ? '\nEngine details: ' + JSON.stringify(result.stats).slice(0, 700) : '';
+    await message.reply({
+      content: '✅ **DAILY DEOBF · ' + label + '**\nOutput: ' + formatBytes(output.length) +
+        '\nElapsed: ' + formatDuration(Date.now() - startedAt) + details +
+        '\n\nReview reconstructed output before using it. Some engines may produce partial results.',
+      files: [new AttachmentBuilder(output, { name: outputName })],
+      allowedMentions: { repliedUser: false },
+    });
+    await progress.complete(label + ' finished.');
+    await prompt.edit({ content: '✅ ' + label + ' finished. Output attached.', components: [] }).catch(() => {});
+  } catch (error) {
+    await progress.fail(error);
+    throw error;
+  }
+}
+
+async function processLuraph152(message, prompt, input) {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-deobf-luraph152-'));
+  const inputPath = path.join(tempRoot, 'input.lua');
+  const outputPath = path.join(tempRoot, 'Luraph152_deobfuscated.luau');
+  const progress = createAnalysisProgress(
+    prompt, input.filename, Buffer.byteLength(input.source, 'utf8'), 'Luraph 15.2'
+  );
+
+  try {
+    await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
+    await progress.start();
+    await progress.setPhase(
+      'Running the dedicated Luraph 15.2 engine',
+      'Using the replacement engine uploaded for this version, not the older 15.1 fallback.'
+    );
+
+    const result = await runCommand(
+      process.execPath,
+      [ENGINE_152_CLI, inputPath, '-o', outputPath],
+      ENGINE_152_DIR,
+      300_000,
+      { stallTimeoutMs: 180_000 }
+    );
+
+    if (!await fs.stat(outputPath).then(() => true).catch(() => false)) {
+      const diagnostic = String(result.stderr || result.stdout || '').slice(-1800);
+      throw new Error('The dedicated Luraph 15.2 engine produced no output.' +
+        (diagnostic ? '\n' + diagnostic : ''));
+    }
+
+    const stat = await fs.stat(outputPath);
+    if (!stat.size || stat.size > MAX_OUTPUT_BYTES) {
+      throw new Error('Luraph 15.2 output is empty or exceeds the 18 MB output limit.');
+    }
+
+    const output = await fs.readFile(outputPath);
+    const outputName = 'Luraph152_deobfuscated.luau';
+    await message.reply({
+      content: '✅ **DAILY DEOBF · Luraph 15.2**\nDedicated v15.2 engine finished.\nInput: ' +
+        formatBytes(Buffer.byteLength(input.source, 'utf8')) + ' · Output: ' + formatBytes(output.length),
+      files: [new AttachmentBuilder(output, { name: outputName })],
+      allowedMentions: { repliedUser: false },
+    });
+
+    await progress.complete('Dedicated Luraph 15.2 analysis finished.');
+    await prompt.edit({
+      content: '✅ Luraph 15.2 analysis finished. Output attached.',
+      components: [],
+    }).catch(() => {});
+  } catch (error) {
+    await progress.fail(error);
+    throw error;
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
 
 async function processLuraphV15(message, prompt, input, displayLabel = 'Luraph v15', gameId = null) {
   return processLuraph151(message, prompt, input, gameId, '15');
@@ -5348,6 +5435,20 @@ async function startWorkflow(message, inlineText = null) {
         .setLabel('Cancel')
         .setStyle(ButtonStyle.Secondary),
     ),
+    new ActionRowBuilder().addComponents(
+      ...[
+        ['clyde', 'Clyde'], ['hercules', 'Hercules'], ['moonsec', 'MoonSec'],
+        ['fuscator77', '77fuscator'], ['psu', 'PSU'],
+      ].map(([engine, label]) => engineButton(new ButtonBuilder()
+        .setCustomId(`deobf-imported:${engine}:${message.author.id}`), engine, label))
+    ),
+    new ActionRowBuilder().addComponents(
+      ...[
+        ['goofyscator', 'Goofyscator'], ['moonveil', 'MoonVeil static'], ['prostone', 'Prostone'],
+        ['luaobf', 'LuaObfuscator'], ['luast', 'LUAST'],
+      ].map(([engine, label]) => engineButton(new ButtonBuilder()
+        .setCustomId(`deobf-imported:${engine}:${message.author.id}`), engine, label))
+    ),
   ];
   const luraphVersionRows = [
     new ActionRowBuilder().addComponents(
@@ -5498,10 +5599,7 @@ async function startWorkflow(message, inlineText = null) {
         else if (version === '14.9') await processLuraph149(message, prompt, selectedInput);
         else if (version === '15') await processLuraphV15(message, prompt, selectedInput);
         else if (version === '15.2') {
-          // v15.2 shares the v15.1 engine's VM family (newest dedicated engine).
-          // Its closure/upvalue layout differs, so the lift is best-effort.
-          const gameId = await collectLuraphGameId(message, prompt, 'Luraph 15.2');
-          await processLuraph151(message, prompt, selectedInput, gameId, '15.2');
+          await processLuraph152(message, prompt, selectedInput);
         }
         else {
           const gameId = await collectLuraphGameId(message, prompt, 'Luraph 15.1');
@@ -5509,6 +5607,26 @@ async function startWorkflow(message, inlineText = null) {
         }
       } catch (error) {
         await showDeobfFailure(message, prompt, 'Luraph v' + version + ' failed', error);
+      }
+      return;
+    }
+    const importedMatch = interaction.customId.match(
+      new RegExp('^deobf-imported:(clyde|hercules|moonsec|fuscator77|psu|goofyscator|moonveil|prostone|luaobf|luast):' + message.author.id + '$')
+    );
+    if (importedMatch) {
+      await interaction.deferUpdate();
+      componentCollector.stop('selected');
+      const labels = {
+        clyde: 'Clyde', hercules: 'Hercules', moonsec: 'MoonSec',
+        fuscator77: '77fuscator', psu: 'PSU', goofyscator: 'Goofyscator',
+        moonveil: 'MoonVeil (static)', prostone: 'Prometheus / Prostone',
+        luaobf: 'LuaObfuscator.com', luast: 'LUAST',
+      };
+      const engineId = importedMatch[1];
+      try {
+        await processImportedEngine(message, prompt, await getWorkflowInput(), engineId, labels[engineId]);
+      } catch (error) {
+        await showDeobfFailure(message, prompt, labels[engineId] + ' failed', error);
       }
       return;
     }

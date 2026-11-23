@@ -202,13 +202,41 @@ function detectEngineSuggestion(source) {
     }
   }
 
+  // ---- imported engine signatures ----------------------------------------
+  if (/clydeprotectionde\.cloud|clydeprotection/i.test(header)) {
+    return result('clyde', 'Clyde', 'high', 'The file contains the Clyde protection watermark.');
+  }
+  if (/Obfuscated by Hercules|hercules-obfuscator/i.test(header)) {
+    return result('hercules', 'Hercules', 'high', 'The file header identifies Hercules.');
+  }
+  if (/77fuscator|77FUS\|/i.test(header)) {
+    return result('fuscator77', '77fuscator', 'high', 'The file contains a 77fuscator signature.');
+  }
+  if (/MoonSec\s*V?\s*3|protected with MoonSec/i.test(header)) {
+    return result('moonsec', 'MoonSec', 'high', 'The file header identifies MoonSec V3.');
+  }
+  if (/goofyscator/i.test(header)) {
+    return result('goofyscator', 'Goofyscator', 'high', 'The file contains the Goofyscator watermark.');
+  }
+  if (/generated using MoonVeil|moonveil\.cc|api\.getpolsec\.com/i.test(header)) {
+    return result('moonveil', 'MoonVeil', 'high', 'The file contains a MoonVeil signature.');
+  }
+  if (/PSU Obfuscator [45]\.\d|psu\.dev|discord\.gg\/psu/i.test(header)) {
+    return result('psu', 'PSU', 'high', 'The file header identifies PSU.');
+  }
+  if (/LuaObfuscator\.com|luaobfuscator/i.test(header)) {
+    return result('luaobf', 'LuaObfuscator.com', 'high', 'The file header identifies LuaObfuscator.com.');
+  }
+  if (/Prometheus\s+Obfuscator|protected\s+using\s+Prometheus/i.test(header)) {
+    return result('prostone', 'Prometheus / Prostone', 'high', 'The file header identifies Prometheus.');
+  }
+  if (/LUAST\s*(?:v?1(?:\.0)?(?:\.1)?)?/i.test(header)) {
+    return result('luast', 'LUAST', 'high', 'The file header identifies LUAST.');
+  }
+
   // ---- obfuscators without an engine here --------------------------------
   const unsupported = [
-    [/MoonSec\s*V?\s*(\d)?/i, 'MoonSec'],
-    [/Prometheus\s+Obfuscator|protected\s+using\s+Prometheus/i, 'Prometheus'],
     [/wearedevs\.net|WeAreDevs/i, 'WeAreDevs'],
-    [/PSU\s*(?:Obfuscator)?|Perth'?s?\s+Superior/i, 'PSU'],
-    [/LuaObfuscator\.com|luaobfuscator/i, 'LuaObfuscator.com'],
   ];
   for (const [re, name] of unsupported) {
     if (re.test(header)) {

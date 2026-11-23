@@ -4571,7 +4571,7 @@ async function startEnvLogWorkflow(message, inlineText = null) {
     const uniqueCalls = (regex) => [...new Set([...log.matchAll(regex)].map((match) => match[1]).filter(Boolean))];
     const services = uniqueCalls(/\bgame\s*:\s*GetService\s*\(\s*['"]([^'"]+)['"]/gi);
     const instances = uniqueCalls(/\bInstance\s*\.\s*new\s*\(\s*['"]([^'"]+)['"]/gi);
-    const countCall = (name) => [...log.matchAll(new RegExp('\\b' + name.replace(/\./g, '\\.') + '\\b', 'g'))].length;
+    const countCall = (name) => [...log.matchAll(new RegExp('\b' + name.replace(/\./g, '\\.') + '\b', 'g'))].length;
     const apiNames = [
       'getgenv', 'getrenv', 'gethui', 'identifyexecutor', 'getrawmetatable',
       'setrawmetatable', 'hookfunction', 'hookmetamethod', 'newcclosure',
@@ -4778,7 +4778,7 @@ async function getCommandInput(message, inlineText, prompt) {
 }
 async function startDedicatedFetch(message, inlineText) {
   const rawInput = String(inlineText || '').trim();
-  const providerMatch = rawInput.match(/^(luaprotect|jnkie)\\b\\s*/i);
+  const providerMatch = rawInput.match(/^(luaprotect|jnkie)\b\\s*/i);
   const selectedProvider = providerMatch ? providerMatch[1].toLowerCase() : null;
   const providerInput = providerMatch ? rawInput.slice(providerMatch[0].length).trim() : rawInput;
 
@@ -4805,11 +4805,11 @@ async function startDedicatedFetch(message, inlineText) {
     return;
   }
 
-  if (luaProtectUrl && /luaprotect\\.dev/i.test(luaProtectUrl)) {
+  if (luaProtectUrl && /luaprotect\.dev/i.test(luaProtectUrl)) {
     await processLuaProtectFetcher(message, prompt, { ...input, url: luaProtectUrl });
     return;
   }
-  if (jnkieUrl && /jnkie\\.com/i.test(jnkieUrl)) {
+  if (jnkieUrl && /jnkie\.com/i.test(jnkieUrl)) {
     await processJnkIeFetcher(message, prompt, { ...input, url: jnkieUrl });
     return;
   }

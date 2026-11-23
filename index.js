@@ -4264,19 +4264,6 @@ async function startGetWorkflow(message, inlineSource = null) {
     );
   }
 
-  function reportUrl(raw) {
-    try {
-      const url = new URL(raw);
-      url.username = '';
-      url.password = '';
-      url.hash = '';
-      const query = url.search ? '?[query redacted]' : '';
-      return url.origin + url.pathname + query;
-    } catch {
-      return String(raw || 'unknown URL').slice(0, 500);
-    }
-  }
-
   const attachments = [];
   let totalBytes = 0;
   const omittedNames = [];
@@ -4464,21 +4451,13 @@ async function startGetWorkflow(message, inlineSource = null) {
   if (currentBatch.length) batches.push(currentBatch);
 
   if (!batches.length) {
-    const reason = resolution.failures.length
-      ? 'Every discovered URL failed to download. The attached report contains the exact HTTP, DNS, TLS or content error for each URL.'
-      : 'URLs were found, but no readable source files were returned. The attached report lists the discovery results.';
     const failureEmbed = dailyEmbed(
       'No script fetched',
-      reason + '\n\n**Detection complete**\nThe static scan finished without a downloadable source file.',
+      'The scan finished, but no downloadable source files were returned.',
       DAILY_COLORS.warning
-    ).addFields(
-      { name: 'URLs found', value: String(resolution.discovered), inline: true },
-      { name: 'Fetch attempts', value: String(resolution.attempts), inline: true },
-      { name: 'Failed URLs', value: String(resolution.failures.length), inline: true }
     );
     await message.reply({
       embeds: [failureEmbed],
-      files: [new AttachmentBuilder(reportBuffer, { name: 'get_report.txt' }), ...(runtimeSpyFile ? [runtimeSpyFile] : [])],
       allowedMentions: { repliedUser: false },
     });
   } else {
@@ -4498,29 +4477,12 @@ async function startGetWorkflow(message, inlineSource = null) {
         allowedMentions: { repliedUser: false },
       });
     }
-
-    await message.reply({
-      embeds: [dailyEmbed(
-        'Fetch report',
-        'The complete URL-by-URL scan report is attached separately.',
-        DAILY_COLORS.primary
-      ).addFields(
-        { name: 'URLs discovered', value: String(resolution.discovered), inline: true },
-        { name: 'Fetch attempts', value: String(resolution.attempts), inline: true },
-        { name: 'Failed URLs', value: String(resolution.failures.length), inline: true },
-        { name: 'Source files', value: String(attachments.length), inline: true },
-        { name: 'Downloaded data', value: formatBytes(totalBytes), inline: true }
-      )],
-      files: [new AttachmentBuilder(reportBuffer, { name: 'get_report.txt' }), ...(runtimeSpyFile ? [runtimeSpyFile] : [])],
-      allowedMentions: { repliedUser: false },
-    });
   }
 
   await prompt.edit({
     content: attachments.length
-      ? '✅ .get completed. Sent ' + attachments.length +
-        ' individual getN.lua file(s). The full URL-by-URL report is attached separately.'
-      : '⚠️ .get completed. No source files downloaded; get_report.txt contains per-URL failure details.',
+      ? '✅ .get completed. Sent ' + attachments.length + ' downloaded source file(s).'
+      : '⚠️ .get completed. No source files were downloaded.',
     components: [],
   }).catch(() => {});
 }

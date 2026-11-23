@@ -3407,7 +3407,7 @@ function extractJnkIeDownloadUrl(sourceText) {
   return match ? match[0].replace(/[)\]},.;]+$/g, '') : null;
 }
 
-async function fetchJnkIeLoaderSource(rawUrl, credentialText = '', existingStage1 = '', suppliedHwid = '') {
+async function fetchJnkIeLoaderSource(rawUrl, _credentialText = '', existingStage1 = '') {
   const loaderUrl = new URL(rawUrl);
   const match = loaderUrl.pathname.match(
     /^\/api\/v1\/luascripts\/public\/([a-f0-9]{32,128})\/download\/?$/i
@@ -3416,7 +3416,10 @@ async function fetchJnkIeLoaderSource(rawUrl, credentialText = '', existingStage
       loaderUrl.hostname.toLowerCase() !== 'api.jnkie.com' ||
       !match) return null;
 
-  const hash = match[1].toLowerCase();
+  // JNKIE's public download URL returns a protected stage-one loader.
+  // Authentication and HWID binding belong to JNKIE's official Luau SDK
+  // inside the user's authorized executor. A server-side bot cannot obtain
+  // that executor's HWID or safely emulate the provider's private protocol.
   let stage1 = String(existingStage1 || '').replace(/\r\n/g, '\n');
   if (!stage1.trim()) {
     const first = await fetchPublicText(loaderUrl.toString(), {
@@ -3430,128 +3433,13 @@ async function fetchJnkIeLoaderSource(rawUrl, credentialText = '', existingStage
     throw new Error('JNKIE returned an HTML page instead of its stage-one loader.');
   }
 
-  const keyMatch = String(credentialText || '').match(
-    /(?:getgenv\(\)\s*\.\s*)?SCRIPT_KEY\s*=\s*["']([^"']+)["']/i
-  );
-  if (!keyMatch || !keyMatch[1].trim()) {
-    return {
-      source: stage1,
-      complete: false,
-      reason: 'Missing SCRIPT_KEY. Returned the stage-one loader only.',
-      finalUrl: loaderUrl.toString(),
-    };
-  }
-
-  // The toolkit treats HWID as optional input. It does not fabricate one or
-  // stop before delivery when none is supplied.
-  const hwid = String(suppliedHwid || process.env.JNKIE_HWID || '').trim();
-  const deliveryUrl = new URL('/api/v1/luascripts/delivery/' + hash, loaderUrl.origin);
-  deliveryUrl.searchParams.set('v', '2');
-  deliveryUrl.searchParams.set('errors', 'text');
-  if (hwid) deliveryUrl.searchParams.set('hwid', hwid);
-
-  const addresses = await assertPublicUrl(deliveryUrl);
-  let response = null;
-  const connectionErrors = [];
-  const headers = {
-    'user-agent': 'Roblox/WinInet',
-    accept: '*/*',
-    'content-type': 'text/plain',
-    ...(hwid ? { 'x-hwid': hwid } : {}),
+  return {
+    source: stage1,
+    complete: false,
+    reason: 'JNKIE performs key verification and HWID binding through its official SDK. DAILYDEOBF can save the stage-one loader, but cannot complete provider-side authorization.',
+    deliveryError: '',
+    finalUrl: loaderUrl.toString(),
   };
-  for (const address of addresses) {
-    try {
-      response = await requestPinnedAddress(deliveryUrl, address, {
-        method: 'POST',
-        headers,
-        body: keyMatch[1].trim(),
-        maxTime: 25,
-      });
-      break;
-    } catch (error) {
-      connectionErrors.push(String(error && (error.message || error) || 'connection failed'));
-    }
-  }
-  if (!response) {
-    throw new Error('JNKIE delivery connection failed: ' + connectionErrors.join(' | ').slice(0, 600));
-  }
-
-  const location = response.headers.get('location');
-  const responseBytes = await readResponse(response, MAX_INPUT_BYTES);
-  const responseText = responseBytes.toString('utf8').replace(/\r\n/g, '\n').trim();
-
-  if (/^LDR-DENIED:/i.test(responseText)) {
-    return {
-      source: stage1,
-      complete: false,
-      reason: responseText.slice(0, 400),
-      deliveryError: responseText.slice(0, 400),
-      finalUrl: loaderUrl.toString(),
-    };
-  }
-
-  if ([400, 401, 403].includes(response.status)) {
-    return {
-      source: stage1,
-      complete: false,
-      reason: 'JNKIE delivery HTTP ' + response.status + (responseText ? ': ' + responseText.slice(0, 300) : ''),
-      deliveryError: responseText || ('HTTP ' + response.status),
-      finalUrl: loaderUrl.toString(),
-    };
-  }
-
-  let payloadBytes = responseBytes;
-  let payloadUrl = deliveryUrl.toString();
-  const redirectStatus = [301, 302, 303, 307, 308].includes(response.status);
-  const cdnUrlText = responseText.match(/^https:\/\/cdn\.jnkie\.com\/[^\s"'<>]+$/i);
-  if (redirectStatus || cdnUrlText) {
-    const targetText = location || (cdnUrlText && cdnUrlText[0]);
-    if (!targetText) {
-      return {
-        source: stage1,
-        complete: false,
-        reason: 'JNKIE delivery redirected without a Location URL. Returned stage-one loader only.',
-        finalUrl: loaderUrl.toString(),
-      };
-    }
-    let target;
-    try { target = new URL(targetText, deliveryUrl); }
-    catch { throw new Error('JNKIE returned an invalid CDN URL.'); }
-    if (target.protocol !== 'https:' || target.hostname.toLowerCase() !== 'cdn.jnkie.com' ||
-        target.username || target.password) {
-      throw new Error('JNKIE delivery returned a CDN URL outside the approved cdn.jnkie.com host.');
-    }
-    const downloaded = await fetchPublicText(target.toString(), {
-      headers: { 'user-agent': 'Roblox/WinInet', accept: '*/*' },
-      maxTime: 30,
-    });
-    payloadBytes = downloaded.bytes;
-    payloadUrl = downloaded.finalUrl || target.toString();
-  } else if (response.status < 200 || response.status >= 300) {
-    return {
-      source: stage1,
-      complete: false,
-      reason: 'JNKIE delivery returned HTTP ' + response.status + (responseText ? ': ' + responseText.slice(0, 250) : ''),
-      deliveryError: responseText || ('HTTP ' + response.status),
-      finalUrl: loaderUrl.toString(),
-    };
-  }
-
-  const payload = decodeSource(payloadBytes).replace(/\r\n/g, '\n');
-  if (/^\s*(?:<!doctype html|<html\b)/i.test(payload)) {
-    throw new Error('JNKIE delivery returned HTML instead of a Lua payload.');
-  }
-  if (!payload.trim()) throw new Error('JNKIE returned an empty delivery payload.');
-  if (/^LDR-DENIED:/i.test(payload.trim())) {
-    return {
-      source: stage1,
-      complete: false,
-      reason: payload.trim().slice(0, 400),
-      deliveryError: payload.trim().slice(0, 400),
-      finalUrl: loaderUrl.toString(),
-    };
-  }
-  return { source: payload, complete: true, reason: '', finalUrl: payloadUrl };
 }
 
 function buildScriptFetchedEmbed(attachment, batchIndex, batchCount, totalFiles, totalUrls, failedUrls) {
@@ -4939,7 +4827,7 @@ async function processLuaProtectFetcher(message, prompt, input) {
 }
 
 
-async function processJnkIeFetcher(message, prompt, input) {
+async async function processJnkIeFetcher(message, prompt, input) {
   const combined = String(input.originalText || '') + '\n' + String(input.source || '');
   const rawUrl = input.url || extractJnkIeDownloadUrl(combined);
   if (!rawUrl) throw new Error('No supported JNKIE public download URL was found in the supplied source.');
@@ -4948,73 +4836,26 @@ async function processJnkIeFetcher(message, prompt, input) {
     ? String(input.source || '')
     : '';
   await prompt.edit({
-    content: '🔄 **JNKIE Fetcher**\nFetching stage one, then posting SCRIPT_KEY to the JNKIE delivery endpoint...',
+    content: '🔄 **JNKIE Fetcher**\nFetching the public stage-one loader. Key and HWID checks remain with JNKIE...',
     embeds: [],
     components: [],
   });
 
-  // Match the toolkit: attempt delivery first without an HWID. If JNKIE
-  // explicitly requires one, collect the user's supplied value in DM and retry.
-  let result = await fetchJnkIeLoaderSource(rawUrl, combined, existingStage1);
+  const result = await fetchJnkIeLoaderSource(rawUrl, combined, existingStage1);
   if (!result) throw new Error('This is not a supported JNKIE public download URL.');
-
-  if (/LDR-DENIED:HWID_REQUIRED/i.test(String(result.deliveryError || result.reason || ''))) {
-    let dm;
-    try {
-      dm = await message.author.send(
-        'JNKIE requires an HWID for this loader. Reply to this DM with the HWID supplied by the script provider. ' +
-        'Your reply will be used only for this fetch attempt and deleted after it is received. ' +
-        'You have 2 minutes. Do not send your Discord password or other account credentials.'
-      );
-    } catch {
-      throw new Error('JNKIE requires an HWID, but I could not DM you. Enable DMs from this server and run .fetch again.');
-    }
-
-    const collector = dm.channel.createMessageCollector({
-      time: 120_000,
-      max: 1,
-      filter: (reply) => reply.author.id === message.author.id && !reply.author.bot,
-    });
-    const supplied = await new Promise((resolve) => {
-      collector.on('collect', (reply) => resolve(reply));
-      collector.on('end', (collected) => {
-        if (!collected.size) resolve(null);
-      });
-    });
-    if (!supplied) throw new Error('Timed out waiting for the HWID DM. Run .fetch again to retry.');
-
-    const hwid = supplied.content.trim();
-    await supplied.delete().catch(() => {});
-    if (!hwid || hwid.length > 512 || /[\r\n]/.test(hwid)) {
-      throw new Error('The supplied HWID was empty or invalid. Run .fetch again.');
-    }
-
-    await dm.channel.send('HWID received. Retrying JNKIE delivery now.');
-    result = await fetchJnkIeLoaderSource(rawUrl, combined, existingStage1, hwid);
-    if (!result) throw new Error('This is not a supported JNKIE public download URL.');
-  }
 
   const data = Buffer.from(result.source.endsWith('\n') ? result.source : result.source + '\n', 'utf8');
   if (data.length > MAX_OUTPUT_BYTES) throw new Error('JNKIE output exceeds the 18 MB Discord output limit.');
 
-  const complete = Boolean(result.complete);
-  const filename = complete ? 'jnkie_payload.lua' : 'stage1_loader.lua';
-  const files = [new AttachmentBuilder(data, { name: filename })];
-  if (result.deliveryError) {
-    const errorData = Buffer.from(String(result.deliveryError).slice(0, 4000) + '\n', 'utf8');
-    files.push(new AttachmentBuilder(errorData, { name: 'delivery_error.txt' }));
-  }
-
   await prompt.edit({
     embeds: [dailyEmbed(
-      complete ? 'JNKIE payload fetched' : 'JNKIE stage-one loader saved',
-      complete
-        ? 'Retrieved ' + formatBytes(data.length) + ' from JNKIE delivery. The payload is attached for inspection; review it before running.'
-        : 'Saved the stage-one loader. ' + String(result.reason || 'Delivery did not return a payload.') +
-          (result.deliveryError ? '\nThe exact delivery response is attached as **delivery_error.txt**.' : ''),
-      complete ? DAILY_COLORS.success : DAILY_COLORS.warning
+      'JNKIE stage-one loader saved',
+      'Saved ' + formatBytes(data.length) + ' of the public stage-one loader. ' +
+        String(result.reason || 'The provider handles authentication inside its official loader.') +
+        '\n\nDAILYDEOBF does not request, invent, or replay an HWID.',
+      DAILY_COLORS.warning
     )],
-    files,
+    files: [new AttachmentBuilder(data, { name: 'stage1_loader.lua' })],
     components: [],
   });
 }

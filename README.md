@@ -1,11 +1,10 @@
 # DAILY DEOBF
 
-Discord bot for Luau script analysis with independently selectable Luraph, IronBrew 1, IronBrew 2, Centurion, Fulcrum, and experimental 2HBJ engines.
+Discord bot for Luau script analysis with independently selectable Luraph, IronBrew 1, IronBrew 2, and Centurion engines.
 
 - **Luraph v15** uses the newest imported engine in `luraph-v15-engine/`.
 - **Luraph 15.1** uses the original bundled engine, extracted separately to `luraph-v15.1-engine/` during install.
 - **IronBrew 1** uses the bundled dynamic VM capture and bytecode lifter in `luraph-v15-engine/obfuscators/ironbrew1/`.
-- **2HBJ (experimental)** extracts the imported tools from `upload/2hbj-deobf-tools.zip` and runs its VM dump/decompiler pipeline. Setup installs `lupa==2.8` for LuaJIT 2.1 support. The imported mappings are tuned to the archive's sample; other builds may need manual changes to `stage2.js`, `instr.py`, and `disasm.py`.
 
 Run `.deobf`, provide a `.lua`, `.luau`, or `.txt` file (or a direct HTTP/HTTPS script URL), then choose the engine button. Each engine runs independently and produces its own output. IronBrew 1 returns a lifted Luau candidate when capture succeeds, with a behaviour trace fallback when it does not.
 
@@ -13,4 +12,4 @@ Some protected paths may not be reconstructable. Results are not guaranteed to b
 
 ## Railway
 
-Set `DISCORD_TOKEN` and deploy with `npm start`. Startup prepares the imported engines automatically, including the experimental 2HBJ tool bundle. Requires Node.js 20.11+ and Python 3.10+.
+Set `DISCORD_TOKEN` and deploy with `npm start`. Startup prepares the imported engines automatically. Requires Node.js 20.11+ and Python 3.10+.

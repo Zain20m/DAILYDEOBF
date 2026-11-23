@@ -246,7 +246,7 @@ if #loadstrings > 0 then
 	print("-- loadstring captures:")
 	for i, ls in ipairs(loadstrings) do
 		print(string.format("--   [%d] %d bytes head=%q", i, ls.size, trunc(ls.head, 120)))
-		if ls.body and #ls.body <= 12000 then
+		if ls.body and #ls.body > 0 then
 			print("--   --- begin dump [" .. tostring(i) .. "] ---")
 			for line in string.gmatch(ls.body, "[^\n]*") do print("--   | " .. line) end
 			print("--   --- end dump [" .. tostring(i) .. "] ---")

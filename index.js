@@ -4914,7 +4914,7 @@ async function processLuaProtectFetcher(message, prompt, input) {
 }
 
 
-async async function processJnkIeFetcher(message, prompt, input) {
+async function processJnkIeFetcher(message, prompt, input) {
   const combined = String(input.originalText || '') + '\n' + String(input.source || '');
   const rawUrl = input.url || extractJnkIeDownloadUrl(combined);
   if (!rawUrl) throw new Error('No supported JNKIE public download URL was found in the supplied source.');

@@ -20,9 +20,10 @@ function findLuauCandidates() {
     path.join(ROOT, '..', 'luraph-v15.1-engine', 'bin', 'luau'),
     path.join(ROOT, '..', 'bin', 'luau.linux'),
     path.join(ROOT, '..', 'bin', 'luau'),
-    path.join(ROOT, '..', 'luraph-v15-engine', 'bin', 'luau'),
     path.join(ROOT, 'bin', 'luau.linux'),
     path.join(ROOT, 'bin', 'luau'),
+    // often SIGILL on Wispbyte — last resort
+    path.join(ROOT, '..', 'luraph-v15-engine', 'bin', 'luau'),
     'luau',
   ].filter(Boolean);
   const out = [];
@@ -39,6 +40,7 @@ function findLuauCandidates() {
       const r = spawnSync(c, [smoke], { encoding: 'utf8', timeout: 5000 });
       try { fs.unlinkSync(smoke); } catch (_) {}
       if (r.error) continue;
+      if (r.signal === 'SIGILL' || r.signal === 'SIGSEGV') continue;
       if (r.status === 0 || (r.stdout || '').includes('1')) out.push(c);
     } catch (_) {}
   }
@@ -98,21 +100,46 @@ function embedSource(source) {
   return 'local __ENVLOGGER_SOURCE = table.concat({\n  ' + parts.join(',\n  ') + '\n})\n';
 }
 
-/** Node-side ObscuraLua v2.4 outer decoder → inner plaintext. */
+/** Node-side ObscuraLua outer decoder. */
 function tryDecodeObscura(source) {
-  if (!/ObscuraLua/i.test(source) || !source.includes('mGhzTqKpJrLvNwXd')) return null;
-  const m = source.match(/z\s*=\s*\[(=*)\[([\s\S]*?)\]\1\]/);
-  if (!m) return null;
-  const encoded = m[2];
+  if (!/ObscuraLua/i.test(source)) return null;
+
+  let N = null;
+  let nMatch = source.match(/\bN\s*=\s*"([^"]{8,64})"/);
+  if (nMatch) N = nMatch[1];
+  if (!N) {
+    nMatch = source.match(/local\s+N\s*=\s*"([^"]{8,64})"/);
+    if (nMatch) N = nMatch[1];
+  }
+  if (!N && source.includes('mGhzTqKpJrLvNwXd')) N = 'mGhzTqKpJrLvNwXd';
+  if (!N) return null;
+
+  let encoded = null;
+  const zMatch = source.match(/\bz\s*=\s*\[(=*)\[([\s\S]*?)\]\1\]/);
+  if (zMatch && zMatch[2].length >= 32) encoded = zMatch[2];
+  if (!encoded) {
+    let best = null;
+    const re = /\[(=*)\[([\s\S]*?)\]\1\]/g;
+    let m;
+    while ((m = re.exec(source))) {
+      if (!best || m[2].length > best.length) best = m[2];
+    }
+    if (best && best.length >= 32) encoded = best;
+  }
+  if (!encoded) return null;
+
   let F = null;
-  const fMatch = source.match(/local\s+F\s*=\s*\{([0-9,\s]+)\}/);
-  if (fMatch) {
-    F = fMatch[1].split(',').map((x) => Number(x.trim())).filter((n) => Number.isFinite(n));
+  const fMatches = [...source.matchAll(/local\s+F\s*=\s*\{([0-9,\s]+)\}/g)];
+  if (fMatches.length) {
+    const raw = fMatches[fMatches.length - 1][1];
+    F = raw.split(',').map((x) => Number(x.trim())).filter((n) => Number.isFinite(n));
   }
-  if (!F || !F.length) {
-    F = [205,118,145,42,247,212,175,182,196,255,17,239,205,78,81,126,34,12,27,77,254,205,70,96,90,148,72,11,43,78,188,233,213,32,78,17,73,4,228,129,97,128,190,79,198,252,205,255,197,111,126,63,116,167,116,86,191,214,216,120,155,216,119,226];
+  if (!F || F.length < 8) {
+    const any = source.match(/\bF\s*=\s*\{([0-9,\s]{20,})\}/);
+    if (any) F = any[1].split(',').map((x) => Number(x.trim())).filter((n) => Number.isFinite(n));
   }
-  const N = 'mGhzTqKpJrLvNwXd';
+  if (!F || F.length < 8) return null;
+
   const zmap = Object.create(null);
   for (let i = 0; i < N.length; i++) zmap[N[i]] = i;
   const out = [];
@@ -125,16 +152,15 @@ function tryDecodeObscura(source) {
   }
   const decoded = out.join('');
   if (decoded.length < 20) return null;
+  if (!/function|_G|game|loadstring|local\s+/.test(decoded)) return null;
   return {
-    note: 'ObscuraLua v2.4 outer decoded in Node (' + encoded.length + ' → ' + decoded.length + ' bytes)',
+    note: 'ObscuraLua outer decoded in Node (alphabet=' + N.length + ' key=' + F.length + ' ' + encoded.length + '→' + decoded.length + ' bytes)',
     source: decoded,
   };
 }
 
 function wrapSource(source, cfg) {
   let runtime = fs.readFileSync(RUNTIME, 'utf8');
-  runtime = runtime.replace(/local MARK = "\\0EL "/g, 'local MARK = "EL|"');
-  runtime = runtime.replace(/\0EL /g, 'EL|');
   if (!runtime.includes('local MARK = "EL|"')) {
     runtime = runtime.replace(/local MARK = [^\n]+/, 'local MARK = "EL|"');
   }
@@ -177,6 +203,15 @@ function runLuau(luau, tmpScript, budget) {
   });
 }
 
+function writeOut(args, full) {
+  if (args.out) {
+    fs.mkdirSync(path.dirname(path.resolve(args.out)), { recursive: true });
+    fs.writeFileSync(args.out, full, 'utf8');
+    console.error('[envlogger] wrote', args.out);
+  }
+  process.stdout.write(full);
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   if (args.help || (!args.input && !args.url)) {
@@ -201,37 +236,51 @@ async function main() {
   if (source.charCodeAt(0) === 0xFEFF) source = source.slice(1);
   source = source.replace(/\0/g, '');
   const originalBytes = source.length;
-
   const notes = [];
+
   const decoded = tryDecodeObscura(source);
   if (decoded) {
     notes.push(decoded.note);
     source = decoded.source;
     console.error('[envlogger]', decoded.note);
+  } else if (/ObscuraLua/i.test(source)) {
+    notes.push('ObscuraLua detected but outer decode failed (alphabet/key/blob mismatch)');
   }
 
+  // Never feed 200KB+ into host luau (SIGILL/OOM on Wispbyte)
   if (source.length > 200000) {
-    notes.push('source still large (' + source.length + ' bytes); luau may OOM on this host');
+    notes.push('skipped luau: payload ' + source.length + ' bytes too large for host');
+    const full = 'ENVLOGGER\nsource: ' + label +
+      '\nbytes: ' + originalBytes +
+      '\nluau: skipped\nexit: skipped\nwrapped: 0' +
+      '\nnotes: ' + notes.join(' | ') +
+      '\n---\n-- ENVLOGGER report  stmts=0  source=' + originalBytes + ' bytes\n-- status: skipped_large_payload\n-- errors:\n--   payload too large; predecode did not shrink it\n';
+    writeOut(args, full);
+    process.exit(1);
   }
 
   const wrapped = wrapSource(source, args);
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'envlogger-'));
   const tmpScript = path.join(tmpDir, 'run.luau');
   fs.writeFileSync(tmpScript, wrapped, 'utf8');
-  console.error('[envlogger] wrapped', wrapped.length, 'bytes source', source.length, '->', tmpScript);
+  console.error('[envlogger] wrapped', wrapped.length, 'bytes source', source.length);
 
   let res = null;
   let usedLuau = candidates[0];
+  const attempts = [];
   for (const luau of candidates) {
     usedLuau = luau;
     res = runLuau(luau, tmpScript, args.budget);
-    if (res.status === 0 || (res.stdout && res.stdout.includes('EL|'))) break;
-    if (res.status == null && !(res.stdout || '').trim()) {
-      console.error('[envlogger] luau', luau, 'exit null/signal', res.signal, '- trying next');
+    attempts.push(path.basename(luau) + ':status=' + res.status + ':signal=' + (res.signal || '-') + ':err=' + ((res.error && res.error.code) || '-'));
+    if (res.status === 0 || (res.stdout && (res.stdout.includes('EL|') || res.stdout.includes('ENVLOGGER report')))) break;
+    if (res.signal === 'SIGILL' || res.signal === 'SIGSEGV' || res.signal === 'SIGBUS' ||
+        (res.status == null && !(res.stdout || '').trim())) {
+      console.error('[envlogger] luau', luau, 'signal=' + res.signal, 'trying next');
       continue;
     }
     break;
   }
+  notes.push('luau_attempts=' + attempts.join(','));
 
   const report = extractReport(res.stdout, res.stderr);
   const exitLine = 'exit: ' + res.status +
@@ -244,24 +293,12 @@ async function main() {
     '\nluau: ' + usedLuau +
     '\n' + exitLine +
     '\nwrapped: ' + wrapped.length +
-    (notes.length ? ('\nnotes: ' + notes.join(' | ')) : '') +
+    '\nnotes: ' + notes.join(' | ') +
     '\n---\n' + report + '\n';
 
-  if (args.out) {
-    fs.mkdirSync(path.dirname(path.resolve(args.out)), { recursive: true });
-    fs.writeFileSync(args.out, full, 'utf8');
-    console.error('[envlogger] wrote', args.out);
-  }
-  if (args.json) {
-    console.log(JSON.stringify({
-      source: label, bytes: originalBytes, decoded_bytes: source.length,
-      exit: res.status, signal: res.signal || null, notes,
-    }, null, 2));
-  } else process.stdout.write(full);
-
+  writeOut(args, full);
   try { fs.unlinkSync(tmpScript); fs.rmdirSync(tmpDir); } catch (_) {}
-  const ok = report.includes('-- ENVLOGGER report') || res.status === 0;
-  process.exit(ok ? 0 : 1);
+  process.exit((report.includes('-- ENVLOGGER report') || res.status === 0) ? 0 : 1);
 }
 
 main().catch((e) => { console.error('[envlogger] fatal', e); process.exit(1); });

@@ -12,15 +12,26 @@ const RUNTIME = path.join(ROOT, 'runtime', 'envlogger.luau');
 
 function findLuau() {
   const candidates = [
-    process.env.ENVLOGGER_LUAU, process.env.DEOB_LUAU, '/tmp/luau',
-    path.join(ROOT, 'bin', 'luau'), path.join(ROOT, 'bin', 'luau.linux'), 'luau',
+    process.env.ENVLOGGER_LUAU,
+    process.env.DEOB_LUAU,
+    path.join(ROOT, '..', 'luraph-v15-engine', 'bin', 'luau'),
+    path.join(ROOT, '..', 'luraph-v15.1-engine', 'bin', 'luau.linux'),
+    path.join(ROOT, '..', 'luraph-v15.1-engine', 'bin', 'luau'),
+    path.join(ROOT, '..', 'bin', 'luau'),
+    path.join(ROOT, 'bin', 'luau'),
+    path.join(ROOT, 'bin', 'luau.linux'),
+    '/tmp/luau',
+    'luau',
   ].filter(Boolean);
   for (const c of candidates) {
     try {
       if (c === 'luau') {
         const r = spawnSync('luau', ['--help'], { encoding: 'utf8' });
         if (r.status === 0 || (r.stderr || r.stdout || '').includes('Usage')) return 'luau';
-      } else if (fs.existsSync(c)) return c;
+      } else if (fs.existsSync(c)) {
+        try { fs.accessSync(c, fs.constants.X_OK); } catch { continue; }
+        return c;
+      }
     } catch (_) {}
   }
   return null;
@@ -67,8 +78,24 @@ function longString(s) {
   return '[' + '='.repeat(eq) + '[' + s + ']' + '='.repeat(eq) + ']';
 }
 
+/** Split large sources into concatenated long-strings to avoid one huge parse node / OOM. */
+function embedSource(source) {
+  const CHUNK = 48 * 1024;
+  if (source.length <= CHUNK) {
+    return 'local __ENVLOGGER_SOURCE = ' + longString(source) + '\n';
+  }
+  const parts = [];
+  for (let i = 0; i < source.length; i += CHUNK) {
+    parts.push(longString(source.slice(i, i + CHUNK)));
+  }
+  return 'local __ENVLOGGER_SOURCE = table.concat({\n  ' + parts.join(',\n  ') + '\n})\n';
+}
+
 function wrapSource(source, cfg) {
   let runtime = fs.readFileSync(RUNTIME, 'utf8');
+  // Prefer ASCII markers (null bytes can break some pipes / binaries)
+  runtime = runtime.replace(/local MARK = "\\0EL "/g, 'local MARK = "EL|"');
+  runtime = runtime.replace(/\0EL /g, 'EL|');
   runtime = runtime.replace(
     'local CFG = rawget(_G, "__ENVLOGGER_CFG") or {}',
     'local CFG = __ENVLOGGER_CFG or {}'
@@ -81,7 +108,7 @@ function wrapSource(source, cfg) {
     'local __ENVLOGGER_CFG = { max_stmts = ' + cfg.maxStmts +
     ', time_budget = ' + cfg.budget +
     ', capture_loadstring = true, soft_errors = true }\n' +
-    'local __ENVLOGGER_SOURCE = ' + longString(source) + '\n';
+    embedSource(source);
   return inject + runtime + '\n';
 }
 
@@ -106,6 +133,19 @@ function summarize(reportText) {
   return summary;
 }
 
+function extractReport(stdout, stderr) {
+  const text = (stdout || '') + '\n' + (stderr || '');
+  for (const beginTok of ['EL|BEGIN', '\0EL BEGIN']) {
+    const endTok = beginTok.includes('\0') ? '\0EL END' : 'EL|END';
+    const begin = text.indexOf(beginTok);
+    const end = text.indexOf(endTok);
+    if (begin >= 0 && end > begin) {
+      return text.slice(begin + beginTok.length, end).trim();
+    }
+  }
+  return text.trim() || '(no output)';
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   if (args.help || (!args.input && !args.url)) {
@@ -114,7 +154,7 @@ async function main() {
   }
   const luau = findLuau();
   if (!luau) { console.error('[envlogger] luau binary not found'); process.exit(2); }
-  if (!fs.existsSync(RUNTIME)) { console.error('[envlogger] missing runtime'); process.exit(2); }
+  if (!fs.existsSync(RUNTIME)) { console.error('[envlogger] missing runtime at', RUNTIME); process.exit(2); }
 
   let source, label;
   if (args.url) {
@@ -127,28 +167,30 @@ async function main() {
     label = p;
   }
 
+  if (source.charCodeAt(0) === 0xFEFF) source = source.slice(1);
+  source = source.replace(/\0/g, '');
+
   const wrapped = wrapSource(source, args);
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'envlogger-'));
   const tmpScript = path.join(tmpDir, 'run.luau');
   fs.writeFileSync(tmpScript, wrapped, 'utf8');
+  console.error('[envlogger] wrapped', wrapped.length, 'bytes ->', tmpScript);
 
   const res = spawnSync(luau, [tmpScript], {
     encoding: 'utf8',
-    maxBuffer: 32 * 1024 * 1024,
-    timeout: (args.budget + 15) * 1000,
+    maxBuffer: 64 * 1024 * 1024,
+    timeout: (args.budget + 20) * 1000,
     env: { ...process.env },
+    killSignal: 'SIGKILL',
   });
 
-  const stdout = res.stdout || '';
-  const stderr = res.stderr || '';
-  const begin = stdout.indexOf('\0EL BEGIN');
-  const end = stdout.indexOf('\0EL END');
-  let report;
-  if (begin >= 0 && end > begin) report = stdout.slice(begin + '\0EL BEGIN'.length, end).trim();
-  else report = (stdout + '\n' + stderr).trim() || '(no output)';
+  const report = extractReport(res.stdout, res.stderr);
+  const exitLine = 'exit: ' + res.status +
+    (res.signal ? (' signal: ' + res.signal) : '') +
+    (res.error ? (' error: ' + res.error.message) : '');
 
   const full = 'ENVLOGGER\nsource: ' + label + '\nbytes: ' + source.length + '\nluau: ' + luau +
-    '\nexit: ' + res.status + '\n---\n' + report + '\n';
+    '\n' + exitLine + '\nwrapped: ' + wrapped.length + '\n---\n' + report + '\n';
 
   if (args.out) {
     fs.mkdirSync(path.dirname(path.resolve(args.out)), { recursive: true });
@@ -159,11 +201,18 @@ async function main() {
     const summary = summarize(report);
     summary.source = label;
     summary.bytes = source.length;
+    summary.exit = res.status;
+    summary.signal = res.signal || null;
     console.log(JSON.stringify(summary, null, 2));
   } else process.stdout.write(full);
 
-  try { fs.unlinkSync(tmpScript); fs.rmdirSync(tmpDir); } catch (_) {}
-  process.exit(res.status === 0 ? 0 : 1);
+  try {
+    fs.unlinkSync(tmpScript);
+    fs.rmdirSync(tmpDir);
+  } catch (_) {}
+
+  const ok = report.includes('-- ENVLOGGER report') || res.status === 0;
+  process.exit(ok ? 0 : 1);
 }
 
 main().catch((e) => { console.error('[envlogger] fatal', e); process.exit(1); });

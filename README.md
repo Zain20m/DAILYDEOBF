@@ -12,4 +12,4 @@ Some protected paths may not be reconstructable. Results are not guaranteed to b
 
 ## Railway
 
-Set `DISCORD_TOKEN` and deploy with `npm start`. Startup prepares the imported engines automatically,  Requires Node.js 20.11+ and Python 3.10+.
+Set `DISCORD_TOKEN` and deploy with `npm start`. Startup prepares the imported engines automatically. Requires Node.js 20.11+ and Python 3.10+.

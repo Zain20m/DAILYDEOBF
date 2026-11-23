@@ -11,7 +11,7 @@
 //   * falls back to structural fingerprints of each VM layout when the banner
 //     was stripped,
 //   * maps unsupported versions to the nearest engine with lower confidence,
-//   * recognises every obfuscator that has an engine button (Fulcrum, 2HBJ,
+//   * recognises the analysis engines that remain available and names common
 //     Centurion, IronBrew, JNKIE, LuaProtect, Vantarmor) and names common
 //     ones the bot has no engine for, and
 //   * recognises files that are already deobfuscated output.

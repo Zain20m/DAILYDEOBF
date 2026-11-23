@@ -69,8 +69,6 @@ const ENGINE_V147_CLI = path.join(ENGINE_V147_DIR, 'cli.py');
 const ENGINE_V143_DIR = path.join(__dirname, 'luraph-v14.3-engine');
 const ENGINE_V143_CLI = path.join(ENGINE_V143_DIR, 'daily_cli.py');
 const ENGINE_CENT_DIR = path.join(__dirname, 'centurion-engine');
-const ENGINE_FULCRUM_DIR = path.join(__dirname, 'fulcrum-engine');
-const ENGINE_FULCRUM_CLI = path.join(ENGINE_FULCRUM_DIR, 'fulcrum_deobf.py');
 const ENGINE_CENT_CLI = path.join(ENGINE_CENT_DIR, 'centurion.py');
 const ENGINE_IB2_DIR = path.join(__dirname, 'ib2deobf');
 const ENGINE_IB2_DLL = path.join(ENGINE_IB2_DIR, 'LuaAnalysis.Ironbrew2.dll');
@@ -1720,203 +1718,6 @@ async function fetchPolsecPayloadWithKey(id1, id2, scriptKey) {
     sessionId,
     rawResponse: payload,
   };
-}
-
-
-async function startFulcrumWorkflow(message, inlineSource = null) {
-  const attachment = message.attachments.first() || null;
-  if (inlineSource && attachment) {
-    await message.reply({ content: 'Use either a loader URL or a source-file attachment, not both.', allowedMentions: { repliedUser: false } });
-    return;
-  }
-  if (!attachment && !inlineSource) {
-    await message.reply({
-      embeds: [dailyEmbed(
-        'Fulcrum · How to use',
-        [
-          '**1. Provide the loader or source**',
-          'Attach `.lua`, `.luau` or `.txt` source, a `.json` file containing an authorized Polsec response, or provide a direct static source URL.',
-          '',
-          '**2. Run the analysis**',
-          'Fulcrum statically analyzes the source it receives. It does not execute the protected program.',
-          '',
-          '**Polsec loader + key**',
-          '`.fulcrum script_key="KEY" https://api.polsec.net/loader/ID1/ID2`',
-          'Runs session (`?socket=1`) then socket type-2 auth and analyzes `e.d` when `d=200`.',
-          '',
-          '**Or** attach a captured Polsec JSON (`d:200`, string at `e.d`), or a Fulcrum `.lua` file.',
-          '',
-          '**4. Get your results**',
-          'The bot returns the recovered Luau candidate and a Markdown analysis report. Static reconstruction may not preserve every runtime behavior.'
-        ].join('\n'),
-        DAILY_COLORS.primary
-      )],
-      allowedMentions: { repliedUser: false },
-    });
-    return;
-  }
-  if (attachment && !/\.(?:lua|luau|txt|json)$/i.test(String(attachment.name || ''))) {
-    await message.reply({
-      content: 'Fulcrum accepts .lua, .luau, .txt source files or a captured .json response.',
-      allowedMentions: { repliedUser: false },
-    });
-    return;
-  }
-
-  const prompt = await message.reply({
-    embeds: [dailyEmbed(
-      'Fulcrum · Processing',
-      inlineSource
-        ? 'Downloading the supplied static source URL and running static Fulcrum analysis. The protected program is not executed.'
-        : 'Running static Fulcrum analysis on the attached Luau source. The protected program is not executed.',
-      DAILY_COLORS.primary
-    )],
-    allowedMentions: { repliedUser: false },
-  });
-  let workDir = null;
-  try {
-    let input;
-    if (inlineSource) {
-      const polsec = parsePolsecLoaderPaste(inlineSource);
-      if (polsec && polsec.scriptKey) {
-        // Full authorized flow: session -> socket type-2 -> e.d payload
-        const got = await fetchPolsecPayloadWithKey(polsec.id1, polsec.id2, polsec.scriptKey);
-        input = {
-          source: got.source,
-          filename: 'polsec-payload-' + polsec.id1.slice(0, 8) + '.lua',
-          polsecMeta: { sessionId: got.sessionId, id1: polsec.id1, id2: polsec.id2 },
-        };
-      } else {
-        const match = inlineSource.match(/https?:\/\/[^\s"'<>]+/i);
-        if (!match) throw new Error('Provide a valid HTTP/HTTPS loader URL. Example: .fulcrum https://api.polsec.net/loader/ID1/ID2 script_key=\"YOUR_KEY\"');
-        const rawUrl = match[0].replace(/[)\]},.;]+$/g, '');
-        const parsed = new URL(rawUrl);
-        if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Only HTTP/HTTPS loader URLs are supported.');
-        const fetched = await fetchPublicText(parsed.toString());
-        input = {
-          source: decodeSource(fetched.bytes),
-          filename: path.basename(parsed.pathname) || 'remote-loader.lua',
-        };
-        if (!input.source.trim()) throw new Error('The loader URL returned an empty response.');
-        if (polsec && !polsec.scriptKey) {
-          // Polsec loader without key: analyze the public Fulcrum client only
-          input.filename = 'polsec-loader-client.lua';
-        }
-      }
-    } else {
-      input = await inputFromAttachment(attachment);
-      if (/\.json$/i.test(String(attachment.name || ''))) {
-        let captured;
-        if (String(input.source).trim() === '1003') {
-          throw new Error('Polsec session expired (1003). Start a new authorized session and capture a fresh response.');
-        }
-        try {
-          captured = JSON.parse(input.source);
-        } catch {
-          throw new Error('The attached JSON is not valid JSON.');
-        }
-        if (!captured || typeof captured !== 'object' || Array.isArray(captured)) {
-          throw new Error('Expected a Polsec response object.');
-        }
-        if (Number(captured.d) !== 200) {
-          const code = captured.d === undefined ? 'unknown' : String(captured.d);
-          const detail = typeof captured.e === 'string'
-            ? captured.e
-            : (captured.e && typeof captured.e.message === 'string' ? captured.e.message : '');
-          throw new Error('Polsec returned ' + code + (detail ? ': ' + detail : ''));
-        }
-        if (!captured.e || typeof captured.e.d !== 'string' || !captured.e.d.trim()) {
-          throw new Error('Polsec reported success (d=200), but e.d was missing or empty.');
-        }
-        input = {
-          source: captured.e.d,
-          filename: path.basename(String(attachment.name || 'polsec-response.json')).replace(/\.json$/i, '') + '.lua',
-        };
-      }
-    }
-    workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-fulcrum-'));
-    const inputPath = path.join(workDir, 'input.lua');
-    const outputDir = path.join(workDir, 'out');
-    await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
-
-    await runPythonEngine(
-      ENGINE_FULCRUM_DIR,
-      ENGINE_FULCRUM_CLI,
-      inputPath,
-      outputDir,
-      150_000,
-      [],
-      { stallTimeoutMs: 120_000 }
-    );
-
-    const recoveredPath = path.join(outputDir, 'recovered.lua');
-    const reportPath = path.join(outputDir, 'REPORT.md');
-    const stringsPath = path.join(outputDir, 'strings.txt');
-    const recoveredStat = await fs.stat(recoveredPath);
-    const reportStat = await fs.stat(reportPath);
-    const stringsStat = await fs.stat(stringsPath).catch(() => null);
-    if (!recoveredStat.size) throw new Error('Fulcrum produced an empty recovered source file.');
-    if (recoveredStat.size > MAX_OUTPUT_BYTES || reportStat.size > 2 * 1024 * 1024) {
-      throw new Error('Fulcrum source or report exceeded the configured attachment size limit.');
-    }
-    const recovered = await fs.readFile(recoveredPath);
-    const report = await fs.readFile(reportPath);
-    const strings = stringsStat && stringsStat.size <= MAX_OUTPUT_BYTES
-      ? await fs.readFile(stringsPath)
-      : null;
-
-    const originalName = input.filename || 'script.lua';
-    const originalBase = path.basename(originalName, path.extname(originalName));
-    const safeBase = originalBase.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 70) || 'script';
-    const recoveredName = safeBase + '.fulcrum-recovered.lua';
-    const reportName = safeBase + '.fulcrum-report.md';
-    const recoveredParts = makeSourceParts(recovered, recoveredName);
-    const files = recoveredParts.map((part) => new AttachmentBuilder(part.data, { name: part.name }));
-    files.push(new AttachmentBuilder(report, { name: reportName }));
-
-    await prompt.edit({
-      embeds: [dailyEmbed(
-        'Fulcrum · Recovery complete',
-        'Recovered source and analysis report are attached. This is a static reconstruction; original variable names and runtime-only values may not be recoverable.',
-        DAILY_COLORS.success
-      )],
-      files,
-      components: [],
-    });
-
-    if (strings && strings.length) {
-      const stringParts = makeSourceParts(strings, safeBase + '.fulcrum-strings.txt');
-      await message.reply({
-        content: 'Decoded string table:',
-        files: stringParts.map((part) => new AttachmentBuilder(part.data, { name: part.name })),
-        allowedMentions: { repliedUser: false },
-      }).catch(() => {});
-    } else if (stringsStat && stringsStat.size > MAX_OUTPUT_BYTES) {
-      await message.reply({
-        content: 'The recovered source and report were sent. The decoded string table was too large to attach.',
-        allowedMentions: { repliedUser: false },
-      }).catch(() => {});
-    }
-  } catch (error) {
-    const details = String(error && error.message || error).slice(0, 1100);
-    await prompt.edit({
-      content: 'Fulcrum could not recover this file: ' + details,
-      embeds: [],
-      components: [],
-    }).catch(() => {});
-    if (error && error.stderr) {
-      await message.reply({
-        content: 'Fulcrum diagnostic output:',
-        files: [new AttachmentBuilder(Buffer.from(String(error.stderr).slice(0, 800_000), 'utf8'), {
-          name: 'fulcrum-error.log',
-        })],
-        allowedMentions: { repliedUser: false },
-      }).catch(() => {});
-    }
-    console.error('Fulcrum deobfuscation failed:', error);
-  } finally {
-    if (workDir) await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
-  }
 }
 
 
@@ -5622,8 +5423,6 @@ async function startWorkflow(message, inlineText = null) {
     new ActionRowBuilder().addComponents(
       engineButton(new ButtonBuilder()
         .setCustomId(`deobf-vantarmor:${message.author.id}`), 'vantarmor', 'Vantarmor / Universal'),
-      engineButton(new ButtonBuilder()
-        .setCustomId(`deobf-fulcrum:${message.author.id}`), 'fulcrum', 'Fulcrum / Polsec'),
       new ButtonBuilder()
         .setCustomId(`deobf-cancel:${message.author.id}`)
         .setLabel('Cancel')
@@ -5800,58 +5599,6 @@ async function startWorkflow(message, inlineText = null) {
         await processVantarmorFetcher(message, prompt, await getWorkflowInput());
       } catch (error) {
         await showDeobfFailure(message, prompt, 'Universal Loader Fetcher failed', error);
-      }
-      return;
-    }
-    if (interaction.customId === `deobf-fulcrum:${message.author.id}`) {
-      await interaction.deferUpdate();
-      componentCollector.stop('selected');
-      try {
-        const selected = await getWorkflowInput();
-        // Prefer pasted polsec loader+key from original message content when present
-        const fromMsg = parsePolsecLoaderPaste(message.content || '');
-        const blob = [selected && selected.source, message.content].filter(Boolean).join('\n');
-        const polsec = parsePolsecLoaderPaste(blob) || fromMsg;
-        if (polsec && polsec.scriptKey) {
-          const got = await fetchPolsecPayloadWithKey(polsec.id1, polsec.id2, polsec.scriptKey);
-          selected.source = got.source;
-          selected.filename = 'polsec-payload.lua';
-        }
-        // Run through .fulcrum path by writing temp and calling workflow pieces
-        const fakeInline = polsec && polsec.scriptKey
-          ? ('script_key = "' + polsec.scriptKey + '"\n' + polsec.loaderUrl)
-          : null;
-        if (fakeInline) {
-          await startFulcrumWorkflow(message, fakeInline);
-        } else {
-          // Analyze provided source as Fulcrum input via attachment-like path
-          await startFulcrumWorkflow(message, null);
-          // If no attachment, use selected source through a synthetic reply path:
-          // fall back: write source and run engine inline
-          if (!(message.attachments && message.attachments.size)) {
-            const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-fulcrum-btn-'));
-            try {
-              const inputPath = path.join(workDir, 'input.lua');
-              const outputDir = path.join(workDir, 'out');
-              await fs.writeFile(inputPath, String(selected.source || ''), 'utf8');
-              await runPythonEngine(ENGINE_FULCRUM_DIR, ENGINE_FULCRUM_CLI, inputPath, outputDir, 5 * 60_000);
-              const recovered = await fs.readFile(path.join(outputDir, 'recovered.lua'));
-              const report = await fs.readFile(path.join(outputDir, 'REPORT.md'));
-              await prompt.edit({
-                embeds: [dailyEmbed('Fulcrum · Recovery complete', 'Recovered source attached.', DAILY_COLORS.success)],
-                files: [
-                  new AttachmentBuilder(recovered, { name: 'fulcrum-recovered.lua' }),
-                  new AttachmentBuilder(report, { name: 'fulcrum-report.md' }),
-                ],
-                components: [],
-              });
-            } finally {
-              await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
-            }
-          }
-        }
-      } catch (error) {
-        await showDeobfFailure(message, prompt, 'Fulcrum / Polsec failed', error);
       }
       return;
     }
@@ -6079,35 +5826,6 @@ client.on(Events.MessageCreate, async (message) => {
         content: 'Could not DM that user. They may have DMs disabled or may not share a server with the bot.',
         allowedMentions: { repliedUser: false },
       });
-    }
-    return;
-  }
-
-  if (command === '.fulcrum') {
-    if (!message.guild || !message.guild.ownerId) {
-      await message.reply({
-        content: '.fulcrum is available only inside a Discord server.',
-        allowedMentions: { repliedUser: false },
-      });
-      return;
-    }
-    if (message.author.id !== message.guild.ownerId) {
-      await message.reply({
-        content: 'Only this Discord server owner can use .fulcrum.',
-        allowedMentions: { repliedUser: false },
-      });
-      return;
-    }
-    const inlineInput = content.slice(parts[0].length).trim() || null;
-    if (activeUsers.has(message.author.id)) {
-      await message.reply('You already have an active job. Finish it or wait for it to expire.');
-      return;
-    }
-    activeUsers.add(message.author.id);
-    try {
-      await startFulcrumWorkflow(message, inlineInput);
-    } finally {
-      activeUsers.delete(message.author.id);
     }
     return;
   }

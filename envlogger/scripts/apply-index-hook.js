@@ -1,10 +1,15 @@
 #!/usr/bin/env node
-/** One-shot: rewrite startEnvLogWorkflow in index.js to use ENVLOGGER */
+/** Rewrite startEnvLogWorkflow in index.js to use ENVLOGGER discord-integration */
+'use strict';
 const fs = require('fs');
 const path = require('path');
 const indexPath = path.join(__dirname, '..', '..', 'index.js');
 let src = fs.readFileSync(indexPath, 'utf8');
-const start = src.indexOf('async function startEnvLogWorkflow(message, inlineText = null) {');
+if (src.includes('envlogger/discord-integration')) {
+  console.log('already hooked', indexPath);
+  process.exit(0);
+}
+const start = src.indexOf('async function startEnvLogWorkflow(');
 if (start < 0) {
   console.error('startEnvLogWorkflow not found');
   process.exit(1);
@@ -15,7 +20,7 @@ if (end < 0) {
   process.exit(1);
 }
 const newFn = `async function startEnvLogWorkflow(message, inlineText = null) {
-  // ENVLOGGER (replaces old v15 --no-devirt envlog path)
+  // ENVLOGGER — offline sandbox behaviour log (services, HTTP, remotes, loadstring, ANTIVM)
   return require('./envlogger/discord-integration').startEnvLogWorkflow(message, inlineText, {
     dailyEmbed,
     DAILY_COLORS,

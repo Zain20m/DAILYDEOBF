@@ -1,8 +1,8 @@
 --[[
-  ENVLOGGER minimal runtime (full soft-repair build)
+  ENVLOGGER runtime (soft-repair + ANTIVM + loadstring capture)
 ]]
-local CFG = rawget(_G, "__ENVLOGGER_CFG") or {}
-local MARK = "\0EL "
+local CFG = __ENVLOGGER_CFG or rawget(_G, "__ENVLOGGER_CFG") or {}
+local MARK = "EL|"
 local START = os.clock()
 local MAX_STMTS = tonumber(CFG.max_stmts) or 8000
 local TIME_BUDGET = tonumber(CFG.time_budget) or 25
@@ -203,10 +203,9 @@ setmetatable(ENV, {
 	end,
 })
 
-local source = rawget(_G, "__ENVLOGGER_SOURCE")
--- run.js injects __ENVLOGGER_SOURCE as a local; support both
+local source = __ENVLOGGER_SOURCE
 if type(source) ~= "string" or #source == 0 then
-	source = __ENVLOGGER_SOURCE
+	source = rawget(_G, "__ENVLOGGER_SOURCE")
 end
 if type(source) ~= "string" or #source == 0 then
 	print(MARK .. "FATAL no source")

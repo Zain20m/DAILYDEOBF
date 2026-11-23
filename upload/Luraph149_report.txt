@@ -1,0 +1,219 @@
+DAILY DEOBF · Luraph v14.9
+Input: gayass2_1_1.txt
+Result: dedicated v14.9 VM devirtualization
+Output bytes: 2429506
+
+Engine diagnostics:
+dy"], Scope(scope))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 646, in exec_block
+    self.exec_stmt(st, scope)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 718, in exec_stmt
+    raise Unsupported("numeric for with symbolic bounds")
+luasym.Unsupported: numeric for with symbolic bounds
+-- at 0:13 op (0, 50)
+   arr#339[11] = 85 -> 85
+   arr#339[12] = 1 -> 1
+   arr#339[13] = 184 -> 184
+   arr#339[14] = 0 -> 0
+   arr#338[11] = 1 -> 1
+   arr#338[12] = 5 -> 5
+   arr#338[13] = 157 -> 157
+   arr#338[14] = 1 -> 1
+   arr#489[11] = None -> None
+   arr#489[12] = None -> None
+   arr#489[13] = None -> None
+   arr#489[14] = None -> None
+   arr#332[11] = 158 -> 158
+   arr#332[12] = 79 -> 79
+   arr#332[13] = 130 -> 130
+   arr#332[14] = 0 -> 0
+   arr#337[11] = None -> None
+   arr#337[12] = None -> None
+   arr#337[13] = None -> None
+   arr#337[14] = None -> None
+   arr#333[11] = None -> None
+   arr#333[12] = None -> None
+   arr#333[13] = None -> None
+   arr#333[14] = None -> None
+   arr#334[11] = 52 -> 52
+   arr#334[12] = 115 -> 115
+   arr#334[13] = 50 -> 50
+   arr#334[14] = 19 -> 19
+   arr#335[11] = None -> None
+   arr#335[12] = 16777216 -> 16777216
+   arr#335[13] = None -> None
+   arr#335[14] = None -> None
+Traceback (most recent call last):
+  File "/home/container/luraph-v14.7-engine/obfuscators/luraph_v14_9/devirt.py", line 3334, in _walk
+    node = st.step(s, "%d_%d_" % (s.pc, len(order)))
+  File "/home/container/luraph-v14.7-engine/obfuscators/luraph_v14_9/devirt.py", line 2679, in step
+    it, oc = self.run_once(state, dec, tprefix)
+             ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/obfuscators/luraph_v14_9/devirt.py", line 2587, in run_once
+    it.exec_block(w["body"]["body"], Scope(inner))
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 646, in exec_block
+    self.exec_stmt(st, scope)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 683, in exec_stmt
+    self.exec_block(e["body"], Scope(scope))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 646, in exec_block
+    self.exec_stmt(st, scope)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 683, in exec_stmt
+    self.exec_block(e["body"], Scope(scope))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 646, in exec_block
+    self.exec_stmt(st, scope)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 677, in exec_stmt
+    self.exec_block(st["thenbody"]["body"], Scope(scope))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 646, in exec_block
+    self.exec_stmt(st, scope)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 683, in exec_stmt
+    self.exec_block(e["body"], Scope(scope))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 646, in exec_block
+    self.exec_stmt(st, scope)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 683, in exec_stmt
+    self.exec_block(e["body"], Scope(scope))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 646, in exec_block
+    self.exec_stmt(st, scope)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 677, in exec_stmt
+    self.exec_block(st["thenbody"]["body"], Scope(scope))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 646, in exec_block
+    self.exec_stmt(st, scope)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 683, in exec_stmt
+    self.exec_block(e["body"], Scope(scope))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 646, in exec_block
+    self.exec_stmt(st, scope)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 677, in exec_stmt
+    self.exec_block(st["thenbody"]["body"], Scope(scope))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 646, in exec_block
+    self.exec_stmt(st, scope)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 674, in exec_stmt
+    self.assign(tg, self.binop(st["op"], cur, self.eval(st["value"], scope)), scope)
+                    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 947, in binop
+    raise Unsupported("arith on %r %r" % (a, b))
+luasym.Unsupported: arith on None None
+-- at 0:12 op (0, 55)
+   arr#357[10] = 5 -> 5
+   arr#357[11] = 133 -> 133
+   arr#357[12] = 244 -> 244
+   arr#357[13] = 154 -> 154
+   arr#356[10] = 212 -> 212
+   arr#356[11] = 63 -> 63
+   arr#356[12] = 13 -> 13
+   arr#356[13] = 229 -> 229
+   arr#492[10] = None -> None
+   arr#492[11] = None -> None
+   arr#492[12] = None -> None
+   arr#492[13] = None -> None
+   arr#350[10] = 50 -> 50
+   arr#350[11] = 46 -> 46
+   arr#350[12] = 39 -> 39
+   arr#350[13] = 163 -> 163
+   arr#355[10] = None -> None
+   arr#355[11] = None -> None
+   arr#355[12] = None -> None
+   arr#355[13] = None -> None
+   arr#351[10] = None -> None
+   arr#351[11] = None -> None
+   arr#351[12] = None -> None
+   arr#351[13] = None -> None
+   arr#352[10] = 209 -> 209
+   arr#352[11] = 128 -> 128
+   arr#352[12] = 55 -> 55
+   arr#352[13] = 17 -> 17
+   arr#353[10] = None -> None
+   arr#353[11] = None -> None
+   arr#353[12] = None -> None
+   arr#353[13] = None -> None
+Traceback (most recent call last):
+  File "/home/container/luraph-v14.7-engine/obfuscators/luraph_v14_9/devirt.py", line 3334, in _walk
+    node = st.step(s, "%d_%d_" % (s.pc, len(order)))
+  File "/home/container/luraph-v14.7-engine/obfuscators/luraph_v14_9/devirt.py", line 2679, in step
+    it, oc = self.run_once(state, dec, tprefix)
+             ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/obfuscators/luraph_v14_9/devirt.py", line 2587, in run_once
+    it.exec_block(w["body"]["body"], Scope(inner))
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 646, in exec_block
+    self.exec_stmt(st, scope)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 683, in exec_stmt
+    self.exec_block(e["body"], Scope(scope))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 646, in exec_block
+    self.exec_stmt(st, scope)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 677, in exec_stmt
+    self.exec_block(st["thenbody"]["body"], Scope(scope))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 646, in exec_block
+    self.exec_stmt(st, scope)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 677, in exec_stmt
+    self.exec_block(st["thenbody"]["body"], Scope(scope))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 646, in exec_block
+    self.exec_stmt(st, scope)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 677, in exec_stmt
+    self.exec_block(st["thenbody"]["body"], Scope(scope))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 646, in exec_block
+    self.exec_stmt(st, scope)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 677, in exec_stmt
+    self.exec_block(st["thenbody"]["body"], Scope(scope))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 646, in exec_block
+    self.exec_stmt(st, scope)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 683, in exec_stmt
+    self.exec_block(e["body"], Scope(scope))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 646, in exec_block
+    self.exec_stmt(st, scope)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 683, in exec_stmt
+    self.exec_block(e["body"], Scope(scope))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 646, in exec_block
+    self.exec_stmt(st, scope)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 677, in exec_stmt
+    self.exec_block(st["thenbody"]["body"], Scope(scope))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 646, in exec_block
+    self.exec_stmt(st, scope)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 674, in exec_stmt
+    self.assign(tg, self.binop(st["op"], cur, self.eval(st["value"], scope)), scope)
+                    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/container/luraph-v14.7-engine/luasym.py", line 947, in binop
+    raise Unsupported("arith on %r %r" % (a, b))
+luasym.Unsupported: arith on None 1
+[*]   41 functions, 28 unlifted blocks, 0 unstructured jumps, 0 new constant requests (128.6s)
+[!] 28 VM block(s) could not be lifted (marked in the output)
+[*] run status: aborted: endless loop in the script's own code (no environment access)
+[+] wrote: /tmp/daily-deobf-luraph149-oMdOC7/Luraph149_deobfuscated.luau
+
+
+The recovered Luau is a best-effort reconstruction. VM paths or constants that were not captured may remain incomplete.

@@ -64,15 +64,9 @@ def patch_entries(source, path):
     dispatches = vmmap.find_dispatchers(root)
     makers = vmmap.maker_info(root, dispatches)
 
-    # closure_entries() used to perform another complete AST walk and another
-    # dispatcher search. Its result is derivable from the maker records:
-    # both paths use the same VM factory selection and proto parameter.
-    entries = {}
-    for info in makers:
-        body = info["vm"].get("body", {}).get("body", [])
-        if body:
-            l1, c1, _, _ = vmmap.loc(body[0])
-            entries[(l1, c1)] = info["proto"]
+    # Keep the entry mapper's exact selection behavior, but share the
+    # dispatcher list so it does not scan the full AST to find loops again.
+    entries = vmmap.closure_entries(root, dispatches)
 
     for (l1, c1), pv in entries.items():
         # no locals: they would enlarge every VM frame, and Luraph mixes the

@@ -1,0 +1,14 @@
+#!/bin/sh
+# Sourced defaults when host starts the bot (optional)
+export DEOB_FAST=1
+export DEOB_PY_CANDIDATES=python:1
+export DEOB_CANDIDATE_TIMEOUT_MS=20000
+export DEOB_CANDIDATE_IDLE_TIMEOUT_MS=8000
+export DEVIRT_WALK_LIMIT=12000
+export DEVIRT_MERGE_BUDGET=2
+export DEVIRT_BISECT_BUDGET=1
+export DEVIRT_FULL_ROUNDS=
+export DEVIRT_ALLOW_PARTIAL=1
+export DEVIRT_ERRS=
+export DEVIRT_TB=
+export DEVIRT_TIMING=

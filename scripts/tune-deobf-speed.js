@@ -1,12 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * Rewrite index.js deobf budgets so small samples finish in seconds,
- * and nothing casual waits past ~60s.
- *
- * Previous defaults for a 150 KB file:
- *   runtime 180s, hardTimeout 240s, stall 120s, candidate 300s
- * That made a "fast" server's 2s job look like 5 minutes here.
+ * Aggressive deobf speed profile.
+ * Target: 150KB Luraph finishes in a few seconds, hard wall ~45s.
+ * Kills the 137k-state / 113-function full walk that was burning ~70s+.
  */
 const fs = require('fs');
 const path = require('path');
@@ -20,105 +17,96 @@ if (!fs.existsSync(indexPath)) {
 let src = fs.readFileSync(indexPath, 'utf8');
 const before = src;
 
-// Global engine wall clock: 25 min -> 90s (large files can still use per-call hardTimeoutMs)
-src = src.replace(
-  /const ENGINE_TIMEOUT_MS = 25 \* 60_000;/,
-  'const ENGINE_TIMEOUT_MS = 90_000; // speed-tuned: was 25min'
+function rep(re, to, label) {
+  const n = (src.match(re) || []).length;
+  if (n) {
+    src = src.replace(re, to);
+    console.log('[speed]', label, '(' + n + ')');
+  }
+}
+
+// ---- hard walls ----
+rep(/const ENGINE_TIMEOUT_MS = [^;]+;/, 'const ENGINE_TIMEOUT_MS = 45_000; // speed-100x',
+  'ENGINE_TIMEOUT_MS=45s');
+
+// 14.x tier tables
+rep(/const largeFileRuntimeSeconds = \[[^\]]+\]\[largeFileTier\];/,
+  'const largeFileRuntimeSeconds = [12, 18, 25, 35][largeFileTier];',
+  '14.x runtime seconds');
+rep(/const largeFileSpinChecks = \[[^\]]+\]\[largeFileTier\];/,
+  'const largeFileSpinChecks = [3, 6, 10, 14][largeFileTier];',
+  'spin checks');
+
+// 14.x CLI knobs (any previous tune)
+rep(/'--max-runs', options\.fast \? '[^']+' : '[^']+',/,
+  "'--max-runs', options.fast ? '1' : '2',", '14.x max-runs');
+rep(/'--devirt-rounds', options\.fast \? '[^']+' : '[^']+',/,
+  "'--devirt-rounds', options.fast ? '2' : '4',", '14.x devirt-rounds');
+rep(/'--budget', options\.fast \? '[^']+' : String\(\[[^\]]+\]\[largeFileTier\]\),/,
+  "'--budget', options.fast ? '5' : String([8, 12, 16, 22][largeFileTier]),", '14.x budget');
+rep(/'--timeout', options\.fast \? '[^']+' : String\(largeFileRuntimeSeconds\),/,
+  "'--timeout', options.fast ? '12' : String(largeFileRuntimeSeconds),", '14.x timeout');
+
+// 15 / 15.1 CLI knobs (literal forms)
+rep(/'--max-runs', '\d+',/g, "'--max-runs', '1',", 'literal max-runs→1');
+rep(/'--devirt-rounds', '\d+',/g, "'--devirt-rounds', '2',", 'literal devirt-rounds→2');
+rep(/'--budget', '\d+',/g, "'--budget', '6',", 'literal budget→6');
+rep(/'--timeout', '\d+',/g, "'--timeout', '15',", 'literal timeout→15');
+
+// 15.1 wall clocks on runEngine / runCommand
+rep(/12 \* 60_000/g, '45_000', '12min→45s hard');
+rep(/stallTimeoutMs:\s*\d[_\d]*/g, 'stallTimeoutMs: 12_000', 'stall→12s');
+
+// Candidate timeouts (was 5 min)
+rep(/DEOB_CANDIDATE_TIMEOUT_MS:\s*'\d+'/g, "DEOB_CANDIDATE_TIMEOUT_MS: '20000'", 'candidate 20s');
+rep(/DEOB_CANDIDATE_IDLE_TIMEOUT_MS:\s*'\d+'/g, "DEOB_CANDIDATE_IDLE_TIMEOUT_MS: '8000'", 'idle 8s');
+
+// THE BIG ONE — state walker was doing 137k+ states
+rep(/DEVIRT_WALK_LIMIT:\s*'\d+'/g, "DEVIRT_WALK_LIMIT: '12000'", 'WALK_LIMIT 12k');
+rep(/DEVIRT_MERGE_BUDGET:\s*'\d+'/g, "DEVIRT_MERGE_BUDGET: '2'", 'merge budget 2');
+rep(/DEVIRT_BISECT_BUDGET:\s*'\d+'/g, "DEVIRT_BISECT_BUDGET: '1'", 'bisect budget 1');
+
+// Debug traceback / per-block errors are expensive — kill them
+rep(/DEVIRT_ERRS:\s*'1'/g, "DEVIRT_ERRS: ''", 'disable DEVIRT_ERRS');
+rep(/DEVIRT_TB:\s*'1'/g, "DEVIRT_TB: ''", 'disable DEVIRT_TB');
+rep(/DEVIRT_TIMING:\s*'1'/g, "DEVIRT_TIMING: ''", 'disable DEVIRT_TIMING');
+rep(/DEVIRT_PROGRESS:\s*'1'/g, "DEVIRT_PROGRESS: '1'", 'keep progress');
+
+// Force DEOB_FAST
+rep(/DEOB_FAST:\s*'[^']*'/g, "DEOB_FAST: '1'", 'DEOB_FAST=1');
+rep(/DEOB_PY_CANDIDATES:\s*'[^']*'/g, "DEOB_PY_CANDIDATES: 'python:1'", 'one python candidate');
+
+// 14.9 sized tables
+rep(
+  /runtimeTimeoutSeconds:\s*bytes[\s\S]*?:\s*\d+,\s*\n\s*hardTimeoutMs:\s*bytes[\s\S]*?:\s*[\d_]+,\s*\n\s*stallTimeoutMs:\s*bytes[\s\S]*?:\s*[\d_]+,/,
+  'runtimeTimeoutSeconds: bytes >= 5 * 1024 * 1024 ? 35 : bytes >= 2 * 1024 * 1024 ? 28 : bytes >= 500 * 1024 ? 20 : 12,\n    hardTimeoutMs: bytes >= 5 * 1024 * 1024 ? 45_000 : bytes >= 2 * 1024 * 1024 ? 40_000 : bytes >= 500 * 1024 ? 30_000 : 25_000,\n    stallTimeoutMs: bytes >= 2 * 1024 * 1024 ? 15_000 : bytes >= 500 * 1024 ? 12_000 : 10_000,',
+  '14.9 size tiers'
 );
 
-// Tier runtime seconds for 14.x: was [180,240,360,480] -> [20,35,50,60]
-src = src.replace(
-  /const largeFileRuntimeSeconds = \[180, 240, 360, 480\]\[largeFileTier\];/,
-  'const largeFileRuntimeSeconds = [20, 35, 50, 60][largeFileTier]; // speed-tuned'
-);
+// Stall floor in runCommand
+rep(/Math\.max\(\s*[\d_]+\s*,\s*options\.stallTimeoutMs\s*\)/,
+  'Math.max(5_000, options.stallTimeoutMs)', 'min stall 5s');
 
-// Spin checks: fewer idle iterations before spin detect on small files
-src = src.replace(
-  /const largeFileSpinChecks = \[8, 32, 64, 128\]\[largeFileTier\];/,
-  'const largeFileSpinChecks = [4, 8, 16, 24][largeFileTier]; // speed-tuned'
-);
+// Auto-fast for <1MB on 14.x
+if (!src.includes('/* speed-100x auto-fast */')) {
+  const needle = 'async function processLuraph14x(message, prompt, input, version, options = {}) {\n  const startedAt = Date.now();\n  const inputBytes = Buffer.byteLength(input.source, \'utf8\');';
+  if (src.includes(needle)) {
+    src = src.replace(
+      needle,
+      needle + '\n  /* speed-100x auto-fast */\n  if (options.fast == null && inputBytes < 1024 * 1024) options = { ...options, fast: true };'
+    );
+    console.log('[speed] auto-fast <1MB on 14.x');
+  }
+}
 
-// 14.x max-runs / devirt-rounds / budget
-src = src.replace(
-  /'--max-runs', options\.fast \? '6' : '16',/,
-  "'--max-runs', options.fast ? '3' : '6',"
-);
-src = src.replace(
-  /'--devirt-rounds', options\.fast \? '120' : '200',/,
-  "'--devirt-rounds', options.fast ? '40' : '80',"
-);
-src = src.replace(
-  /'--budget', options\.fast \? '30' : String\(\[60, 90, 120, 150\]\[largeFileTier\]\),/,
-  "'--budget', options.fast ? '8' : String([12, 18, 25, 35][largeFileTier]),"
-);
-src = src.replace(
-  /'--timeout', options\.fast \? '60' : String\(largeFileRuntimeSeconds\),/,
-  "'--timeout', options.fast ? '20' : String(largeFileRuntimeSeconds),"
-);
-
-// DEOB_TRACE_STALL_SECONDS tiers
-src = src.replace(
-  /DEOB_TRACE_STALL_SECONDS: String\(\[60, 90, 120, 150\]\[largeFileTier\]\)/,
-  'DEOB_TRACE_STALL_SECONDS: String([12, 18, 25, 35][largeFileTier])'
-);
-
-// 14.9 sized timeouts (was up to 480s / 240s stall for mid sizes)
-src = src.replace(
-  /runtimeTimeoutSeconds: bytes >= 5 \* 1024 \* 1024 \? 480\s*:\s*bytes >= 2 \* 1024 \* 1024 \? 360\s*:\s*bytes >= 500 \* 1024 \? 240 : 180,/,
-  'runtimeTimeoutSeconds: bytes >= 5 * 1024 * 1024 ? 60 : bytes >= 2 * 1024 * 1024 ? 50 : bytes >= 500 * 1024 ? 35 : 20,'
-);
-src = src.replace(
-  /hardTimeoutMs: bytes >= 5 \* 1024 \* 1024 \? ENGINE_TIMEOUT_MS\s*:\s*bytes >= 2 \* 1024 \* 1024 \? 900_000\s*:\s*bytes >= 500 \* 1024 \? 600_000 : 240_000,/,
-  'hardTimeoutMs: bytes >= 5 * 1024 * 1024 ? ENGINE_TIMEOUT_MS : bytes >= 2 * 1024 * 1024 ? 75_000 : bytes >= 500 * 1024 ? 55_000 : 40_000,'
-);
-src = src.replace(
-  /stallTimeoutMs: bytes >= 2 \* 1024 \* 1024 \? 240_000\s*:\s*bytes >= 500 \* 1024 \? 180_000 : 120_000,/,
-  'stallTimeoutMs: bytes >= 2 * 1024 * 1024 ? 40_000 : bytes >= 500 * 1024 ? 30_000 : 20_000,'
-);
-
-// 14.3 hard/stall
-src = src.replace(
-  /hardTimeoutMs: 170_000,\s*stallTimeoutMs: 120_000,/,
-  'hardTimeoutMs: 50_000,\n    stallTimeoutMs: 25_000,'
-);
-
-// 15.1 candidate timeouts (the classic 5-minute wait)
-src = src.replace(
-  /DEOB_CANDIDATE_TIMEOUT_MS: '300000',/g,
-  "DEOB_CANDIDATE_TIMEOUT_MS: '45000',"
-);
-src = src.replace(
-  /DEOB_CANDIDATE_IDLE_TIMEOUT_MS: '180000',/g,
-  "DEOB_CANDIDATE_IDLE_TIMEOUT_MS: '15000',"
-);
-
-// Generic 15.x style max-runs blocks
-src = src.replace(/'--max-runs', '12',/g, "'--max-runs', '5',");
-src = src.replace(/'--devirt-rounds', '200',/g, "'--devirt-rounds', '60',");
-src = src.replace(/'--budget', '45',/g, "'--budget', '12',");
-src = src.replace(/'--timeout', '120',/g, "'--timeout', '30',");
-
-// Common stallTimeoutMs: 180_000 literals in process functions
-src = src.replace(/stallTimeoutMs: 180_000/g, 'stallTimeoutMs: 30_000');
-src = src.replace(/stallTimeoutMs: 120_000/g, 'stallTimeoutMs: 25_000');
-
-// Minimum stall floor in runCommand (was 30s)
-src = src.replace(
-  /Math\.max\(30_000, options\.stallTimeoutMs\)/,
-  'Math.max(8_000, options.stallTimeoutMs)'
-);
-
-// Auto-fast path: treat sub-400KB inputs as fast in processLuraph14x
-if (!src.includes('/* speed-tuned auto-fast */')) {
-  src = src.replace(
-    'async function processLuraph14x(message, prompt, input, version, options = {}) {\n  const startedAt = Date.now();\n  const inputBytes = Buffer.byteLength(input.source, \'utf8\');',
-    'async function processLuraph14x(message, prompt, input, version, options = {}) {\n  const startedAt = Date.now();\n  const inputBytes = Buffer.byteLength(input.source, \'utf8\');\n  /* speed-tuned auto-fast */\n  if (options.fast == null && inputBytes < 400 * 1024) options = { ...options, fast: true };'
-  );
+// Inject ultra-fast env defaults into runLuraph151Engine if still high
+if (src.includes("DEVIRT_WALK_LIMIT: '750000'") || src.includes('DEVIRT_WALK_LIMIT: "750000"')) {
+  console.log('[speed] WARN: walk limit still 750k after replace');
 }
 
 if (src === before) {
-  console.log('[speed] index.js already tuned or patterns shifted');
+  console.log('[speed] no index.js changes (already extreme or patterns moved)');
 } else {
   fs.writeFileSync(indexPath, src);
-  console.log('[speed] index.js deobf budgets tightened (target ≤60s for ≤500KB samples)');
+  console.log('[speed] applied 100x profile → walk≤12k, 1 run, 2 rounds, ≤45s wall');
 }

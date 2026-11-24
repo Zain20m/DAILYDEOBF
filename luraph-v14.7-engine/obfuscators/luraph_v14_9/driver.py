@@ -168,6 +168,10 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
             if walked and unresolved >= walked:
                 print("[!] every walked VM state was unresolved (%d/%d); refusing to label the partial graph as devirtualized"
                       % (unresolved, walked), file=sys.stderr)
+                if best is not None:
+                    print("[*]   retaining the earlier candidate because this pass did not recover any VM state",
+                          file=sys.stderr)
+                    break
                 return False
             print("[*]   %d functions, %d unlifted blocks, %d unstructured jumps, %d new constant requests (%.1fs)"
                   % (stats["functions"], stats["errors"], stats["fallbacks"], len(new), time.time() - t1),

@@ -1,10 +1,10 @@
 # Luraph Deobfuscator Discord Bot
 
-This build contains only the Luraph deobfuscation engines: **v14.7, v14.8, v14.9, v15, and v15.1**.
+This build contains Luraph deobfuscation engines for **v14.6, v14.7, v14.8, v14.9, v15, and v15.1**. The v14.6 adapter shares the v14.x VM mapper/lifter and handles the v14.6 version banner explicitly.
 
 ## Commands
 
-- `/deob` — upload a Lua/Luau file, paste source, or provide a loader URL. Choose public Luraph v14.7, v14.8, v14.9, or v15. Results are posted publicly as `.lua` files.
+- `/deob` — upload a Lua/Luau file, paste source, or provide a loader URL. Choose public Luraph v14.6, v14.7, v14.8, v14.9, or v15. Results are posted publicly as `.lua` files.
 - `/vipdeob` — run Luraph v15.1. Requires role `1387797482607739010`.
 - `/detect` — identifies a Luraph version when its header or source shape makes that possible. Other formats are reported as unsupported.
 - `/get` — fetches source from a public HTTP/HTTPS URL.

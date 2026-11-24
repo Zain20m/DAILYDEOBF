@@ -1,10 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * Wire ENVLOGGER into index.js:
- * 1) startEnvLogWorkflow -> discord-integration
- * 2) .l message route
- * 3) help + prefix log lines
+ * Wire ENVLOGGER into index.js so `.l` always gets a Discord reply.
  */
 const fs = require('fs');
 const path = require('path');
@@ -13,23 +10,32 @@ let src = fs.readFileSync(indexPath, 'utf8');
 let changed = false;
 
 const WORKFLOW_FN = `async function startEnvLogWorkflow(message, inlineText = null) {
-  return require('./envlogger/discord-integration').startEnvLogWorkflow(message, inlineText, {
-    dailyEmbed,
-    DAILY_COLORS,
-    inputFromAttachment,
-    inputFromUrlText,
-    collectInput,
-    formatBytes,
-    formatDuration,
-    sha256Hex,
-    splitUtf8Buffer,
-    AttachmentBuilder,
-    MAX_ATTACHMENT_PART_BYTES,
-  });
+  try {
+    return await require('./envlogger/discord-integration').startEnvLogWorkflow(message, inlineText, {
+      dailyEmbed,
+      DAILY_COLORS,
+      inputFromAttachment,
+      inputFromUrlText,
+      collectInput,
+      formatBytes,
+      formatDuration,
+      sha256Hex,
+      splitUtf8Buffer,
+      AttachmentBuilder,
+      MAX_ATTACHMENT_PART_BYTES,
+    });
+  } catch (error) {
+    const msg = String(error && error.message || error).slice(0, 1500);
+    try {
+      await message.reply({ content: '❌ ENVLOGGER failed: ' + msg, allowedMentions: { repliedUser: false } });
+    } catch (_) {
+      try { await message.channel.send('❌ ENVLOGGER failed: ' + msg); } catch (__) {}
+    }
+  }
 }
 `;
 
-// 1) Ensure workflow function exists / points at envlogger
+// 1) Workflow function
 if (!src.includes("require('./envlogger/discord-integration')") &&
     !src.includes('require("./envlogger/discord-integration")')) {
   const start = src.indexOf('async function startEnvLogWorkflow(');
@@ -46,97 +52,122 @@ if (!src.includes("require('./envlogger/discord-integration')") &&
     else src = WORKFLOW_FN + '\n' + src;
   }
   changed = true;
-  console.log('[envlogger] startEnvLogWorkflow wired to discord-integration');
+  console.log('[envlogger] startEnvLogWorkflow wired');
 } else {
-  console.log('[envlogger] startEnvLogWorkflow already points at discord-integration');
+  console.log('[envlogger] workflow already wired');
 }
 
-// 2) Message route for .l
-const ROUTE = `
+// 2) EARLY route — right after `const command = parts[0].toLowerCase();`
+//    so nothing else can swallow `.l` in silence.
+const EARLY = `
+  // --- ENVLOGGER early route (must reply) ---
   if (command === '.l' || command === '.envlog' || command === '.envlogger') {
-    if (activeUsers.has(message.author.id)) {
-      await message.reply('You already have an active job. Finish it or wait for it to expire.');
-      return;
-    }
-    activeUsers.add(message.author.id);
     try {
-      const inline = content.slice(command.length).trim() || null;
-      await startEnvLogWorkflow(message, inline);
+      if (typeof startEnvLogWorkflow !== 'function') {
+        await message.reply({ content: 'ENVLOGGER is not wired (startEnvLogWorkflow missing). Restart the bot.', allowedMentions: { repliedUser: false } });
+        return;
+      }
+      if (activeUsers.has(message.author.id)) {
+        await message.reply({ content: 'You already have an active job. Finish it or wait for it to expire.', allowedMentions: { repliedUser: false } });
+        return;
+      }
+      activeUsers.add(message.author.id);
+      try {
+        const inline = content.slice(command.length).trim() || null;
+        await startEnvLogWorkflow(message, inline);
+      } finally {
+        activeUsers.delete(message.author.id);
+      }
     } catch (error) {
-      await message.reply('\u274c ENVLOGGER failed: ' + String(error.message || error).slice(0, 1500)).catch(() => {});
-    } finally {
-      activeUsers.delete(message.author.id);
+      const msg = String(error && error.message || error).slice(0, 1500);
+      try {
+        await message.reply({ content: '❌ ENVLOGGER failed: ' + msg, allowedMentions: { repliedUser: false } });
+      } catch (_) {
+        try { await message.channel.send('❌ ENVLOGGER failed: ' + msg); } catch (__) {}
+      }
     }
     return;
   }
-
+  // --- end ENVLOGGER early route ---
 `;
 
-if (!src.includes("command === '.l'") && !src.includes('command === ".l"')) {
-  // Prefer insert just before .fetch / .beautify block
-  const markers = [
-    "if (command === '.fetch' || command === '.beautify')",
-    'if (command === ".fetch" || command === ".beautify")',
-    "if (command === '.get')",
-    'if (command === ".get")',
-    'if (command !== PREFIX)',
+// Remove older injected routes to avoid double-handling
+if (src.includes('ENVLOGGER early route')) {
+  console.log('[envlogger] early route already present');
+} else {
+  const anchors = [
+    "  const command = parts[0].toLowerCase();\n  const subcommand = (parts[1] || '').toLowerCase();\n",
+    "  const command = parts[0].toLowerCase();\n",
   ];
   let inserted = false;
-  for (const m of markers) {
-    const idx = src.indexOf(m);
-    if (idx >= 0) {
-      src = src.slice(0, idx) + ROUTE + src.slice(idx);
+  for (const a of anchors) {
+    if (src.includes(a)) {
+      src = src.replace(a, a + '\n' + EARLY + '\n');
       inserted = true;
       changed = true;
-      console.log('[envlogger] inserted .l route before:', m.slice(0, 40));
+      console.log('[envlogger] inserted EARLY .l route');
       break;
     }
   }
   if (!inserted) {
-    console.error('[envlogger] CRITICAL: could not find a place to insert .l route');
+    // fallback: before .help / .fetch
+    const markers = [
+      "if (command === '.help')",
+      "if (command === '.fetch' || command === '.beautify')",
+      "if (command === '.get')",
+      'if (command !== PREFIX)',
+    ];
+    for (const m of markers) {
+      const idx = src.indexOf(m);
+      if (idx >= 0) {
+        src = src.slice(0, idx) + EARLY + '\n' + src.slice(idx);
+        inserted = true;
+        changed = true;
+        console.log('[envlogger] inserted .l route before', m.slice(0, 40));
+        break;
+      }
+    }
+  }
+  if (!inserted) {
+    console.error('[envlogger] CRITICAL: could not insert .l route');
     process.exit(1);
   }
-} else {
-  console.log('[envlogger] .l route already present');
 }
 
-// 3) Prefix log line
-const OLD_PREFIX_LOG = "console.log('Prefix commands: .deobf, .get, .fetch, .beautify, .help');";
+// Strip duplicate older route blocks that only matched mid-handler
+src = src.replace(
+  /\n  if \(command === '\.l' \|\| command === '\.envlog' \|\| command === '\.envlogger'\) \{[\s\S]*?\n    return;\n  \}\n/,
+  (m) => (m.includes('ENVLOGGER early route') ? m : '\n')
+);
+
+// 3) Prefix log
 const NEW_PREFIX_LOG = "console.log('Prefix commands: .deobf, .get, .fetch, .beautify, .l, .help');";
-if (src.includes(OLD_PREFIX_LOG)) {
-  src = src.replace(OLD_PREFIX_LOG, NEW_PREFIX_LOG);
+if (src.includes('Prefix commands:') && !src.includes('.l, .help')) {
+  src = src.replace(/console\.log\('Prefix commands:[^']*'\);/, NEW_PREFIX_LOG);
   changed = true;
-  console.log('[envlogger] updated Prefix commands log');
-} else if (src.includes(".l, .help") || src.includes('.l, .help')) {
-  console.log('[envlogger] Prefix commands log already lists .l');
-} else if (src.includes('Prefix commands:')) {
-  src = src.replace(
-    /console\.log\('Prefix commands:[^']*'\);/,
-    NEW_PREFIX_LOG
-  );
-  changed = true;
-  console.log('[envlogger] replaced Prefix commands log line');
+  console.log('[envlogger] prefix log lists .l');
 }
 
-// 4) helpText entries
+// 4) help
 if (!src.includes(".l [URL/file/code]")) {
   const helpNeedle = "'.beautify [file/code] - format and semantically clean Luau with Beautify'";
   if (src.includes(helpNeedle)) {
     src = src.replace(
       helpNeedle,
-      helpNeedle +
-        ",\n    '.l [URL/file/code] - ENVLOGGER: offline sandbox log + reconstructed behavior .lua'"
+      helpNeedle + ",\n    '.l [URL/file/code] - ENVLOGGER: offline sandbox log + reconstructed behavior .lua'"
     );
     changed = true;
-    console.log('[envlogger] added .l to helpText');
-  } else {
-    console.warn('[envlogger] helpText needle not found; .help may not list .l');
+    console.log('[envlogger] help lists .l');
   }
 }
 
-if (changed) {
-  fs.writeFileSync(indexPath, src);
-  console.log('[envlogger] wrote', indexPath, 'bytes', src.length);
-} else {
-  console.log('[envlogger] index.js already fully wired');
+fs.writeFileSync(indexPath, src);
+console.log('[envlogger] wrote index.js (' + src.length + ' bytes) changed=' + changed);
+
+// Verify
+const check = fs.readFileSync(indexPath, 'utf8');
+if (!check.includes("command === '.l'")) {
+  console.error('[envlogger] VERIFY FAILED: .l still missing');
+  process.exit(1);
 }
+console.log('[envlogger] VERIFY ok: .l route present');

@@ -59,28 +59,52 @@ async function startEnvLogWorkflow(message, inlineText, deps) {
     dailyEmbed, DAILY_COLORS, inputFromAttachment, inputFromUrlText, collectInput,
     formatBytes, formatDuration, sha256Hex, splitUtf8Buffer, AttachmentBuilder,
     MAX_ATTACHMENT_PART_BYTES,
-  } = deps;
-  const root = path.join(__dirname);
+  } = deps || {};
 
-  const prompt = await message.reply({
-    embeds: [dailyEmbed('Environment log', 'Analyzing…', DAILY_COLORS.primary)],
-    allowedMentions: { repliedUser: false },
-  });
+  // ALWAYS ack immediately so Discord is never silent
+  let prompt;
+  try {
+    if (dailyEmbed && DAILY_COLORS) {
+      prompt = await message.reply({
+        embeds: [dailyEmbed('Environment log', 'Starting ENVLOGGER…', DAILY_COLORS.primary)],
+        allowedMentions: { repliedUser: false },
+      });
+    } else {
+      prompt = await message.reply({ content: '🔍 ENVLOGGER starting…', allowedMentions: { repliedUser: false } });
+    }
+  } catch (e) {
+    try {
+      prompt = await message.channel.send('🔍 ENVLOGGER starting…');
+    } catch (e2) {
+      console.error('[envlogger] cannot send ack:', e2);
+      throw e2;
+    }
+  }
 
   let input;
   try {
-    const attachment = message.attachments.first();
-    if (attachment) input = await inputFromAttachment(attachment);
-    else if (inlineText && /https?:\/\//i.test(inlineText) && !/[\r\n]/.test(inlineText.trim()) && inlineText.length < 600) {
+    const attachment = message.attachments && message.attachments.first && message.attachments.first();
+    if (attachment && inputFromAttachment) input = await inputFromAttachment(attachment);
+    else if (inlineText && /https?:\/\//i.test(inlineText) && !/[\r\n]/.test(inlineText.trim()) && inlineText.length < 600 && inputFromUrlText) {
       input = await inputFromUrlText(inlineText);
     } else if (inlineText) {
-      const code = inlineText.replace(/^```(?:lua|luau)?\s*/i, '').replace(/```\s*$/, '');
+      const code = String(inlineText).replace(/^```(?:lua|luau)?\s*/i, '').replace(/```\s*$/, '');
       input = { source: code, filename: 'pasted.lua' };
-    } else {
+    } else if (collectInput) {
       input = await collectInput(message, prompt);
+    } else {
+      await prompt.edit({ content: 'Attach a `.lua` file, paste code, or pass a URL after `.l`', embeds: [] }).catch(() => {});
+      return;
     }
   } catch (error) {
-    await prompt.edit({ embeds: [dailyEmbed('Environment log', String(error.message || error).slice(0, 1500), DAILY_COLORS.danger)] }).catch(() => {});
+    const msg = String(error.message || error).slice(0, 1500);
+    if (prompt && prompt.edit) {
+      if (dailyEmbed && DAILY_COLORS) {
+        await prompt.edit({ embeds: [dailyEmbed('Environment log', msg, DAILY_COLORS.danger)] }).catch(() => {});
+      } else {
+        await prompt.edit({ content: '❌ ' + msg }).catch(() => {});
+      }
+    }
     return;
   }
 
@@ -95,33 +119,50 @@ async function startEnvLogWorkflow(message, inlineText, deps) {
     await fs.writeFile(inputPath, source, 'utf8');
     const analysis = analyze(source);
 
-    await prompt.edit({
-      embeds: [dailyEmbed('Environment log', `**${analysis.primary}** · ${formatBytes(Buffer.byteLength(source, 'utf8'))}\nSandbox + behavior reconstruction…`, DAILY_COLORS.primary)],
-    }).catch(() => {});
+    if (prompt.edit && dailyEmbed && DAILY_COLORS && formatBytes) {
+      await prompt.edit({
+        embeds: [dailyEmbed('Environment log', `**${analysis.primary}** · ${formatBytes(Buffer.byteLength(source, 'utf8'))}\nSandbox + behavior reconstruction…`, DAILY_COLORS.primary)],
+      }).catch(() => {});
+    }
 
+    const root = path.join(__dirname);
     const runner = path.join(root, 'src', 'run.js');
-    const budget = Number(process.env.ENVLOGGER_BUDGET || 30);
+    const budget = Math.min(20, Number(process.env.ENVLOGGER_BUDGET || 15));
     let log = '';
+
     if (fssync.existsSync(runner)) {
       await new Promise((resolve) => {
         const child = spawn(process.execPath, [runner, inputPath, '-o', outputPath, '--budget', String(budget)], {
           cwd: root,
           env: { ...process.env },
-          timeout: (budget + 25) * 1000,
         });
         let stdout = '';
+        let stderr = '';
         child.stdout.on('data', (d) => { stdout += d; });
+        child.stderr.on('data', (d) => { stderr += d; });
+        const killTimer = setTimeout(() => {
+          try { child.kill('SIGKILL'); } catch (_) {}
+        }, (budget + 10) * 1000);
         child.on('close', async () => {
-          try { log = await fs.readFile(outputPath, 'utf8'); } catch { log = stdout; }
+          clearTimeout(killTimer);
+          try { log = await fs.readFile(outputPath, 'utf8'); } catch { log = stdout || stderr; }
           resolve();
         });
-        child.on('error', () => resolve());
+        child.on('error', () => { clearTimeout(killTimer); resolve(); });
       });
     }
 
     if (!log) {
-      log = ['ENVLOGGER', 'source: ' + base + '.lua', 'bytes: ' + source.length, 'obfuscator: ' + analysis.primary, '---', '-- static only',
-        '-- urls:', ...analysis.urls.map(u => '--   ' + u)].join('\n');
+      log = [
+        'ENVLOGGER',
+        'source: ' + base + '.lua',
+        'bytes: ' + source.length,
+        'obfuscator: ' + analysis.primary,
+        '---',
+        '-- static only (runner missing or failed)',
+        '-- urls:',
+        ...analysis.urls.map((u) => '--   ' + u),
+      ].join('\n');
     }
 
     const behavior = extractBehavior(log);
@@ -141,41 +182,59 @@ async function startEnvLogWorkflow(message, inlineText, deps) {
     const dynOk = /-- ENVLOGGER report/i.test(log) && !/signal:\s*SIGILL/i.test(log);
     const elapsedMs = Date.now() - started;
     const tick = String.fromCharCode(96);
+    const sha = typeof sha256Hex === 'function' ? sha256Hex(source).slice(0, 16) : 'n/a';
+    const elapsed = typeof formatDuration === 'function' ? formatDuration(elapsedMs) : (Math.round(elapsedMs / 1000) + 's');
+    const bytes = typeof formatBytes === 'function' ? formatBytes(Buffer.byteLength(source, 'utf8')) : (source.length + ' B');
 
     const description = [
       '**Obfuscator:** ' + analysis.primary,
-      '**Input:** ' + formatBytes(Buffer.byteLength(source, 'utf8')) + ' · SHA-256 ' + tick + sha256Hex(source).slice(0, 16) + tick,
+      '**Input:** ' + bytes + ' · SHA-256 ' + tick + sha + tick,
       '**Dynamic:** ' + (dynOk ? ('ok · ' + stmts + ' stmts') : 'static + partial'),
       '**Behavior script:** ' + (behavior ? (behavior.split('\n').length + ' lines') : 'not produced'),
-      '**Elapsed:** ' + formatDuration(elapsedMs),
+      '**Elapsed:** ' + elapsed,
       '',
       'Attachments: full log + reconstructed behavior `.lua` (sandbox observation, **not** original source).',
     ].join('\n');
 
-    const embed = dailyEmbed('Environment log · ' + base, description, dynOk ? DAILY_COLORS.success : DAILY_COLORS.warning);
-    embed.addFields(
-      { name: 'API surface', value: ['loadstring: **' + analysis.stats.loadstring + '**', 'HttpGet: **' + analysis.stats.http + '**', 'getgenv: **' + analysis.stats.getgenv + '** · bit32: **' + analysis.stats.bit32 + '**', 'hooks: **' + analysis.stats.hooks + '**'].join('\n'), inline: false },
-      { name: 'URLs · ' + allUrls.length, value: brief(allUrls, 'None.'), inline: true },
-      { name: 'Services · ' + allServices.length, value: brief(allServices, 'None.'), inline: true },
-      { name: 'Remotes · ' + dynRemotes.length, value: brief(dynRemotes, 'None.'), inline: true },
-      { name: 'Prints · ' + dynPrints.length, value: brief(dynPrints, 'None captured.'), inline: false },
-      { name: 'Loadstring · ' + dynLoadstrings.length, value: brief(dynLoadstrings, 'None.'), inline: false },
-      { name: 'Errors', value: brief(dynErrors, 'None.'), inline: false }
-    );
-
     const files = [];
-    const add = (data, name) => {
-      const parts = splitUtf8Buffer(Buffer.from(data, 'utf8'), MAX_ATTACHMENT_PART_BYTES || 8 * 1024 * 1024);
-      if (parts.length === 1) files.push(new AttachmentBuilder(parts[0], { name }));
-      else parts.forEach((p, i) => files.push(new AttachmentBuilder(p, { name: name.replace(/\.txt$/, '') + '.part' + String(i + 1).padStart(2, '0') + '.txt' })));
-    };
-    add(log, base + '_envlog.txt');
-    if (behavior) {
-      add('-- Reconstructed from ENVLOGGER sandbox observations.\n-- NOT the original source.\n\n' + behavior + '\n', base + '_behavior.lua');
+    if (AttachmentBuilder && typeof splitUtf8Buffer === 'function') {
+      const add = (data, name) => {
+        const parts = splitUtf8Buffer(Buffer.from(data, 'utf8'), MAX_ATTACHMENT_PART_BYTES || 8 * 1024 * 1024);
+        if (parts.length === 1) files.push(new AttachmentBuilder(parts[0], { name }));
+        else parts.forEach((p, i) => files.push(new AttachmentBuilder(p, { name: name.replace(/\.txt$/, '') + '.part' + String(i + 1).padStart(2, '0') + '.txt' })));
+      };
+      add(log, base + '_envlog.txt');
+      if (behavior) {
+        add('-- Reconstructed from ENVLOGGER sandbox observations.\n-- NOT the original source.\n\n' + behavior + '\n', base + '_behavior.lua');
+      }
     }
-    await prompt.edit({ embeds: [embed], files });
+
+    if (dailyEmbed && DAILY_COLORS && prompt.edit) {
+      const embed = dailyEmbed('Environment log · ' + base, description, dynOk ? DAILY_COLORS.success : DAILY_COLORS.warning);
+      if (embed.addFields) {
+        embed.addFields(
+          { name: 'API surface', value: ['loadstring: **' + analysis.stats.loadstring + '**', 'HttpGet: **' + analysis.stats.http + '**', 'getgenv: **' + analysis.stats.getgenv + '** · bit32: **' + analysis.stats.bit32 + '**', 'hooks: **' + analysis.stats.hooks + '**'].join('\n'), inline: false },
+          { name: 'URLs · ' + allUrls.length, value: brief(allUrls, 'None.'), inline: true },
+          { name: 'Services · ' + allServices.length, value: brief(allServices, 'None.'), inline: true },
+          { name: 'Remotes · ' + dynRemotes.length, value: brief(dynRemotes, 'None.'), inline: true },
+          { name: 'Prints · ' + dynPrints.length, value: brief(dynPrints, 'None captured.'), inline: false },
+          { name: 'Loadstring · ' + dynLoadstrings.length, value: brief(dynLoadstrings, 'None.'), inline: false },
+          { name: 'Errors', value: brief(dynErrors, 'None.'), inline: false }
+        );
+      }
+      await prompt.edit({ embeds: [embed], files: files.length ? files : undefined });
+    } else {
+      await prompt.edit({ content: description.slice(0, 1800), files: files.length ? files : undefined }).catch(() => {});
+    }
   } catch (error) {
-    await prompt.edit({ embeds: [dailyEmbed('Environment log', String(error.message || error).slice(0, 1500), DAILY_COLORS.danger)] }).catch(() => {});
+    const msg = String(error.message || error).slice(0, 1500);
+    if (prompt && prompt.edit) {
+      if (dailyEmbed && DAILY_COLORS) {
+        await prompt.edit({ embeds: [dailyEmbed('Environment log', msg, DAILY_COLORS.danger)] }).catch(() => {});
+      } else {
+        await prompt.edit({ content: '❌ ' + msg }).catch(() => {});
+      }
+    }
   } finally {
     await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
   }

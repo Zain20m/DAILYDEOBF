@@ -1081,10 +1081,12 @@ class WalkIncomplete(Unsupported):
 
 def _walk_signature(lf, st, order):
     """A cheap convergence signature used to detect restart loops."""
-    carry = tuple(sorted(getattr(st, "carry", ()), key=repr))
-    jregs = tuple(sorted(lf.jump_regs, key=repr))
-    unstable = tuple(sorted(lf.pack_unstable, key=repr))
-    reqs = tuple(sorted(lf.requests))
+    # These collections are already sets. Frozensets compare directly and
+    # avoid sorting every item by repr on each walk restart.
+    carry = frozenset(getattr(st, "carry", ()))
+    jregs = frozenset(lf.jump_regs)
+    unstable = frozenset(lf.pack_unstable)
+    reqs = frozenset(lf.requests)
     return (jregs, carry, unstable, reqs, len(order), lf.stack_base)
 
 
@@ -4095,8 +4097,6 @@ class Program:
         states = {}         # key -> State
         facts = {}          # key -> dict of incoming facts
         order = []
-        self.pred = {}
-        self.edges = {}     # key -> set of successor keys (feasible)
         work = [s0.key(link)]
         states[work[0]] = s0
         facts[work[0]] = {}
@@ -4107,8 +4107,11 @@ class Program:
         hubs = set()        # stack VM: (mode, pc) of pop-and-jump instructions
         steps = 0
         nerr = 0
+        tmps = getattr(st, "temps", None) or ()
         while work and len(order) < limit:
-            if DEADLINE[0] is not None and time.time() > DEADLINE[0]:
+            # Poll the optional deadline every 16 processed states instead
+            # of performing a global lookup and clock read on every state.
+            if (steps & 15) == 0 and DEADLINE[0] is not None and time.time() > DEADLINE[0]:
                 raise Unsupported("time budget of a never-run function")
             k = work.pop()
             inwork.discard(k)
@@ -4148,10 +4151,10 @@ class Program:
                     # constant into junk code: keep what it asked for so far
                     break
             steps += 1
-            if steps % 2500 == 0 and os.environ.get("DEVIRT_PROGRESS"):
+            if steps % 500 == 0 and os.environ.get("DEVIRT_PROGRESS"):
                 pid = self.dump.pid_of_table.get(lf.proto.tid, "t%s" % lf.proto.tid)
-                print("[*] walk progress: proto %s, %d states visited (%d pending)"
-                      % (pid, steps, len(work)), file=sys.stderr, flush=True)
+                print("[*] walk progress: proto %s, %d states visited (%d pending), %d steps processed"
+                      % (pid, len(order), len(work), steps), file=sys.stderr, flush=True)
             if steps > limit * 20:
                 break
             if lf.stack_base is not None and len(order) > STACK_WALK_MAX and getattr(st, "carry", None):
@@ -4182,7 +4185,6 @@ class Program:
                         return s0, order, True
                     node.error = "symbolic next pc/mode: %s / %s" % (fmt_any(ns.pc), fmt_any(ns.mode))
                     continue
-                tmps = getattr(st, "temps", None) or ()
                 nsl = tuple(x for x in ns.locs if x[0] not in tmps) if tmps else ns.locs
                 ssl = tuple(x for x in s.locs if x[0] not in tmps) if tmps else s.locs
                 if nsl:
@@ -4212,11 +4214,9 @@ class Program:
                     if bad - lf.pack_unstable:
                         lf.pack_unstable |= bad
                         return s0, order, True
-                self.edges.setdefault(k, set()).add(nk)
                 if nk not in facts:
                     facts[nk] = nf
                     states[nk] = ns
-                    self.pred[nk] = k
                     changed = True
                 else:
                     old = facts[nk]
@@ -4226,7 +4226,6 @@ class Program:
                 if changed and nk not in inwork:
                     work.append(nk)
                     inwork.add(nk)
-        self.facts = facts
         if pending:
             lf.jump_regs |= pending
             return s0, order, True
@@ -4387,6 +4386,12 @@ class FunctionLifter:
 
     def _lift(self, vm, vmobj, proto, upvals, upnames, depth=0, orphan=False):
         self.stats["functions"] += 1
+        if os.environ.get("DEVIRT_PROGRESS") and (
+                self.stats["functions"] == 1 or self.stats["functions"] % 10 == 0):
+            pid = self.prog.dump.pid_of_table.get(proto.tid)
+            label = "#%s" % pid if pid is not None else "t%s" % proto.tid
+            print("[*] walk start: proto %s, %d functions started" %
+                  (label, self.stats["functions"]), file=sys.stderr, flush=True)
         self.lifted.add(id(proto))
         me = sys.modules[__name__]
 
@@ -4454,6 +4459,12 @@ class FunctionLifter:
         me = sys.modules[__name__]
         apply_frame_calls(order)
         drop_idle_closes(order, lf.captured_regs)
+        if os.environ.get("DEVIRT_PROGRESS"):
+            pid = self.prog.dump.pid_of_table.get(proto.tid)
+            label = "#%s" % pid if pid is not None else "t%s" % proto.tid
+            print("[*] lowering proto %s: %s states, %s child closures" %
+                  (label, format(len(order), ","), format(len(lf.children), ",")),
+                  file=sys.stderr, flush=True)
         prefix = REG_PREFIX[depth % len(REG_PREFIX)]
         lines, self.params, nerr, fallbacks = backend.lower(
             s0.key(vm.kstack_link), order, me, vm.kstack_link, prefix, upnames,

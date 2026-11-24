@@ -2225,7 +2225,7 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
   const largeFileRuntimeSeconds = [180, 240, 360, 480][largeFileTier];
   const largeFileSpinChecks = [8, 32, 64, 128][largeFileTier];
   // v14.7 short-job profile: avoid multi-minute defaults on ordinary files.
-  const v147FastProfile = (options.engineVersion || version) === '14.7';
+  const v147FastProfile = version === '14.7';
   const versionTag = version.replace('.', '');
   // 14.3 runs through the 14.7 devirtualizer (same VM family); see processLuraph143
   const engineVersion = options.engineVersion || version;

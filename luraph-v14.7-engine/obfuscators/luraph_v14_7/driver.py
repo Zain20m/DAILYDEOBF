@@ -68,7 +68,7 @@ def patch_entries(source, path):
     # dispatcher list so it does not scan the full AST to find loops again.
     entries = vmmap.closure_entries(root, dispatches)
 
-    for (l1, c1), pv in entries.items():
+    for l1, c1, pv in entries:
         # no locals: they would enlarge every VM frame, and Luraph mixes the
         # depth its stack-overflow probe reaches into its decryption keys.
         k = "(%s or __PID)" % pv

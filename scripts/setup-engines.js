@@ -85,6 +85,7 @@ if (!fs.existsSync(ironveilArchive)) {
 // Verify the shared Linux Luau binary on this host before any engine uses it.
 // A binary built with -march=native on a different CPU can terminate with SIGILL
 // (Node reports signal SIGILL / shell status 132; Python may report -4).
+let sharedRuntimeHealthy = process.platform === 'win32';
 if (process.platform !== 'win32') {
   const sharedBin = path.join(root, 'luraph-v15-engine', 'bin');
   const luau = path.join(sharedBin, 'luau');
@@ -98,17 +99,19 @@ if (process.platform !== 'win32') {
   try { smoke = testRuntime(); } finally { fs.rmSync(smokePath, { force: true }); }
   const healthy = !smoke.error && smoke.status === 0 &&
     String(smoke.stdout || '').includes('LUAU_RUNTIME_OK');
+  sharedRuntimeHealthy = healthy;
   if (!healthy) {
-    console.warn('[!] Shared Luau runtime failed its startup test; rebuilding portable binaries for this host.');
+    console.warn('[!] Shared Luau runtime failed its startup test; attempting a portable rebuild for this host.');
     const build = spawnSync(python, [
       path.join(root, 'luraph-v14.7-engine', 'build_luau.py'), '--portable',
     ], { cwd: root, encoding: 'utf8', timeout: 15 * 60 * 1000, maxBuffer: 8 * 1024 * 1024 });
     if (build.stdout) process.stdout.write(build.stdout);
     if (build.stderr) process.stderr.write(build.stderr);
     if (build.error || build.status !== 0) {
-      throw new Error('Portable Luau rebuild failed. Install git, cmake, g++, and Python, then restart. ' +
-        (build.error ? build.error.message : 'build exited with code ' + build.status));
-    }
+      console.warn('[!] Portable Luau rebuild unavailable: ' +
+        (build.error ? build.error.message : 'build exited with code ' + build.status) +
+        '. Continuing startup; Luraph engines that require this runtime may be unavailable on this host.');
+    } else {
     for (const binary of ['luau', 'luau-ast']) {
       const built = path.join(root, 'luraph-v14.7-engine', 'bin', binary);
       const destination = path.join(sharedBin, binary);
@@ -124,6 +127,8 @@ if (process.platform !== 'win32') {
         (verify.error ? verify.error.message : String(verify.stderr || verify.stdout || verify.status)));
     }
     console.log('[+] Portable Luau runtime passed startup test.');
+    sharedRuntimeHealthy = true;
+    }
   }
 }
 
@@ -138,7 +143,7 @@ for (const binary of ['luau', 'luau-ast']) {
   // On Linux, always replace stale engine-local binaries with the runtime
   // that just passed the host smoke test. Keeping an older v14.7 binary here
   // would leave the original SIGILL crash untouched.
-  if (fs.existsSync(source) && (process.platform !== 'win32' || !fs.existsSync(destination))) {
+  if (fs.existsSync(source) && (process.platform === 'win32' ? !fs.existsSync(destination) : sharedRuntimeHealthy)) {
     fs.copyFileSync(source, destination);
   }
   if (process.platform !== 'win32' && fs.existsSync(destination)) {

@@ -10,7 +10,7 @@ import re
 from obfuscators.luraph_v14_7 import LuraphV147
 
 _HEADER = re.compile(
-    r"This file was protected using Luraph Obfuscator v(14\\.(?:6|7|8|9))\\b",
+    r"This file was protected using Luraph Obfuscator v(14\.(?:6|7|8|9))\b",
     re.I,
 )
 

@@ -434,9 +434,10 @@ def _select_vm_factory(stack, stmts, disp):
     return None
 
 
-def closure_entries(root):
+def closure_entries(root, dispatches=None):
     """Return (line, col, proto-param-name) for each v14.x VM closure entry."""
-    dispatches = find_dispatchers(root)
+    if dispatches is None:
+        dispatches = find_dispatchers(root)
     by_node = {id(d["node"]): d for d in dispatches}
     seen = {}
 

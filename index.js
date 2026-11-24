@@ -2284,6 +2284,9 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
           DEVIRT_PROGRESS: '1',
           DEVIRT_ERRS: '1',
           DEVIRT_TB: '1',
+          // Two full source-generation passes keep Discord v14 runs responsive.
+          // Raise DEVIRT_MAX_FULL_LIFTS when a difficult sample needs more rounds.
+          DEVIRT_MAX_FULL_LIFTS: process.env.DEVIRT_MAX_FULL_LIFTS || '2',
           // Keep variable-count copy modelling enabled for fast v14.7 runs:
           // turning it off on every >400 KB input was saving time but losing code.
           // Respect an explicit low-memory setting; other versions retain the

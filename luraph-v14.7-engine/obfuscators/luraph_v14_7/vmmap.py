@@ -40,7 +40,22 @@ def luau_ast_executable():
     )
 
 
+_AST_CACHE = {}
+_AST_CACHE_MAX = 8
+
+
 def load_ast(path):
+    # patch_entries() and the later devirtualizer analyze the same source.
+    # Reuse its parsed tree rather than starting luau-ast a second time.
+    try:
+        st = os.stat(path)
+        cache_key = (os.path.realpath(path), st.st_mtime_ns, st.st_size)
+        cached = _AST_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+    except OSError:
+        cache_key = None
+
     exe = luau_ast_executable()
     r = subprocess.run([exe, path], capture_output=True)
     errs = r.stderr.decode("latin-1").strip().splitlines()
@@ -48,7 +63,12 @@ def load_ast(path):
         raise SyntaxError("not valid Luau (%s)" % (errs[1].strip() if len(errs) > 1 else "luau-ast exit %#x"
                                                    % (r.returncode & 0xFFFFFFFF)))
     out = r.stdout
-    return json.loads(out.decode("latin-1"))["root"]
+    root = json.loads(out.decode("latin-1"))["root"]
+    if cache_key is not None:
+        if len(_AST_CACHE) >= _AST_CACHE_MAX:
+            _AST_CACHE.clear()
+        _AST_CACHE[cache_key] = root
+    return root
 
 
 def loc(node):
@@ -458,9 +478,14 @@ def decl_key(local):
     return local["location"]
 
 
-def maker_info(root):
-    """Return runtime-capture metadata for v14.7, v14.8 and v14.9 makers."""
-    dispatches = find_dispatchers(root)
+def maker_info(root, dispatches=None):
+    """Return runtime-capture metadata for v14.7, v14.8 and v14.9 makers.
+
+    Callers that already found dispatchers can pass them in, avoiding another
+    full AST traversal.
+    """
+    if dispatches is None:
+        dispatches = find_dispatchers(root)
     by_node = {id(d["node"]): d for d in dispatches}
     out = {}
 

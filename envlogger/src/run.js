@@ -69,24 +69,25 @@ function fingerprint(src) {
 
 function redactUrl(value) {
   return String(value)
-    .replace(/([?&][^=&]*(?:token|key|auth|secret|password|session|signature|code)[^=&]*=)[^&#\\s]*/gi, '$1[REDACTED]')
-    .replace(/(discord(?:app)?\\.com\\/api\\/webhooks\\/\\d+\\/)[^/\\s?#]+/gi, '$1[REDACTED]');
+    .replace(/([?&][^=&]*(?:token|key|auth|secret|password|session|signature|code)[^=&]*=)[^&#\s]*/gi, '$1[REDACTED]')
+    .replace(/(discord(?:app)?\.com\/api\/webhooks\/\d+\/)[^/\s?#]+/gi, '$1[REDACTED]');
 }
 
 const API_INDICATORS = [
-  ['task.wait', /\\btask\\.wait\\s*\\(/gi],
-  ['task.spawn', /\\btask\\.spawn\\s*\\(/gi],
-  ['task.delay', /\\btask\\.delay\\s*\\(/gi],
-  ['request', /\\b(?:request|http_request)\\s*\\(/gi],
-  ['getgc', /\\bgetgc\\s*\\(/gi],
-  ['getconnections', /\\bgetconnections\\s*\\(/gi],
-  ['getupvalues', /\\bgetupvalues?\\s*\\(/gi],
-  ['getconstants', /\\bgetconstants?\\s*\\(/gi],
-  ['getrawmetatable', /\\bgetrawmetatable\\s*\\(/gi],
-  ['Instance.new', /\\bInstance\\.new\\s*\\(/gi],
-  ['RemoteEvent calls', /\\bFireServer\\s*\\(/gi],
-  ['RemoteFunction calls', /\\bInvokeServer\\s*\\(/gi],
+  ['task.wait', /\btask\.wait\s*\(/gi],
+  ['task.spawn', /\btask\.spawn\s*\(/gi],
+  ['task.delay', /\btask\.delay\s*\(/gi],
+  ['request', /\b(?:request|http_request)\s*\(/gi],
+  ['getgc', /\bgetgc\s*\(/gi],
+  ['getconnections', /\bgetconnections\s*\(/gi],
+  ['getupvalues', /\bgetupvalues?\s*\(/gi],
+  ['getconstants', /\bgetconstants?\s*\(/gi],
+  ['getrawmetatable', /\bgetrawmetatable\s*\(/gi],
+  ['Instance.new', /\bInstance\.new\s*\(/gi],
+  ['RemoteEvent calls', /\bFireServer\s*\(/gi],
+  ['RemoteFunction calls', /\bInvokeServer\s*\(/gi],
 ];
+
 
 function staticBlock(src, label) {
   const urls = [...new Set((src.match(/https?:\/\/[^\s"'`\)\]\}>]+/gi) || []).map(u => redactUrl(u.replace(/[.,;:]+$/, ''))))].slice(0, 30);

@@ -183,28 +183,75 @@ ENV.utf8 = utf8
 ENV.coroutine = coroutine
 ENV.os = { clock = os.clock, time = os.time, date = os.date }
 ENV.tick = function() return 1700000000 + os.clock() end
+local scheduledTasks = {}
+local scheduledTaskCount = 0
+local MAX_SCHEDULED_TASKS = 200
+
+local function scheduleTask(kind, delay, fn)
+	if type(fn) ~= "function" then
+		emit("TASK", "ignored " .. kind .. " without callback")
+		return false
+	end
+	if scheduledTaskCount >= MAX_SCHEDULED_TASKS then
+		emit("TASK", "schedule cap reached; ignored " .. kind)
+		return false
+	end
+	local due = simulatedWait + math.max(0, tonumber(delay) or 0)
+	if due > TIME_BUDGET then
+		emit("TASK", "ignored " .. kind .. " beyond virtual time budget")
+		return false
+	end
+	scheduledTaskCount += 1
+	scheduledTasks[#scheduledTasks + 1] = { kind = kind, due = due, callback = fn }
+	emit("TASK", "queued " .. kind .. " for +" .. string.format("%.2f", due) .. "s")
+	return true
+end
+
+local function drainScheduledTasks()
+	local executed = 0
+	while #scheduledTasks > 0 and executed < MAX_SCHEDULED_TASKS do
+		table.sort(scheduledTasks, function(a, b) return a.due < b.due end)
+		local item = table.remove(scheduledTasks, 1)
+		if item.due > TIME_BUDGET then
+			emit("TASK", "stopped queue at virtual time budget")
+			break
+		end
+		simulatedWait = math.max(simulatedWait, item.due)
+		emit("TASK", "resuming " .. item.kind .. " at +" .. string.format("%.2f", simulatedWait) .. "s")
+		local ok, err = pcall(item.callback)
+		if not ok then noteError("task." .. item.kind, err) end
+		executed += 1
+	end
+	if #scheduledTasks > 0 then
+		emit("TASK", "task execution cap reached; " .. tostring(#scheduledTasks) .. " callback(s) skipped")
+	end
+end
+
 ENV.task = {
 	wait = function(t)
 		local delay = math.max(0, tonumber(t) or 0)
+		if simulatedWait + delay > TIME_BUDGET then
+			emit("TASK", "task.wait exceeded virtual time budget")
+			error("ENVLOGGER virtual time budget exceeded", 2)
+		end
 		simulatedWait += delay
-		emit("TASK", "task.wait(" .. tostring(delay) .. ") [simulated; total=" .. string.format("%.2f", simulatedWait) .. "s]")
+		emit("TASK", "task.wait(" .. tostring(delay) .. ") [virtual total=" .. string.format("%.2f", simulatedWait) .. "s]")
 		beh(string.format("task.wait(%s) -- simulated in sandbox", tostring(delay)))
 		return delay
 	end,
 	spawn = function(fn)
-		emit("TASK", "task.spawn")
 		beh("task.spawn(function() ... end)")
-		if type(fn) == "function" then pcall(fn) end
+		return scheduleTask("spawn", 0, fn)
 	end,
 	delay = function(t, fn)
-		emit("TASK", "task.delay")
-		if type(fn) == "function" then pcall(fn) end
+		beh(string.format("task.delay(%s, function() ... end)", tostring(t or 0)))
+		return scheduleTask("delay", t, fn)
 	end,
 	defer = function(fn)
-		emit("TASK", "task.defer [executed immediately in sandbox]")
-		if type(fn) == "function" then pcall(fn) end
+		beh("task.defer(function() ... end)")
+		return scheduleTask("defer", 0, fn)
 	end,
-	cancel = function() end,
+	cancel = function() emit("TASK", "task.cancel (no-op sandbox)") end,
 }
 ENV.wait = ENV.task.wait
 ENV.spawn = ENV.task.spawn
@@ -332,6 +379,7 @@ else
 	if setfenv then setfenv(chunk, ENV) end
 	local ok, err = pcall(chunk)
 	if not ok then noteError("runtime", err) end
+	drainScheduledTasks()
 end
 emit("BOOT", "envlogger end stmts=" .. tostring(stmtCount))
 

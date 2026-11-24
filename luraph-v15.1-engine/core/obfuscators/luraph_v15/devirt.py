@@ -4442,6 +4442,7 @@ class Program:
         hubs = set()        
         steps = 0
         nerr = 0
+        unique_locations = set()
         unique_seen = 0
         plateau = 0
         last_progress_report = time.monotonic()
@@ -4477,8 +4478,11 @@ class Program:
                     return s0, order, True
                 nodes[k] = node
                 order.append((k, node))
+                location = (k[0], k[1])
+                if location not in unique_locations:
+                    unique_locations.add(location)
                 if len(order) % 5000 == 0:
-                    seen_now = len(set((kk[0], kk[1]) for kk, _ in order))
+                    seen_now = len(unique_locations)
                     if seen_now == unique_seen:
                         plateau += 5000
                         if plateau >= 25000:
@@ -4491,7 +4495,7 @@ class Program:
                     break
             steps += 1
             now = time.monotonic()
-            if now - last_progress_report >= 2.5:
+            if now - last_progress_report >= 1.0:
                 print("[*] walk progress: proto %s, %s states visited (%s pending), %s steps processed" %
                       (proto_label, format(len(order), ","), format(len(work), ","), format(steps, ",")),
                       file=sys.stderr, flush=True)
@@ -4729,6 +4733,13 @@ class FunctionLifter:
 
     def lift(self, vm, vmobj, proto, upvals, upnames, depth=0, shared=None, init_facts=None):
         self.stats["functions"] += 1
+        pid = self.prog.dump.pid_of_table.get(proto.tid)
+        if os.environ.get("DEVIRT_PROGRESS", "1") != "0":
+            started = self.stats["functions"]
+            if started == 1 or started % 10 == 0:
+                label = "#%s" % pid if pid is not None else "t%s" % proto.tid
+                print("[*] walk start: proto %s, %d functions started" %
+                      (label, started), file=sys.stderr, flush=True)
         self.lifted.add(id(proto))
         prefix = REG_PREFIX[depth % len(REG_PREFIX)]
         cap = self.prog.dump.cap_by_self.get(proto.tid)
@@ -4774,6 +4785,11 @@ class FunctionLifter:
         me = sys.modules[__name__]
         apply_frame_calls(order)
         drop_idle_closes(order, lf.captured_regs)
+        if os.environ.get("DEVIRT_PROGRESS", "1") != "0":
+            print("[*] lowering proto %s: %s states, %s child closures" %
+                  (pid if pid is not None else "t%s" % proto.tid,
+                   format(len(order), ","), format(len(lf.children), ",")),
+                  file=sys.stderr, flush=True)
         lines, self.params, nerr, fallbacks = backend.lower(
             s0.key(vm.kstack_link), order, me, vm.kstack_link, prefix, upnames,
             lambda x, names: self.closure(vm, vmobj, x, names, depth, lf))

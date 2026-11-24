@@ -42,6 +42,15 @@ local function typeSummary(value)
   return kind
 end
 
+local function redactText(value)
+  local text = tostring(value or "")
+  text = string.gsub(text, "([Ss][Cc][Rr][Ii][Pp][Tt]_[Kk][Ee][Yy]%s*=%s*[\"'])[^\"']*([\"'])", "%1[REDACTED]%2")
+  text = string.gsub(text, "([Tt][Oo][Kk][Ee][Nn]%s*=%s*[\"'])[^\"']*([\"'])", "%1[REDACTED]%2")
+  text = string.gsub(text, "([Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]%s*=%s*[\"'])[^\"']*([\"'])", "%1[REDACTED]%2")
+  text = string.gsub(text, "(Bearer%s+)[%w%._%-]+", "%1[REDACTED]")
+  return text
+end
+
 local function safeUrl(value)
   local url = tostring(value or "")
   url = string.gsub(url, "([?&][%w_%-]*token[%w_%-]*=)[^&%s]+", "%1[REDACTED]")
@@ -53,7 +62,7 @@ local function safeUrl(value)
 end
 
 local function noteError(where, err)
-	errors[#errors + 1] = where .. ": " .. trunc(err, 240)
+	errors[#errors + 1] = where .. ": " .. trunc(redactText(err), 240)
 	emit("ERROR", where .. " -> " .. trunc(err, 240))
 end
 
@@ -126,7 +135,7 @@ end
 ENV.print = function(...)
 	local n = select("#", ...)
 	local parts = {}
-	for i = 1, n do parts[i] = tostring(select(i, ...)) end
+	for i = 1, n do parts[i] = redactText(tostring(select(i, ...))) end
 	local msg = table.concat(parts, "\t")
 	prints[#prints + 1] = msg
 	emit("PRINT", trunc(msg, 200))
@@ -263,7 +272,7 @@ ENV.loadstring = function(src, chunkname)
 	emit("LOADSTRING", "loadstring(" .. tostring(size) .. " bytes)")
 	beh(string.format("-- loadstring(%d bytes)", size))
 	if type(src) == "string" and CAPTURE_LOADSTRING and size > 0 then
-		loadstrings[#loadstrings + 1] = { size = size, head = src:sub(1, 400), body = src }
+		loadstrings[#loadstrings + 1] = { size = size, head = redactText(src:sub(1, 400)), body = redactText(src) }
 		if string.find(src, "__PID", 1, true) or string.find(src, "__ENT", 1, true)
 			or string.find(src, "__venv", 1, true) or string.find(src, "envlog", 1, true) then
 			emit("ANTIVM", "loadstring body scans for envlogger/sandbox markers")

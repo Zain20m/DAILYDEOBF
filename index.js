@@ -2224,6 +2224,8 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
     : inputBytes >= 500 * 1024 ? 1 : 0;
   const largeFileRuntimeSeconds = [180, 240, 360, 480][largeFileTier];
   const largeFileSpinChecks = [8, 32, 64, 128][largeFileTier];
+  // v14.7 short-job profile: avoid multi-minute defaults on ordinary files.
+  const v147FastProfile = (options.engineVersion || version) === '14.7';
   const versionTag = version.replace('.', '');
   // 14.3 runs through the 14.7 devirtualizer (same VM family); see processLuraph143
   const engineVersion = options.engineVersion || version;
@@ -2249,9 +2251,11 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
       ENGINE_V14X_CLI,
       inputPath,
       outputPath,
-      options.fast
-        ? 210_000
-        : (Number.isFinite(options.hardTimeoutMs) ? options.hardTimeoutMs : ENGINE_TIMEOUT_MS),
+      v147FastProfile
+        ? 60_000
+        : (options.fast
+          ? 210_000
+          : (Number.isFinite(options.hardTimeoutMs) ? options.hardTimeoutMs : ENGINE_TIMEOUT_MS)),
       [
         '--engine', engineVersion,
         '--strings',
@@ -2259,15 +2263,13 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
         // failing, and keep the work files so the other result can be attached.
         '--trace-fallback',
         '--keep-work',
-        '--timeout', String(Number.isFinite(options.runtimeTimeoutSeconds) ? options.runtimeTimeoutSeconds : 120),
-        // Shared v14.x profile: enough trap retries to capture more VM chunks,
-        // with a bounded runtime instead of the old 10+ minute worst case.
-        '--max-runs', options.fast ? '6' : '16',
-        '--devirt-rounds', options.fast ? '120' : '200',
-        // Give large protected payloads more trace time without removing the
-        // watchdog. 5 MB+ files receive the longest bounded runtime window.
-        '--budget', options.fast ? '30' : String([60, 90, 120, 150][largeFileTier]),
-        '--timeout', options.fast ? '60' : String(largeFileRuntimeSeconds),
+        '--timeout', String(v147FastProfile ? 30 : (Number.isFinite(options.runtimeTimeoutSeconds) ? options.runtimeTimeoutSeconds : 120)),
+        // v14.7: cap trap reruns and constant-walk rounds for short jobs.
+        // Other 14.x versions retain their existing recovery profile.
+        '--max-runs', v147FastProfile ? '5' : (options.fast ? '6' : '16'),
+        '--devirt-rounds', v147FastProfile ? '40' : (options.fast ? '120' : '200'),
+        '--budget', v147FastProfile ? '30' : (options.fast ? '30' : String([60, 90, 120, 150][largeFileTier])),
+        '--timeout', v147FastProfile ? '30' : (options.fast ? '60' : String(largeFileRuntimeSeconds)),
       ],
       {
         env: {

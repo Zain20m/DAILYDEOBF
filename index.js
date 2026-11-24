@@ -3053,7 +3053,7 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
           DEOB_CANDIDATE_IDLE_TIMEOUT_MS: '180000',
           // (no DEVIRT_LOADERS: it lifts Luraph's own loader VMs too, which
           // buried the script in thousands of lines of runtime code)
-          DEVIRT_FULL_ROUNDS: '', // fast rounds: walk only, one full lift at the end (same result, ~2x faster)
+          DEVIRT_FULL_ROUNDS: '', // reuse cached walk-only rounds instead of repeating a full lift for each constant request
           DEVIRT_TIMING: '1',
           DEVIRT_PROGRESS: '1',
           DEVIRT_ERRS: '1',

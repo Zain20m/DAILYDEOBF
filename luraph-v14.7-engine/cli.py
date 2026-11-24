@@ -12,11 +12,12 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 VERSION_RE = re.compile(
-    r"This file was protected using Luraph Obfuscator v(14\.(?:7|8|9))\b",
+    r"This file was protected using Luraph Obfuscator v(14\.(?:6|7|8|9))\b",
     re.I,
 )
 
 ENGINE_MODULES = {
+    "14.6": "obfuscators.luraph_v14_6",
     "14.7": "obfuscators.luraph_v14_7",
     "14.8": "obfuscators.luraph_v14_8",
     "14.9": "obfuscators.luraph_v14_9",
@@ -43,6 +44,7 @@ def find_project_root() -> Path:
 def prepare_obfuscators(root: Path) -> None:
     """Unpack the Python engine package when the host only has its ZIP."""
     module_files = (
+        root / "obfuscators" / "luraph_v14_6" / "__init__.py",
         root / "obfuscators" / "luraph_v14_7" / "__init__.py",
         root / "obfuscators" / "luraph_v14_8" / "__init__.py",
         root / "obfuscators" / "luraph_v14_9" / "__init__.py",
@@ -106,12 +108,12 @@ def load_engine(version: str):
     except ModuleNotFoundError as exc:
         if exc.name == module_name or exc.name.startswith(module_name + "."):
             raise SystemExit(
-                f"[!] {module_name} was not found. Put luraph_v14_7, luraph_v14_8 and "
-                f"luraph_v14_9 inside {ROOT / 'obfuscators'}"
+                f"[!] {module_name} was not found. Put luraph_v14_6, luraph_v14_7, "
+                f"luraph_v14_8 and luraph_v14_9 inside {ROOT / 'obfuscators'}"
             ) from exc
         raise
 
-    wanted = {"14.7": "LuraphV147", "14.8": "LuraphV148", "14.9": "LuraphV149"}[version]
+    wanted = {"14.6": "LuraphV146", "14.7": "LuraphV147", "14.8": "LuraphV148", "14.9": "LuraphV149"}[version]
     cls = getattr(mod, wanted, None)
     if cls is None:
         # Be tolerant of class renames: choose the first class that looks like
@@ -174,13 +176,13 @@ class Job:
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="cli.py",
-        description="Luraph v14.7 / v14.8 / v14.9 deobfuscator frontend",
+        description="Luraph v14.6 / v14.7 / v14.8 / v14.9 deobfuscator frontend",
     )
     p.add_argument("input", help="protected .lua/.luau file")
     p.add_argument("-o", "--output", help="output file (default: deobfuscated.lua beside input)")
     p.add_argument(
         "--engine",
-        choices=("auto", "14.7", "14.8", "14.9", "v14.7", "v14.8", "v14.9"),
+        choices=("auto", "14.6", "14.7", "14.8", "14.9", "v14.6", "v14.7", "v14.8", "v14.9"),
         default="auto",
         help="force a Luraph engine (default: auto)",
     )
@@ -280,7 +282,7 @@ def main(argv=None) -> int:
     if chosen == "auto":
         chosen = detect_version(source)
         if chosen is None:
-            eprint("[!] could not determine whether this is Luraph v14.7 or v14.8")
+            eprint("[!] could not determine whether this is Luraph v14.6, v14.7, v14.8 or v14.9")
             eprint("    retry with --engine 14.7 or --engine 14.8")
             return 2
 

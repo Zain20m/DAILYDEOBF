@@ -3494,6 +3494,13 @@ function extractJnkIeDownloadUrl(sourceText) {
   return match ? match[0].replace(/[)\]},.;]+$/g, '') : null;
 }
 
+function extractJnkIeDeliveryUrl(sourceText) {
+  const match = String(sourceText || '').match(
+    /https:\/\/api\.jnkie\.com\/api\/v1\/luascripts\/delivery\/([a-f0-9]{32,128})(?:\?[^\s"'<>]*)?/i
+  );
+  return match ? match[0].replace(/[)\]},.;]+$/g, '') : null;
+}
+
 async function fetchJnkIeLoaderSource(rawUrl, _credentialText = '', existingStage1 = '') {
   const loaderUrl = new URL(rawUrl);
   const match = loaderUrl.pathname.match(
@@ -4684,8 +4691,27 @@ async function processLuaProtectFetcher(message, prompt, input) {
 
 async function processJnkIeFetcher(message, prompt, input) {
   const combined = String(input.originalText || '') + '\n' + String(input.source || '');
+  const deliveryUrl = extractJnkIeDeliveryUrl(combined) ||
+    (input.url && /\/api\/v1\/luascripts\/delivery\//i.test(input.url) ? input.url : null);
+  if (deliveryUrl) {
+    const parsed = new URL(deliveryUrl);
+    const match = parsed.pathname.match(/^\/api\/v1\/luascripts\/delivery\/([a-f0-9]{32,128})\/?$/i);
+    if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== 'api.jnkie.com' || !match) {
+      throw new Error('This is not a supported JNKIE delivery endpoint.');
+    }
+    await prompt.edit({
+      embeds: [dailyEmbed(
+        'JNKIE authenticated delivery detected',
+        'Detected script ID **' + match[1] + '**. This endpoint requires a valid script key in a POST request and may return a temporary delivery URL. DAILYDEOBF cannot replace the key with `KEYLESS`, bypass the provider check, or safely collect private keys in Discord.\n\nThe loader must be run through JNKIE’s authorized executor flow. The supplied loader can still be analyzed as stage-one source, but the protected payload is not available from the ID alone.',
+        DAILY_COLORS.warning
+      )],
+      components: [],
+    });
+    return;
+  }
+
   const rawUrl = input.url || extractJnkIeDownloadUrl(combined);
-  if (!rawUrl) throw new Error('No supported JNKIE public download URL was found in the supplied source.');
+  if (!rawUrl) throw new Error('No supported JNKIE public download or authenticated delivery URL was found in the supplied source.');
 
   const existingStage1 = input.url && input.responseStatus
     ? String(input.source || '')

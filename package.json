@@ -5,8 +5,7 @@
   "description": "DAILY DEOBF Discord bot for Luau source analysis",
   "main": "index.js",
   "scripts": {
-    "start": "node scripts/setup-engines.js && node scripts/setup-beautify.js && node scripts/setup-envlogger.js && node index.js",
-    "setup:envlogger": "node scripts/setup-envlogger.js",
+    "start": "node scripts/setup-engines.js && node scripts/setup-beautify.js && node index.js",
     "check": "node --check index.js && node --check luraph-v15.1-engine/deob.js && node --check luraph-v15.2-engine/deob.js && node --check luraph-v15.1-engine/src/driver.js && node --check luraph-v15.1-engine/src/parallel.js && node --check scripts/luau-cleaner.js && node --check scripts/lift-validation.js && node --check scripts/test-lift-validation.js && node --check scripts/setup-engines.js && node --check scripts/imported-engine-runner.js && node scripts/test-lift-validation.js && node luraph-v15.1-engine/test/run.js && node --check scripts/idx-resolver.js && node --check pureluau.js && node --check scripts/automatic-pureluau.js && node --check scripts/test-automatic-pureluau.js && node --check scripts/test-pureluau.js && node --test scripts/test-pureluau.js scripts/test-automatic-pureluau.js scripts/test-idx-resolver.js && node --check scripts/ironbrew-detection.js && node --check scripts/engine-detection.js && node --check scripts/test-ironbrew-detection.js && node --check scripts/dailyfuscator-runtime.js && node --check scripts/test-dailyfuscator.js && node --test scripts/test-ironbrew-detection.js scripts/test-engine-detection.js scripts/test-dailyfuscator.js",
     "test": "node --test scripts/test-pureluau.js scripts/test-automatic-pureluau.js scripts/test-idx-resolver.js scripts/test-ironbrew-detection.js scripts/test-engine-detection.js scripts/test-dailyfuscator.js"
   },

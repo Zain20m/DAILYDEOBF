@@ -4565,7 +4565,9 @@ async function startDedicatedFetch(message, inlineText) {
   });
 
   if (selectedProvider === 'luaprotect') {
-    const url = input.url || extractLuaProtectRunnerUrl(combined);
+    // Prefer the hash-derived runner-body URL when the user pasted a full
+    // loader stub. Its HOST_URL/WS_URL values are not download URLs.
+    const url = extractLuaProtectRunnerUrl(combined) || input.url;
     await processLuaProtectFetcher(message, prompt, { ...input, url });
     return;
   }
@@ -4670,7 +4672,12 @@ async function sendLuaProtectRunnerBody(message, prompt, sourceText, directUrl =
 
 async function processLuaProtectFetcher(message, prompt, input) {
   const combined = String(input.originalText || '') + '\n' + String(input.source || '');
-  const rawUrl = input.url || (combined.match(/https?:\/\/[^\s"'<>]+/i) || [])[0];
+  // A pasted LuaProtect stub contains several unrelated URLs (HOST_URL,
+  // WS_URL, etc.). The _h hash is the runner-body identifier, so it must
+  // take priority over the first URL found in the pasted text.
+  const hashUrl = extractLuaProtectRunnerUrl(combined);
+  const suppliedUrl = input.url || (combined.match(/https?:\/\/[^\s"'<>]+/i) || [])[0];
+  const rawUrl = hashUrl || suppliedUrl;
   return sendLuaProtectRunnerBody(message, prompt, combined, rawUrl || null);
 }
 

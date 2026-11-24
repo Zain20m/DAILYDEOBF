@@ -127,6 +127,7 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
     cache = devirt.WalkCache()
     t0 = time.time()
     full_lifts = 0
+    best = None
     for rnd in range(1, rounds + 1):
         t1 = time.time()
         full = not quick
@@ -153,6 +154,18 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
                   % (stats["functions"], stats["errors"], stats["fallbacks"], len(new), time.time() - t1),
                   file=sys.stderr)
             full_lifts += 1
+            # Keep the strongest source candidate seen so a later constant
+            # round cannot replace a cleaner lift with a worse one.
+            score = (
+                int((stats or {}).get("errors", 0)),
+                int((stats or {}).get("fallbacks", 0)),
+                -int((stats or {}).get("functions", 0)),
+            )
+            if best is None or score < best[0]:
+                best = (score, text, stats)
+            else:
+                print("[*]   keeping the earlier lift (%d unlifted blocks, %d functions)" %
+                      (best[0][0], -best[0][2]), file=sys.stderr)
             # keep this lift on disk: if a later round is killed (memory, time),
             # it is still there for the bot to send
             try:
@@ -192,6 +205,8 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
             break
         with open(ppath, "w", encoding="utf-8", newline="\n") as f:
             f.write(m.group(1))
+    if best is not None:
+        text, stats = best[1], best[2]
     finished = devirt.finish_text(text or "").strip()
     # Avoid duplicate/stale credit headers when the same output path is reused.
     finished = re.sub(r"^(?:-- Devirtualized with Luraph v14\.[789] engine\s*)+", "", finished).lstrip()

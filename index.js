@@ -67,8 +67,8 @@ const ENGINE_151_DIR = path.join(__dirname, 'luraph-v15.1-engine');
 const ENGINE_152_DIR = path.join(__dirname, 'luraph-v15.2-engine');
 const ENGINE_152_CLI = path.join(ENGINE_152_DIR, 'deob.js');
 const ENGINE_151_CLI = path.join(ENGINE_151_DIR, 'deob.js');
-const ENGINE_V147_DIR = path.join(__dirname, 'luraph-v14.7-engine');
-const ENGINE_V147_CLI = path.join(ENGINE_V147_DIR, 'cli.py');
+const ENGINE_V14X_DIR = path.join(__dirname, 'luraph-v14.7-engine');
+const ENGINE_V14X_CLI = path.join(ENGINE_V14X_DIR, 'cli.py');
 const ENGINE_V143_DIR = path.join(__dirname, 'luraph-v14.3-engine');
 const ENGINE_V143_CLI = path.join(ENGINE_V143_DIR, 'daily_cli.py');
 const ENGINE_CENT_DIR = path.join(__dirname, 'centurion-engine');
@@ -2239,14 +2239,14 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
     await fs.writeFile(inputPath, input.source, { encoding: 'utf8', mode: 0o600 });
     await progress.start();
     await progress.setPhase(
-      'Loading the dedicated Luraph v' + version + ' engine',
-      'Using the separate v' + version + ' VM mapper, runtime harness and devirtualizer.'
+      'Loading the Luraph v' + version + ' engine adapter',
+      'Using the shared 14.x VM mapper, runtime harness and devirtualizer with the v' + version + ' adapter.'
     );
 
     let engineError = null;
     const result = await runPythonEngine(
-      ENGINE_V147_DIR,
-      ENGINE_V147_CLI,
+      ENGINE_V14X_DIR,
+      ENGINE_V14X_CLI,
       inputPath,
       outputPath,
       options.fast

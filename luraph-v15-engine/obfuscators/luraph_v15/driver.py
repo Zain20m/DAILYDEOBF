@@ -96,7 +96,7 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
     last_bufs = ""
     text = None
     rounds = args.devirt_rounds
-    max_full_lifts = max(1, int(os.environ.get("DEVIRT_MAX_FULL_LIFTS", "2")))
+    max_full_lifts = max(1, int(os.environ.get("DEVIRT_MAX_FULL_LIFTS", "4")))
     full_lifts = 0
     best = None
     print("[*] lift limits: %d CFG states/function, %d walk restarts, %d stack depths/PC, %d stack states/function"

@@ -52,54 +52,63 @@ def patch_chunk(src, tmpdir):
 
 
 def patch_entries(source, path):
-    """Give every VM closure an entry hook. It only uses table operations (no
-    calls, no locals), so the stack looks exactly as it would without it: it numbers
-    protos in first-entry order, logs recent entries and returns early for the
-    protos listed in __SKIPP."""
+    """Instrument VM closures, reusing one AST discovery pass for all hooks."""
     from obfuscators.luraph_v14_7 import vmmap
+    t0 = time.perf_counter()
     root = vmmap.load_ast(path)
     lines = source.split("\n")
     edits = []
-    for l1, c1, pv in vmmap.closure_entries(root):
+
+    # Find dispatch loops once. maker_info uses the same result to locate both
+    # closure factories and their capture metadata.
+    dispatches = vmmap.find_dispatchers(root)
+    makers = vmmap.maker_info(root, dispatches)
+
+    # closure_entries() used to perform another complete AST walk and another
+    # dispatcher search. Its result is derivable from the maker records:
+    # both paths use the same VM factory selection and proto parameter.
+    entries = {}
+    for info in makers:
+        body = info["vm"].get("body", {}).get("body", [])
+        if body:
+            l1, c1, _, _ = vmmap.loc(body[0])
+            entries[(l1, c1)] = info["proto"]
+
+    for (l1, c1), pv in entries.items():
         # no locals: they would enlarge every VM frame, and Luraph mixes the
         # depth its stack-overflow probe reaches into its decryption keys.
-        # __PLAST[pid] = entry number of the latest entry of that proto (it
-        # tells invocations apart when statements are attributed to protos)
         k = "(%s or __PID)" % pv
         edits.append((l1, c1, ("if not __PID[{k}] then __PID.n=__PID.n+1;__PID[{k}]=__PID.n;end;"
                                "__ENT.n=__ENT.n+1;__ENT[__ENT.n%64]=__PID[{k}];__PLAST[__PID[{k}]]=__ENT.n;"
                                "if __SKIPP[__PID[{k}]] then return end;").format(k=k)))
-    # closure -> proto, recorded where the closure is made (not per call), so
-    # the runtime can map the functions on the Lua stack back to protos
+
+    # closure -> proto, recorded where the closure is made (not per call)
     tag = harness.chunk_key(source)
-    makers = vmmap.maker_info(root)
     if os.environ.get("DEVIRT_DEBUG"):
         print("[*] v14.x mapper: %d dispatcher(s), %d entry hook(s), %d maker(s)" %
-              (len(vmmap.find_dispatchers(root)), len(vmmap.closure_entries(root)), len(makers)), file=sys.stderr)
+              (len(dispatches), len(entries), len(makers)), file=sys.stderr)
     if not makers:
         print("[!] v14.x mapper found dispatch code but no closure makers; devirtualization capture may be incomplete",
               file=sys.stderr)
+
     for info in makers:
         (l2, c2), var, pv = info["at"], info["var"], info["proto"]
         code = " __PF[%s]=%s " % (var, info.get("pf_key", pv))
-        # devirtualizer capture: once per proto, the maker-level values the VM
-        # closure uses (operand arrays, constants, helpers). Table operations
-        # only, like the entry hook; runs where the closure is made, not per call.
+        # devirtualizer capture: maker-level values used by the VM closure
         cap = "".join("__PA[%s].%s=%s;" % (pv, nm, nm) for nm in info["captures"])
-        # v14.x factories may close over locals from the surrounding initializer.
-        # Capture those too so devirt can reconstruct the maker's parent Scope.
         cap += "".join("__PA[%s].%s=%s;" % (pv, env["field"], env["name"])
                        for env in info.get("outer_env", ()))
-        # __PK: one closure per proto, for calls the devirtualizer asks the
-        # runtime to evaluate (LPH_ENCSTR-style string decryptors)
         code += ("if __PA and not __PA[%s] then __PA[%s]={};__PA.n=__PA.n+1;__PA[%s].__seq=__PA.n;"
-                 "__PA[%s].__maker=\"%s@%d,%d\";__PK[%s]=%s;%s end "
+                 "__PA[%s].__maker=\\"%s@%d,%d\\";__PK[%s]=%s;%s end "
                  % (pv, pv, pv, pv, tag, l2, c2, info.get("pf_key", pv), var, cap))
         edits.append((l2, c2, code))
-    for l, c, code in sorted(edits, reverse=True):
-        lines[l] = lines[l][:c] + code + lines[l][c:]
-    return "\n".join(lines)
 
+    for line, col, code in sorted(edits, reverse=True):
+        lines[line] = lines[line][:col] + code + lines[line][col:]
+    result = "\n".join(lines)
+    print("[*] v14.7 AST instrumentation: %d dispatcher(s), %d entry hook(s), %d maker(s) (%.2fs)" %
+          (len(dispatches), len(entries), len(makers), time.perf_counter() - t0), file=sys.stderr)
+    return result
 
 MAX_FULL_LIFTS = int(os.environ.get("DEVIRT_MAX_FULL_LIFTS", "4"))
 
@@ -325,6 +334,7 @@ def run(job):
         if spin:
             cfg["spin"] = SPIN_CHECKS
         print("[*] tracing %s (run %d)..." % (job.input, attempt), file=sys.stderr)
+        trace_t0 = time.perf_counter()
         body, err = runner.run(patched, cfg, chunks)
         if body is None and not spin and err.startswith("timed out") and not bridge:
             # stuck in the script's own code (no environment access, so the
@@ -335,6 +345,8 @@ def run(job):
             chunks = {k: patch_spin(v) for k, v in chunks.items()}
             cfg["spin"] = SPIN_CHECKS
             body, err = runner.run(patched, cfg, chunks)
+        print("[*] v14.7 trace run %d: %.2fs" % (attempt, time.perf_counter() - trace_t0),
+              file=sys.stderr)
         if body is None:
             harness.save_raw(args.raw)
             runner.finish()
@@ -612,6 +624,7 @@ def lift(job, runner, patched, cfg, chunks, run_text, ppath, dpath, chunk_paths)
             hs.close()
             server[0] = None
         return runner.run(patched, c, chunks)
+    lift_t0 = time.perf_counter()
     try:
         devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths, live)
     except Exception as e:
@@ -621,5 +634,6 @@ def lift(job, runner, patched, cfg, chunks, run_text, ppath, dpath, chunk_paths)
             import traceback
             traceback.print_exc()
     finally:
+        print("[*] v14.7 lift phase: %.2fs" % (time.perf_counter() - lift_t0), file=sys.stderr)
         if server[0] is not None:
             server[0].close()

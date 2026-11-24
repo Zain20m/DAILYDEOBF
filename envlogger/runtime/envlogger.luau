@@ -146,7 +146,7 @@ end
 ENV.warn = function(...)
 	local n = select("#", ...)
 	local parts = {}
-	for i = 1, n do parts[i] = tostring(select(i, ...)) end
+	for i = 1, n do parts[i] = redactText(tostring(select(i, ...))) end
 	emit("WARN", trunc(table.concat(parts, "\t"), 200))
 	beh("-- warn(...)")
 end

@@ -3016,6 +3016,13 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
       12 * 60_000,
       {
         stallTimeoutMs: 180_000,
+        env: {
+          DEVIRT_PROGRESS: '1',
+          DEVIRT_TIMING: '1',
+          // Bound expensive full lifts while preserving cached walk rounds.
+          // Override for samples that need additional constant-decryption passes.
+          DEVIRT_MAX_FULL_LIFTS: process.env.DEVIRT_MAX_FULL_LIFTS || '2',
+        },
         onProgress: progress.onLine,
       },
     );

@@ -88,9 +88,14 @@ if (!fs.existsSync(ironveilArchive)) {
 if (process.platform !== 'win32') {
   const sharedBin = path.join(root, 'luraph-v15-engine', 'bin');
   const luau = path.join(sharedBin, 'luau');
-  const smoke = fs.existsSync(luau)
-    ? spawnSync(luau, ['-e', 'print("LUAU_RUNTIME_OK")'], { encoding: 'utf8', timeout: 10000 })
-    : { status: 1, error: new Error('Luau binary is missing') };
+  const smokePath = path.join(root, '.luau-runtime-smoke.luau');
+  fs.writeFileSync(smokePath, 'print("LUAU_RUNTIME_OK")\\n');
+  const testRuntime = () => {
+    if (!fs.existsSync(luau)) return { status: 1, error: new Error('Luau binary is missing') };
+    return spawnSync(luau, [smokePath], { encoding: 'utf8', timeout: 10000 });
+  };
+  let smoke;
+  try { smoke = testRuntime(); } finally { fs.rmSync(smokePath, { force: true }); }
   const healthy = !smoke.error && smoke.status === 0 &&
     String(smoke.stdout || '').includes('LUAU_RUNTIME_OK');
   if (!healthy) {
@@ -111,7 +116,9 @@ if (process.platform !== 'win32') {
       fs.copyFileSync(built, destination);
       fs.chmodSync(destination, 0o755);
     }
-    const verify = spawnSync(luau, ['-e', 'print("LUAU_RUNTIME_OK")'], { encoding: 'utf8', timeout: 10000 });
+    fs.writeFileSync(smokePath, 'print("LUAU_RUNTIME_OK")\\n');
+    let verify;
+    try { verify = testRuntime(); } finally { fs.rmSync(smokePath, { force: true }); }
     if (verify.error || verify.status !== 0 || !String(verify.stdout || '').includes('LUAU_RUNTIME_OK')) {
       throw new Error('Portable Luau runtime still fails its startup test: ' +
         (verify.error ? verify.error.message : String(verify.stderr || verify.stdout || verify.status)));

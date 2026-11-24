@@ -1063,7 +1063,7 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
   function stageFor(value) {
     const text = String(value || '').toLowerCase();
     if (/checking|packaging|validat|preparing download|collecting .*artifacts|attaching/.test(text)) return 2;
-    if (/lift|devirt|function|constant|reconstruct|coverage|unlifted|walk/.test(text)) return 1;
+    if (/lift|devirt|function|constant|reconstruct|coverage|unlifted|walk|lower|generat/.test(text)) return 1;
     if (/trace|decrypt|initializ|prepar|fingerprint|runtime|captur|instrument|execut/.test(text)) return 0;
     return null;
   }
@@ -1197,6 +1197,9 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
       updateCount(match[2], 'VM functions started');
       advance('Lifting VM functions',
         'Started walking proto ' + match[1] + '. Completed walks are reported separately at the end of each round.');
+    } else if ((match = line.match(/lowering proto ([^:]+): ([\d,]+) states, ([\d,]+) child closures/i))) {
+      advance('Generating Luau from VM states',
+        'Proto ' + match[1] + ' · ' + match[2] + ' states · ' + match[3] + ' child closures being lowered.');
     } else if ((match = line.match(/obfuscator:\s*(.+)/i))) {
       advance('Fingerprinting the input', 'Matched engine: ' + match[1].slice(0, 100));
     } else if ((match = line.match(/tracing .*?\(run\s+(\d+)\)/i))) {

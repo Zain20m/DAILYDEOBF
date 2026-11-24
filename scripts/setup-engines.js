@@ -89,7 +89,7 @@ if (process.platform !== 'win32') {
   const sharedBin = path.join(root, 'luraph-v15-engine', 'bin');
   const luau = path.join(sharedBin, 'luau');
   const smokePath = path.join(root, '.luau-runtime-smoke.luau');
-  fs.writeFileSync(smokePath, 'print("LUAU_RUNTIME_OK")\\n');
+  fs.writeFileSync(smokePath, 'print("LUAU_RUNTIME_OK")\n');
   const testRuntime = () => {
     if (!fs.existsSync(luau)) return { status: 1, error: new Error('Luau binary is missing') };
     return spawnSync(luau, [smokePath], { encoding: 'utf8', timeout: 10000 });
@@ -116,7 +116,7 @@ if (process.platform !== 'win32') {
       fs.copyFileSync(built, destination);
       fs.chmodSync(destination, 0o755);
     }
-    fs.writeFileSync(smokePath, 'print("LUAU_RUNTIME_OK")\\n');
+    fs.writeFileSync(smokePath, 'print("LUAU_RUNTIME_OK")\n');
     let verify;
     try { verify = testRuntime(); } finally { fs.rmSync(smokePath, { force: true }); }
     if (verify.error || verify.status !== 0 || !String(verify.stdout || '').includes('LUAU_RUNTIME_OK')) {
@@ -135,7 +135,10 @@ fs.mkdirSync(v147Bin, { recursive: true });
 for (const binary of ['luau', 'luau-ast']) {
   const source = path.join(sharedLuauBin, binary);
   const destination = path.join(v147Bin, binary);
-  if (!fs.existsSync(destination) && fs.existsSync(source)) {
+  // On Linux, always replace stale engine-local binaries with the runtime
+  // that just passed the host smoke test. Keeping an older v14.7 binary here
+  // would leave the original SIGILL crash untouched.
+  if (fs.existsSync(source) && (process.platform !== 'win32' || !fs.existsSync(destination))) {
     fs.copyFileSync(source, destination);
   }
   if (process.platform !== 'win32' && fs.existsSync(destination)) {

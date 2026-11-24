@@ -22,7 +22,7 @@ const RULES = [
 function analyze(source) {
   const hits = [];
   for (const [re, name] of RULES) if (re.test(source)) hits.push(name);
-  const urls = [...new Set((source.match(/https?:\/\/[^\s"'`\)\]\}>]+/gi) || []).map(u => u.replace(/[.,;:]+$/, ''))].slice(0, 40);
+  const urls = [...new Set((source.match(/https?:\/\/[^\s"'`\)\]\}>]+/gi) || []).map(u => u.replace(/[.,;:]+$/, '')))].slice(0, 40);
   const keys = [...source.matchAll(/(?:script_key|SCRIPT_KEY)\s*=\s*["']([^"']+)["']/gi)].map(m => m[1]);
   const services = [...new Set([...source.matchAll(/GetService\s*\(\s*["']([^"']+)["']\s*\)/g)].map(m => m[1]))];
   const count = (re) => (source.match(re) || []).length;

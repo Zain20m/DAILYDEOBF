@@ -5422,7 +5422,7 @@ async function startWorkflow(message, inlineText = null) {
       return;
     }
     const luraphVersionMatch = interaction.customId.match(
-      new RegExp('^deobf-luraph-version:(14\\.3s|14\\.3|14\\.6|14\\.7|14\\.8|14\\.9|15|15\\.1|15\\.2):' + message.author.id + '
+      new RegExp('^deobf-luraph-version:(14\\.3s|14\\.3|14\\.6|14\\.7|14\\.8|14\\.9|15|15\\.1|15\\.2):' + message.author.id + '$')
     if (luraphVersionMatch) {
       await interaction.deferUpdate();
       componentCollector.stop('selected');

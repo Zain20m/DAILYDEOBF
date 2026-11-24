@@ -54,7 +54,7 @@ jobs:
         run: |
           python3 luraph-v14.7-engine/test_unflatten.py
 
-      - name: Load the Luraph v14.7, v14.8 and v14.9 engines
+      - name: Load the Luraph v14.6, v14.7, v14.8 and v14.9 engines
         env:
           PYTHONPATH: luraph-v14.7-engine
           PYTHONDONTWRITEBYTECODE: "1"
@@ -64,10 +64,16 @@ jobs:
           import os
           import cli
           import harness
+          from obfuscators.luraph_v14_6 import LuraphV146
           from obfuscators.luraph_v14_7 import driver as driver147, vmmap as map147, devirt as devirt147
           from obfuscators.luraph_v14_8 import driver as driver148, vmmap as map148, devirt as devirt148
           from obfuscators.luraph_v14_9 import driver as driver149, vmmap as map149, devirt as devirt149
-          for version in ("14.7", "14.8", "14.9"):
+          banner146 = "-- This file was protected using Luraph Obfuscator v14.6 [https://lura.ph/]\\nreturn({})"
+          assert cli.detect_version(banner146) == "14.6"
+          engine146 = cli.load_engine("14.6")
+          assert isinstance(engine146, LuraphV146)
+          assert engine146.detect(banner146) == 1.0
+          for version in ("14.6", "14.7", "14.8", "14.9"):
               engine = cli.load_engine(version)
               print(f"Loaded Luraph v{version}: {type(engine).__name__}")
           spin_samples = [

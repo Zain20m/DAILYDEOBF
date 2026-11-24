@@ -16,6 +16,8 @@ local services = {}
 local errors = {}
 local unknownGlobals = {}
 local prints = {}
+local memberAccesses = {}
+local simulatedWait = 0
 
 local function now()
 	return string.format("%.3f", os.clock() - START)
@@ -34,6 +36,22 @@ end
 local function beh(line)
 	behavior[#behavior + 1] = line
 end
+local function typeSummary(value)
+  local kind = type(value)
+  if kind == "string" then return "string[" .. tostring(#value) .. "]" end
+  return kind
+end
+
+local function safeUrl(value)
+  local url = tostring(value or "")
+  url = string.gsub(url, "([?&][%w_%-]*token[%w_%-]*=)[^&%s]+", "%1[REDACTED]")
+  url = string.gsub(url, "([?&][%w_%-]*key[%w_%-]*=)[^&%s]+", "%1[REDACTED]")
+  url = string.gsub(url, "([?&][%w_%-]*secret[%w_%-]*=)[^&%s]+", "%1[REDACTED]")
+  url = string.gsub(url, "([?&][%w_%-]*auth[%w_%-]*=)[^&%s]+", "%1[REDACTED]")
+  url = string.gsub(url, "(discord%.com/api/webhooks/%d+/)[^/%s?]+", "%1[REDACTED]")
+  return url
+end
+
 local function noteError(where, err)
 	errors[#errors + 1] = where .. ": " .. trunc(err, 240)
 	emit("ERROR", where .. " -> " .. trunc(err, 240))
@@ -49,6 +67,9 @@ local function svc(name)
 	local o = { Name = name, ClassName = name }
 	return setmetatable(o, {
 		__index = function(_, k)
+			local member = name .. "." .. tostring(k)
+			memberAccesses[member] = (memberAccesses[member] or 0) + 1
+			emit("MEMBER", member)
 			if k == "GetService" then
 				return function(_, n) return svc(tostring(n)) end
 			end
@@ -63,8 +84,8 @@ local function svc(name)
 				return function(...)
 					local args = table.pack(...)
 					local parts = {}
-					for i = 2, args.n do parts[#parts + 1] = trunc(args[i], 40) end
-					remotes[#remotes + 1] = name .. ":" .. k .. "(" .. table.concat(parts, ", ") .. ")"
+					for i = 2, args.n do parts[#parts + 1] = typeSummary(args[i]) end
+					remotes[#remotes + 1] = name .. ":" .. k .. "(args=" .. tostring(math.max(0, args.n - 1)) .. "; types=" .. table.concat(parts, ", ") .. ")"
 					emit("REMOTE", name .. ":" .. k)
 					beh(string.format("%s:%s(...)", name, k))
 				end
@@ -155,9 +176,11 @@ ENV.os = { clock = os.clock, time = os.time, date = os.date }
 ENV.tick = function() return 1700000000 + os.clock() end
 ENV.task = {
 	wait = function(t)
-		emit("TASK", "task.wait(" .. tostring(t) .. ")")
-		beh(string.format("task.wait(%s)", tostring(t or 0)))
-		return t or 0
+		local delay = math.max(0, tonumber(t) or 0)
+		simulatedWait += delay
+		emit("TASK", "task.wait(" .. tostring(delay) .. ") [simulated; total=" .. string.format("%.2f", simulatedWait) .. "s]")
+		beh(string.format("task.wait(%s) -- simulated in sandbox", tostring(delay)))
+		return delay
 	end,
 	spawn = function(fn)
 		emit("TASK", "task.spawn")
@@ -168,7 +191,10 @@ ENV.task = {
 		emit("TASK", "task.delay")
 		if type(fn) == "function" then pcall(fn) end
 	end,
-	defer = function(fn) if type(fn) == "function" then pcall(fn) end end,
+	defer = function(fn)
+		emit("TASK", "task.defer [executed immediately in sandbox]")
+		if type(fn) == "function" then pcall(fn) end
+	end,
 	cancel = function() end,
 }
 ENV.wait = ENV.task.wait
@@ -193,13 +219,30 @@ end
 ENV.getrenv = function() return ENV end
 ENV.identifyexecutor = function() return "ENVLOGGER", "4.0" end
 ENV.getexecutorname = ENV.identifyexecutor
+local function recordRequest(method, url)
+	local cleanUrl = safeUrl(url)
+	urls[#urls + 1] = tostring(method) .. " " .. cleanUrl
+	emit("HTTP", tostring(method) .. " " .. trunc(cleanUrl, 180) .. " [network blocked]")
+	beh(string.format("-- sandbox blocked %s %q", tostring(method), trunc(cleanUrl, 120)))
+	return { Success = false, StatusCode = 0, StatusMessage = "Blocked by ENVLOGGER sandbox", Body = "", Headers = {} }
+end
+
 ENV.HttpGet = function(_, url)
-	urls[#urls + 1] = tostring(url)
-	emit("HTTP", trunc(url, 200))
-	beh(string.format("-- HttpGet(%q)", trunc(url, 120)))
+	recordRequest("GET", url)
 	return ""
 end
+ENV.HttpPost = function(_, url)
+	recordRequest("POST", url)
+	return ""
+end
+ENV.request = function(options)
+	local opts = type(options) == "table" and options or {}
+	return recordRequest(opts.Method or opts.method or "GET", opts.Url or opts.url or "")
+end
+ENV.http_request = ENV.request
+ENV.syn = { request = ENV.request }
 gameObj.HttpGet = ENV.HttpGet
+gameObj.HttpPost = ENV.HttpPost
 
 local function soft_repair_source(src)
 	local fixed = src
@@ -284,7 +327,7 @@ end
 emit("BOOT", "envlogger end stmts=" .. tostring(stmtCount))
 
 print(MARK .. "BEGIN")
-print(string.format("-- ENVLOGGER report  stmts=%d  elapsed=%.2fs  source=%d bytes", stmtCount, os.clock() - START, #source))
+print(string.format("-- ENVLOGGER report  stmts=%d  elapsed=%.2fs  simulated_wait=%.2f  source=%d bytes", stmtCount, os.clock() - START, simulatedWait, #source))
 print("-- status: " .. (#errors == 0 and "finished" or ("errors=" .. tostring(#errors))))
 if next(services) then
 	print("-- services:")
@@ -312,6 +355,10 @@ if #loadstrings > 0 then
 			print("--   --- end dump [" .. tostring(i) .. "] ---")
 		end
 	end
+end
+if next(memberAccesses) then
+	print("-- member accesses:")
+	for member, n in pairs(memberAccesses) do print(string.format("--   %s x%d", member, n)) end
 end
 if next(unknownGlobals) then
 	print("-- unknown globals:")

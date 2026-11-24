@@ -68,7 +68,7 @@ function fingerprint(src) {
 }
 
 function staticBlock(src, label) {
-  const urls = [...new Set((src.match(/https?:\/\/[^\s"'`\)\]\}>]+/gi) || []).map(u => u.replace(/[.,;:]+$/, ''))].slice(0, 30);
+  const urls = [...new Set((src.match(/https?:\/\/[^\s"'`\)\]\}>]+/gi) || []).map(u => u.replace(/[.,;:]+$/, '')))].slice(0, 30);
   const keys = [...src.matchAll(/(?:script_key|SCRIPT_KEY)\s*=\s*["']([^"']+)["']/gi)].map(m => m[1]);
   const services = [...new Set([...src.matchAll(/GetService\s*\(\s*["']([^"']+)["']\s*\)/g)].map(m => m[1]))];
   const count = (re) => (src.match(re) || []).length;

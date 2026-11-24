@@ -99,7 +99,7 @@ def patch_entries(source, path):
         cap += "".join("__PA[%s].%s=%s;" % (pv, env["field"], env["name"])
                        for env in info.get("outer_env", ()))
         code += ("if __PA and not __PA[%s] then __PA[%s]={};__PA.n=__PA.n+1;__PA[%s].__seq=__PA.n;"
-                 "__PA[%s].__maker=\\"%s@%d,%d\\";__PK[%s]=%s;%s end "
+                 "__PA[%s].__maker=\"%s@%d,%d\";__PK[%s]=%s;%s end "
                  % (pv, pv, pv, pv, tag, l2, c2, info.get("pf_key", pv), var, cap))
         edits.append((l2, c2, code))
 

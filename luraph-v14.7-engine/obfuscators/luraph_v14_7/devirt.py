@@ -3890,7 +3890,7 @@ def analyze_source(path):
     disp = vmmap.find_dispatchers(root)
     ctor = find_ctor_funcs(root)
     vms = {}
-    for info in vmmap.maker_info(root):
+    for info in vmmap.maker_info(root, disp):
         # dispatch loops inside this VM closure
         ids = {id(n) for n in iter_nodes(info["vm"])}
         inside = [d["node"] for d in disp if id(d["node"]) in ids]

@@ -3080,6 +3080,12 @@ class FunctionLifter:
         me = sys.modules[__name__]
         apply_frame_calls(order)
         drop_idle_closes(order, lf.captured_regs)
+        pid = self.prog.dump.pid_of_table.get(proto.tid)
+        if os.environ.get("DEVIRT_PROGRESS", "1") != "0":
+            print("[*] lowering proto %s: %s states, %s child closures" %
+                  (pid if pid is not None else "t%s" % proto.tid,
+                   format(len(order), ","), format(len(lf.children), ",")),
+                  file=sys.stderr, flush=True)
         prefix = REG_PREFIX[depth % len(REG_PREFIX)]
         lines, self.params, nerr, fallbacks = backend.lower(
             s0.key(vm.kstack_link), order, me, vm.kstack_link, prefix, upnames,

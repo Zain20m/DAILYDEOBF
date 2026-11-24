@@ -37,6 +37,10 @@ function analyze(source) {
       getgenv: count(/\bgetgenv\b/g),
       bit32: count(/\bbit32\b/g),
       hooks: count(/\bhookfunction\b|\bnewcclosure\b/g),
+      taskWait: count(/\btask\.wait\s*\(|\bwait\s*\(/gi),
+      requests: count(/\brequest\s*\(|\bhttp_request\s*\(/gi),
+      getgc: count(/\bgetgc\s*\(/gi),
+      getconnections: count(/\bgetconnections\s*\(/gi),
     },
   };
 }
@@ -127,7 +131,8 @@ async function startEnvLogWorkflow(message, inlineText, deps) {
 
     const root = path.join(__dirname);
     const runner = path.join(root, 'src', 'run.js');
-    const budget = Math.min(20, Number(process.env.ENVLOGGER_BUDGET || 15));
+    const budget = Math.min(45, Math.max(10, Number(process.env.ENVLOGGER_BUDGET || 35)));
+    const minDurationMs = Math.min(15000, Math.max(6000, Number(process.env.ENVLOGGER_MIN_DURATION_MS || 8000)));
     let log = '';
 
     if (fssync.existsSync(runner)) {
@@ -138,17 +143,49 @@ async function startEnvLogWorkflow(message, inlineText, deps) {
         });
         let stdout = '';
         let stderr = '';
+        let progressStage = 'Sandbox pass running';
+        let settled = false;
+        const runStarted = Date.now();
         child.stdout.on('data', (d) => { stdout += d; });
         child.stderr.on('data', (d) => { stderr += d; });
-        const killTimer = setTimeout(() => {
+
+        const progressTimer = setInterval(() => {
+          const elapsedSeconds = Math.floor((Date.now() - runStarted) / 1000);
+          const byteLabel = formatBytes ? formatBytes(Buffer.byteLength(source, 'utf8')) : (source.length + ' B');
+          const detail = '**' + analysis.primary + '** · ' + byteLabel + '\n' +
+            progressStage + ' · ' + elapsedSeconds + 's elapsed\n' +
+            'Budget: ' + budget + 's · collecting API, service, task, and behavior traces…';
+          if (dailyEmbed && DAILY_COLORS && prompt.edit) {
+            prompt.edit({ embeds: [dailyEmbed('Environment log', detail, DAILY_COLORS.primary)] }).catch(() => {});
+          } else if (prompt.edit) {
+            prompt.edit({ content: '🔍 ENVLOGGER\n' + detail }).catch(() => {});
+          }
+        }, 3000);
+
+        let killTimer;
+        const complete = async () => {
+          if (settled) return;
+          settled = true;
+          if (killTimer) clearTimeout(killTimer);
+          try { log = await fs.readFile(outputPath, 'utf8'); } catch { log = stdout || stderr; }
+
+          // Keep the user-facing run staged long enough to show that the trace pass happened.
+          const remaining = Math.max(0, minDurationMs - (Date.now() - runStarted));
+          if (remaining > 0) {
+            progressStage = 'Reviewing captured trace and formatting report';
+            await new Promise((done) => setTimeout(done, remaining));
+          }
+          clearInterval(progressTimer);
+          resolve();
+        };
+
+        killTimer = setTimeout(() => {
+          progressStage = 'Stopping sandbox at the configured time limit';
           try { child.kill('SIGKILL'); } catch (_) {}
         }, (budget + 10) * 1000);
-        child.on('close', async () => {
-          clearTimeout(killTimer);
-          try { log = await fs.readFile(outputPath, 'utf8'); } catch { log = stdout || stderr; }
-          resolve();
-        });
-        child.on('error', () => { clearTimeout(killTimer); resolve(); });
+
+        child.on('close', () => { complete().catch((error) => { clearInterval(progressTimer); console.error('[envlogger] finish error:', error); resolve(); }); });
+        child.on('error', () => { complete().catch(() => { clearInterval(progressTimer); resolve(); }); });
       });
     }
 
@@ -178,6 +215,8 @@ async function startEnvLogWorkflow(message, inlineText, deps) {
     const dynPrints = section('prints');
     const dynLoadstrings = section('loadstring captures');
     const dynErrors = section('errors');
+    const dynMembers = section('member accesses');
+    const simulatedWait = Number((log.match(/simulated_wait=([0-9.]+)/i) || [])[1] || 0);
     const stmts = Number((log.match(/stmts=(\d+)/i) || [])[1] || 0);
     const dynOk = /-- ENVLOGGER report/i.test(log) && !/signal:\s*SIGILL/i.test(log);
     const elapsedMs = Date.now() - started;
@@ -213,12 +252,14 @@ async function startEnvLogWorkflow(message, inlineText, deps) {
       const embed = dailyEmbed('Environment log · ' + base, description, dynOk ? DAILY_COLORS.success : DAILY_COLORS.warning);
       if (embed.addFields) {
         embed.addFields(
-          { name: 'API surface', value: ['loadstring: **' + analysis.stats.loadstring + '**', 'HttpGet: **' + analysis.stats.http + '**', 'getgenv: **' + analysis.stats.getgenv + '** · bit32: **' + analysis.stats.bit32 + '**', 'hooks: **' + analysis.stats.hooks + '**'].join('\n'), inline: false },
+          { name: 'API surface', value: ['loadstring: **' + analysis.stats.loadstring + '**', 'HttpGet: **' + analysis.stats.http + '**', 'getgenv: **' + analysis.stats.getgenv + '** · bit32: **' + analysis.stats.bit32 + '**', 'hooks: **' + analysis.stats.hooks + '**', 'task.wait: **' + analysis.stats.taskWait + '**', 'request: **' + analysis.stats.requests + '**', 'getgc: **' + analysis.stats.getgc + '** · getconnections: **' + analysis.stats.getconnections + '**'].join('\n'), inline: false },
           { name: 'URLs · ' + allUrls.length, value: brief(allUrls, 'None.'), inline: true },
           { name: 'Services · ' + allServices.length, value: brief(allServices, 'None.'), inline: true },
           { name: 'Remotes · ' + dynRemotes.length, value: brief(dynRemotes, 'None.'), inline: true },
           { name: 'Prints · ' + dynPrints.length, value: brief(dynPrints, 'None captured.'), inline: false },
           { name: 'Loadstring · ' + dynLoadstrings.length, value: brief(dynLoadstrings, 'None.'), inline: false },
+          { name: 'Member access · ' + dynMembers.length, value: brief(dynMembers, 'None captured.'), inline: true },
+          { name: 'Simulated waits', value: simulatedWait.toFixed(2) + 's total', inline: true },
           { name: 'Errors', value: brief(dynErrors, 'None.'), inline: false }
         );
       }

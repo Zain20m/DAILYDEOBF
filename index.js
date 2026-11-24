@@ -5591,6 +5591,32 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
+async function startEnvLogWorkflow(message, inlineText = null) {
+  try {
+    const integration = require('./envlogger/discord-integration');
+    return await integration.startEnvLogWorkflow(message, inlineText, {
+      dailyEmbed,
+      DAILY_COLORS,
+      inputFromAttachment,
+      inputFromUrlText,
+      collectInput,
+      formatBytes,
+      formatDuration,
+      sha256Hex,
+      splitUtf8Buffer,
+      AttachmentBuilder,
+      MAX_ATTACHMENT_PART_BYTES,
+    });
+  } catch (error) {
+    const detail = String(error && error.message || error).slice(0, 1400);
+    try {
+      await message.reply({ content: '❌ ENVLOGGER failed: ' + detail, allowedMentions: { repliedUser: false } });
+    } catch (_) {
+      try { await message.channel.send('❌ ENVLOGGER failed: ' + detail); } catch (__) {}
+    }
+  }
+}
+
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return;
 
@@ -5620,6 +5646,26 @@ client.on(Events.MessageCreate, async (message) => {
   const parts = content.split(/\s+/);
   const command = parts[0].toLowerCase();
   const subcommand = (parts[1] || '').toLowerCase();
+
+  // ENVLOGGER early route: handle before other prefix commands.
+  if (command === '.l' || command === '.envlog' || command === '.envlogger') {
+    if (activeUsers.has(message.author.id)) {
+      await message.reply({ content: 'You already have an active job. Finish it or wait for it to expire.', allowedMentions: { repliedUser: false } });
+      return;
+    }
+    activeUsers.add(message.author.id);
+    try {
+      const inline = content.slice(command.length).trim() || null;
+      await startEnvLogWorkflow(message, inline);
+    } catch (error) {
+      const detail = String(error && error.message || error).slice(0, 1400);
+      await message.reply({ content: '❌ ENVLOGGER failed: ' + detail, allowedMentions: { repliedUser: false } }).catch(() => {});
+    } finally {
+      activeUsers.delete(message.author.id);
+    }
+    return;
+  }
+
 
 
   if (command === '.msg') {

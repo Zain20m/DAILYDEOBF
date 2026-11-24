@@ -96,6 +96,9 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
     last_bufs = ""
     text = None
     rounds = args.devirt_rounds
+    max_full_lifts = max(1, int(os.environ.get("DEVIRT_MAX_FULL_LIFTS", "2")))
+    full_lifts = 0
+    best = None
     print("[*] lift limits: %d CFG states/function, %d walk restarts, %d stack depths/PC, %d stack states/function"
           % (devirt.WALK_LIMIT, devirt.WALK_RESTARTS, devirt.MAX_STACK_DEPTHS, devirt.STACK_WALK_MAX),
           file=sys.stderr)
@@ -133,7 +136,18 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
             print("[*]   %d functions, %d unlifted blocks, %d unstructured jumps, %d extra captured protos, %d new constant requests (%.1fs)"
                   % (stats["functions"], stats["errors"], stats["fallbacks"], stats.get("orphan_protos", 0), len(new), time.time() - t1),
                   file=sys.stderr)
+            full_lifts += 1
+            score = (stats["errors"], stats.get("fallbacks", 0), -stats["functions"])
+            if best is None or score < best[0]:
+                best = (score, text)
+            elif best is not None:
+                print("[*]   keeping the earlier lift (%d unlifted blocks, %d functions)" %
+                      (best[0][0], -best[0][2]), file=sys.stderr)
             if (not new and devirt.same_patches(last_bufs, bufs)) or rnd == rounds:
+                break
+            if full_lifts >= max_full_lifts:
+                print("[*]   full-lift cap reached (%d); keeping the best candidate seen" %
+                      max_full_lifts, file=sys.stderr)
                 break
             if quick:
                 print("[*]   the full lift needs more constants: continuing with full lifts", file=sys.stderr)
@@ -163,6 +177,8 @@ def devirtualize(job, ppath, dpath, cfg, rerun, chunk_paths=(), live=None):
         print("[*] no full lift yet: lifting the current dump", file=sys.stderr)
         text, stats, reqs, bufs = devirt.run_big_stack(devirt.lift_program, job.source_path, ppath, chunk_paths,
                                                        live and live())
+    elif best is not None:
+        text = best[1]
     header = (job.credit_header() +
               "-- Local names are inferred from use (the original names are not in the bytecode)\n")
     job.write(dpath, header + devirt.finish_text(text) + "\n")

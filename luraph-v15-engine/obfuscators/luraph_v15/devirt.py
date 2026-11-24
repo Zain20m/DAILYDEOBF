@@ -2788,8 +2788,6 @@ class Program:
         states = {}         # key -> State
         facts = {}          # key -> dict of incoming facts
         order = []
-        self.pred = {}
-        self.edges = {}     # key -> set of successor keys (feasible)
         work = [s0.key(link)]
         states[work[0]] = s0
         facts[work[0]] = {}
@@ -2800,6 +2798,13 @@ class Program:
         hubs = set()        # stack VM: (mode, pc) of pop-and-jump instructions
         steps = 0
         nerr = 0
+        last_progress_report = time.monotonic()
+        proto_tid = getattr(lf.proto, "tid", None)
+        proto_pid = self.dump.pid_of_table.get(proto_tid)
+        proto_label = "#%s" % proto_pid if proto_pid is not None else "t%s" % proto_tid
+        if os.environ.get("DEVIRT_PROGRESS", "1") != "0":
+            print("[*] walk progress: proto %s, 0 states visited (%s pending), 0 steps processed" %
+                  (proto_label, format(len(work), ",")), file=sys.stderr, flush=True)
         while work and len(order) < limit:
             k = work.pop()
             inwork.discard(k)
@@ -2832,6 +2837,12 @@ class Program:
                     # constant into junk code: keep what it asked for so far
                     break
             steps += 1
+            now = time.monotonic()
+            if os.environ.get("DEVIRT_PROGRESS", "1") != "0" and now - last_progress_report >= 1.0:
+                print("[*] walk progress: proto %s, %s states visited (%s pending), %s steps processed" %
+                      (proto_label, format(len(order), ","), format(len(work), ","), format(steps, ",")),
+                      file=sys.stderr, flush=True)
+                last_progress_report = now
             if steps > limit * 20:
                 break
             if lf.stack_base is not None and len(order) > STACK_WALK_MAX and getattr(st, "carry", None):
@@ -2886,11 +2897,9 @@ class Program:
                     if bad - lf.pack_unstable:
                         lf.pack_unstable |= bad
                         return s0, order, True
-                self.edges.setdefault(k, set()).add(nk)
                 if nk not in facts:
                     facts[nk] = nf
                     states[nk] = ns
-                    self.pred[nk] = k
                     changed = True
                 else:
                     old = facts[nk]

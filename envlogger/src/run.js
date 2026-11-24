@@ -67,12 +67,34 @@ function fingerprint(src) {
   return hits[0] || 'unknown / custom';
 }
 
+function redactUrl(value) {
+  return String(value)
+    .replace(/([?&][^=&]*(?:token|key|auth|secret|password|session|signature|code)[^=&]*=)[^&#\\s]*/gi, '$1[REDACTED]')
+    .replace(/(discord(?:app)?\\.com\\/api\\/webhooks\\/\\d+\\/)[^/\\s?#]+/gi, '$1[REDACTED]');
+}
+
+const API_INDICATORS = [
+  ['task.wait', /\\btask\\.wait\\s*\\(/gi],
+  ['task.spawn', /\\btask\\.spawn\\s*\\(/gi],
+  ['task.delay', /\\btask\\.delay\\s*\\(/gi],
+  ['request', /\\b(?:request|http_request)\\s*\\(/gi],
+  ['getgc', /\\bgetgc\\s*\\(/gi],
+  ['getconnections', /\\bgetconnections\\s*\\(/gi],
+  ['getupvalues', /\\bgetupvalues?\\s*\\(/gi],
+  ['getconstants', /\\bgetconstants?\\s*\\(/gi],
+  ['getrawmetatable', /\\bgetrawmetatable\\s*\\(/gi],
+  ['Instance.new', /\\bInstance\\.new\\s*\\(/gi],
+  ['RemoteEvent calls', /\\bFireServer\\s*\\(/gi],
+  ['RemoteFunction calls', /\\bInvokeServer\\s*\\(/gi],
+];
+
 function staticBlock(src, label) {
-  const urls = [...new Set((src.match(/https?:\/\/[^\s"'`\)\]\}>]+/gi) || []).map(u => u.replace(/[.,;:]+$/, '')))].slice(0, 30);
+  const urls = [...new Set((src.match(/https?:\/\/[^\s"'`\)\]\}>]+/gi) || []).map(u => redactUrl(u.replace(/[.,;:]+$/, ''))))].slice(0, 30);
   const keys = [...src.matchAll(/(?:script_key|SCRIPT_KEY)\s*=\s*["']([^"']+)["']/gi)].map(m => m[1]);
   const services = [...new Set([...src.matchAll(/GetService\s*\(\s*["']([^"']+)["']\s*\)/g)].map(m => m[1]))];
   const count = (re) => (src.match(re) || []).length;
   const obf = fingerprint(src);
+  const indicatorLines = API_INDICATORS.map(([name, re]) => '--   ' + name + '=' + count(re));
   return [
     '-- ENVLOGGER static report',
     '-- source: ' + label,
@@ -82,7 +104,9 @@ function staticBlock(src, label) {
     '-- counts:',
     `--   loadstring=${count(/\bloadstring\b/gi)} HttpGet=${count(/\bHttpGet\b/g)} getgenv=${count(/\bgetgenv\b/g)} bit32=${count(/\bbit32\b/g)}`,
     `--   string.char=${count(/string\.char/g)} hooks=${count(/\bhookfunction\b|\bnewcclosure\b/g)} long_strings=${count(/\[=*\[/g)}`,
-    keys.length ? '-- keys:\n' + keys.map(k => '--   ' + k).join('\n') : '-- keys: (none)',
+    '-- API indicators:',
+    ...indicatorLines,
+    keys.length ? '-- script_key values: ' + keys.length + ' found (values redacted)' : '-- script_key values: (none)',
     urls.length ? '-- urls:\n' + urls.map(u => '--   ' + u).join('\n') : '-- urls: (none)',
     services.length ? '-- services:\n' + services.map(s => '--   ' + s).join('\n') : '-- services: (none literal)',
   ].join('\n');
@@ -130,7 +154,7 @@ function extract(stdout, stderr) {
 }
 
 function parseArgs(argv) {
-  const args = { input: null, out: null, budget: 25, maxStmts: 12000 };
+  const args = { input: null, out: null, budget: 35, maxStmts: 30000 };
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '-o') args.out = argv[++i];
     else if (argv[i] === '--budget') args.budget = Number(argv[++i]) || 25;

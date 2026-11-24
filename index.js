@@ -1134,7 +1134,10 @@ function createAnalysisProgress(prompt, filename, inputBytes, label, options = {
       if (detail) lines.push('-# ' + detail.slice(0, 140));
       if (lastErrorLine) lines.push('-# ⚠️ ' + lastErrorLine.slice(0, 140));
       const silentForMs = now - lastEngineOutputAt;
-      if (silentForMs >= 20_000) lines.push('-# ⏳ quiet for ' + formatDuration(silentForMs) + ' (still running)');
+      if (silentForMs >= 20_000) {
+        lines.push('-# 🔄 Still working · last engine log ' + formatDuration(silentForMs) +
+          ' ago · ' + String(phase || 'analysis in progress').slice(0, 52));
+      }
     }
     if (statusEditError) lines.push('-# ⚠️ status update: ' + statusEditError.slice(0, 100));
 
@@ -1448,6 +1451,7 @@ function runCommand(command, args, cwd, timeoutMs, options = {}) {
 
     let stdout = '';
     let stderr = '';
+    let pendingStdout = '';
     let pendingStderr = '';
     let timedOut = false;
     let stalled = false;
@@ -1464,12 +1468,22 @@ function runCommand(command, args, cwd, timeoutMs, options = {}) {
     child.stdout.on('data', (chunk) => {
       const text = chunk.toString();
       if (stdout.length < 512_000) stdout += text.slice(0, 512_000 - stdout.length);
-      // Some engines report progress on stdout instead of stderr.
-      const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-      for (const line of lines) {
-        if (line !== lastDistinctProgress) {
-          lastDistinctProgress = line;
-          lastDistinctProgressAt = Date.now();
+      // Both streams carry engine milestones. Forward complete stdout lines
+      // too, so the Discord card never mistakes a busy worker for a silent one.
+      pendingStdout += text;
+      if (pendingStdout.length > 128_000 && !pendingStdout.includes('\n')) {
+        pendingStdout = pendingStdout.slice(-128_000);
+      }
+      let newline;
+      while ((newline = pendingStdout.indexOf('\n')) !== -1) {
+        const line = pendingStdout.slice(0, newline).trim();
+        pendingStdout = pendingStdout.slice(newline + 1);
+        if (line) {
+          if (line !== lastDistinctProgress) {
+            lastDistinctProgress = line;
+            lastDistinctProgressAt = Date.now();
+          }
+          if (options.onProgress) options.onProgress(line);
         }
       }
     });
@@ -1517,6 +1531,14 @@ function runCommand(command, args, cwd, timeoutMs, options = {}) {
     child.once('close', async (code, signal) => {
       clearTimeout(timer);
       clearInterval(stallTimer);
+      if (pendingStdout.trim()) {
+        const finalLine = pendingStdout.trim();
+        if (finalLine !== lastDistinctProgress) {
+          lastDistinctProgress = finalLine;
+          lastDistinctProgressAt = Date.now();
+        }
+        if (options.onProgress) options.onProgress(finalLine);
+      }
       if (pendingStderr.trim()) {
         const finalLine = pendingStderr.trim();
         if (finalLine !== lastDistinctProgress) {
@@ -3033,8 +3055,12 @@ async function processLuraph151(message, prompt, input, gameId = null, version =
           // buried the script in thousands of lines of runtime code)
           DEVIRT_FULL_ROUNDS: '', // fast rounds: walk only, one full lift at the end (same result, ~2x faster)
           DEVIRT_TIMING: '1',
+          DEVIRT_PROGRESS: '1',
           DEVIRT_ERRS: '1',
           DEVIRT_TB: '1',
+          // Two full lifting passes keep the Discord profile responsive.
+          // Override DEVIRT_MAX_FULL_LIFTS for particularly difficult samples.
+          DEVIRT_MAX_FULL_LIFTS: process.env.DEVIRT_MAX_FULL_LIFTS || '2',
           DEVIRT_WALK_LIMIT: '750000',
           DEVIRT_MERGE: '1',
           DEVIRT_MERGE_BUDGET: '32',

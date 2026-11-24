@@ -4426,8 +4426,6 @@ class Program:
         states = {}         
         facts = {}          
         order = []
-        pred = {}          # (walk-local: nothing reads these after the
-        edges = {}         #  walk; holding them through lower() OOM'd runs)
         work = deque([s0.key(link)])
         states[work[0]] = s0
         init_f = dict(getattr(lf, "init_facts", None) or {})
@@ -4604,11 +4602,9 @@ class Program:
                     if bad - lf.pack_unstable:
                         lf.pack_unstable |= bad
                         return s0, order, True
-                edges.setdefault(k, set()).add(nk)
                 if nk not in facts:
                     facts[nk] = nf
                     states[nk] = ns
-                    pred[nk] = k
                     changed = True
                 else:
                     old = facts[nk]

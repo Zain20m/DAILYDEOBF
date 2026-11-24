@@ -82,6 +82,44 @@ if (!fs.existsSync(ironveilArchive)) {
 }
 
 
+// Verify the shared Linux Luau binary on this host before any engine uses it.
+// A binary built with -march=native on a different CPU can terminate with SIGILL
+// (Node reports signal SIGILL / shell status 132; Python may report -4).
+if (process.platform !== 'win32') {
+  const sharedBin = path.join(root, 'luraph-v15-engine', 'bin');
+  const luau = path.join(sharedBin, 'luau');
+  const smoke = fs.existsSync(luau)
+    ? spawnSync(luau, ['-e', 'print("LUAU_RUNTIME_OK")'], { encoding: 'utf8', timeout: 10000 })
+    : { status: 1, error: new Error('Luau binary is missing') };
+  const healthy = !smoke.error && smoke.status === 0 &&
+    String(smoke.stdout || '').includes('LUAU_RUNTIME_OK');
+  if (!healthy) {
+    console.warn('[!] Shared Luau runtime failed its startup test; rebuilding portable binaries for this host.');
+    const build = spawnSync(python, [
+      path.join(root, 'luraph-v14.7-engine', 'build_luau.py'), '--portable',
+    ], { cwd: root, encoding: 'utf8', timeout: 15 * 60 * 1000, maxBuffer: 8 * 1024 * 1024 });
+    if (build.stdout) process.stdout.write(build.stdout);
+    if (build.stderr) process.stderr.write(build.stderr);
+    if (build.error || build.status !== 0) {
+      throw new Error('Portable Luau rebuild failed. Install git, cmake, g++, and Python, then restart. ' +
+        (build.error ? build.error.message : 'build exited with code ' + build.status));
+    }
+    for (const binary of ['luau', 'luau-ast']) {
+      const built = path.join(root, 'luraph-v14.7-engine', 'bin', binary);
+      const destination = path.join(sharedBin, binary);
+      if (!fs.existsSync(built)) throw new Error('Portable Luau build did not create ' + built);
+      fs.copyFileSync(built, destination);
+      fs.chmodSync(destination, 0o755);
+    }
+    const verify = spawnSync(luau, ['-e', 'print("LUAU_RUNTIME_OK")'], { encoding: 'utf8', timeout: 10000 });
+    if (verify.error || verify.status !== 0 || !String(verify.stdout || '').includes('LUAU_RUNTIME_OK')) {
+      throw new Error('Portable Luau runtime still fails its startup test: ' +
+        (verify.error ? verify.error.message : String(verify.stderr || verify.stdout || verify.status)));
+    }
+    console.log('[+] Portable Luau runtime passed startup test.');
+  }
+}
+
 // The imported Luraph v14.7 package shares the patched Luau runtime build.
 // Copy the already provisioned binaries instead of compiling another Luau VM.
 const v147Bin = path.join(root, 'luraph-v14.7-engine', 'bin');

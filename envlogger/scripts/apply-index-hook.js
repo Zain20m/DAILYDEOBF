@@ -134,11 +134,9 @@ if (src.includes('ENVLOGGER early route')) {
   }
 }
 
-// Strip duplicate older route blocks that only matched mid-handler
-src = src.replace(
-  /\n  if \(command === '\.l' \|\| command === '\.envlog' \|\| command === '\.envlogger'\) \{[\s\S]*?\n    return;\n  \}\n/,
-  (m) => (m.includes('ENVLOGGER early route') ? m : '\n')
-);
+// Do not regex-strip command handlers here. The previous cleanup matched
+// the freshly inserted .l handler and deleted its entire body, leaving only
+// comment markers. Keep the route intact; duplicate detection happens above.
 
 // 3) Prefix log
 const NEW_PREFIX_LOG = "console.log('Prefix commands: .deobf, .get, .fetch, .beautify, .l, .help');";

@@ -196,8 +196,10 @@ once('14.x rounds', /'--devirt-rounds', options\.fast \? '[^']+' : '[^']+',/,
 // (defensive: clamp inside runCommand)
 if (!src.includes('/* speed-quality clamp */') && src.includes('function runCommand(')) {
   const rc = src.indexOf('function runCommand(');
-  const brace = src.indexOf('{', rc);
-  if (brace > 0) {
+  // Find the function body, not the "{}" in the default options parameter.
+  const signatureEnd = src.indexOf(') {', rc);
+  const brace = signatureEnd >= 0 ? signatureEnd + 2 : -1;
+  if (rc >= 0 && brace > 0) {
     src = src.slice(0, brace + 1) +
       '\n  /* speed-quality clamp */\n' +
       '  if (Number.isFinite(timeoutMs) && timeoutMs > 60_000 && process.env.DEOB_ALLOW_SLOW !== \'1\') timeoutMs = 60_000;\n' +

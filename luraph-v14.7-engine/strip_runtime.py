@@ -167,7 +167,6 @@ def _inline_constant_pool(text):
         if not (
             value in ("nil", "true", "false")
             or re.fullmatch(r"-?\d+(?:\.\d+)?", value)
-            or re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", value)
             or (len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'))
         ):
             continue
@@ -197,31 +196,31 @@ def strip(text, exe):
     """-> (text, report) ; report is None when nothing was removed."""
     if os.environ.get("DEOB_KEEP_LURAPH_RUNTIME"):
         return text, None
+    text, inlined_constants = _inline_constant_pool(text)
+    report = {"bootstrap_lines": 0, "functions": [], "constant_entries_inlined": inlined_constants}
     root = _parse(text, exe)
     if root is None:
-        return text, None
-    text, inlined_constants = _inline_constant_pool(text)
+        return text, report if inlined_constants else None
     lines = text.split("\n")
     stmts = []
     for s in root.get("body", []):
         l0, l1 = _loc(s["location"])
         stmts.append((l0, l1, lines[l0]))
     if not stmts:
-        return text, None
+        return text, report if inlined_constants else None
 
     def body_of(l0, l1):
         return "\n".join(lines[l0:l1 + 1])
 
     protos = [(l0, l1, m) for l0, l1, first in stmts for m in [PROTO.match(first)] if m]
     if not protos:
-        return text, None
+        return text, report if inlined_constants else None
     first_proto = protos[0][0]
     # the root body: top-level statements before the first lifted-alone
     # function that are not the constants table / stubs
     main = [(l0, l1) for l0, l1, first in stmts if l0 < first_proto and not PREAMBLE.match(first)
             and not (first.startswith("local ") and first.rstrip().endswith("= ...") and l0 == l1)]
     drop = []          # (first line, last line, what)
-    report = {"bootstrap_lines": 0, "functions": [], "constant_entries_inlined": inlined_constants}
     if main:
         # A lifted bootstrap can contain a small number of Roblox-looking
         # environment probes (for example, checking game/workspace) alongside

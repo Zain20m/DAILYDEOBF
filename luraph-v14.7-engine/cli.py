@@ -285,8 +285,10 @@ def strip_luraph_runtime(output: Path) -> None:
             output.write_text(cleaned, encoding="utf-8", newline="")
             removed = report.get("bootstrap_lines", 0)
             functions = len(report.get("functions", []))
+            constants = report.get("constant_entries_inlined", 0)
             eprint("[+] removed Luraph-only scaffolding: "
-                   f"{removed} bootstrap lines, {functions} helper functions")
+                   f"{removed} bootstrap lines, {functions} helper functions, "
+                   f"{constants} constant-pool references inlined")
     except Exception as exc:  # cleanup must never break deobfuscation
         eprint(f"[!] Luraph cleanup skipped (original output preserved): {exc}")
 

@@ -1,0 +1,26 @@
+name: IronBrew devirt regression
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "luraph-v15-engine/obfuscators/ironbrew1/**"
+      - ".github/workflows/test-ironbrew-devirt.yml"
+  pull_request:
+    paths:
+      - "luraph-v15-engine/obfuscators/ironbrew1/**"
+      - ".github/workflows/test-ironbrew-devirt.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Check devirt syntax
+        run: python -m py_compile luraph-v15-engine/obfuscators/ironbrew1/devirt.py
+      - name: Run symbolic numeric-for regressions
+        working-directory: luraph-v15-engine
+        run: python -m unittest obfuscators.ironbrew1.test_symbolic_numeric_for -v

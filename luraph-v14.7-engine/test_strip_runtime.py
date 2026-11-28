@@ -12,7 +12,7 @@ from obfuscators.luraph_v14_9.vmmap import luau_ast_executable
 
 
 def main():
-    source = '''local runtime_banner = "Luraph runtime support ticket"
+    source = '''local cached_tostring = tostring
 local runtime_probe = game:GetService("RunService")
 
 local function recovered_proto_game()
@@ -28,7 +28,7 @@ end
 
     assert report is not None, "expected the Luraph scaffolding to be detected"
     assert "game:GetService(\"Players\")" in cleaned, cleaned
-    assert "runtime_banner" not in cleaned, cleaned
+    assert "cached_tostring" not in cleaned, cleaned
     assert "runtime_probe" in cleaned, cleaned
     assert report["bootstrap_lines"] > 0, report
     assert "recovered_proto_debug_check" not in cleaned, cleaned

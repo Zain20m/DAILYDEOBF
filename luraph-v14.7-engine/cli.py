@@ -269,48 +269,21 @@ def normalize_compat_args(args):
 
 
 def strip_luraph_runtime(output: Path) -> None:
-    """Recover flattened control flow, then remove proven Luraph-only scaffolding.
-
-    Both passes run after lifting. The deflattener reconstructs only
-    statically-provable dispatchers; the runtime stripper keeps uncertain
-    code. Candidates are parsed with luau-ast before they are accepted.
-    """
+    """Remove explicit Luraph scaffolding without rewriting recovered source."""
     try:
         from strip_runtime import strip
-        from obfuscators.luraph_v14_9.vmmap import luau_ast_executable
 
         original = read_source(output)
-        ast_exe = luau_ast_executable()
-
-        # The source-level lifter can recover functions while leaving their
-        # control flow flattened. Run the existing conservative deflattener
-        # before classifying/removing runtime scaffolding, so state-machine
-        # branches are reconstructed and actual script statements survive.
-        try:
-            from unflatten import deflatten_text
-            deflattened = deflatten_text(original, ast_exe)
-        except Exception as exc:  # noqa: BLE001 - preserve the lifted source
-            deflattened = original
-            eprint(f"[!] Luraph control-flow recovery skipped: {exc}")
-
-        if deflattened != original:
-            output.write_text(deflattened, encoding="utf-8", newline="")
-            eprint("[+] reconstructed flattened Luraph control flow")
-            original = deflattened
-
-        cleaned, report = strip(original, ast_exe)
-        if cleaned != original and report:
+        cleaned, report = strip(original)
+        if cleaned != original:
             output.write_text(cleaned, encoding="utf-8", newline="")
         if report:
-            removed = report.get("bootstrap_lines", 0)
-            functions = len(report.get("functions", []))
-            constants = report.get("constant_entries_inlined", 0)
-            if removed or functions or constants:
-                eprint("[+] Luraph cleanup: "
-                       f"{removed} bootstrap lines, {functions} helper functions, "
-                       f"{constants} constant-pool references inlined")
+            eprint("[+] Luraph cleanup: "
+                   f"{report.get('removed_luraph_lines', 0)} Luraph-only lines removed; "
+                   f"{len(report.get('functions', []))} named runtime helpers removed")
     except Exception as exc:  # cleanup must never break deobfuscation
         eprint(f"[!] Luraph post-processing skipped (current output preserved): {exc}")
+
 
 def write_flattened_analysis(output: Path) -> None:
     """Write a non-executable index when the lift is a flattened state machine."""

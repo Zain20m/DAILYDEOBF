@@ -2366,19 +2366,7 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
     ].join('\n');
     await fs.writeFile(reportPath, report, 'utf8');
 
-    const previewText = buildDeobfPreview(await fs.readFile(outputPath, 'utf8'), Date.now() - startedAt);
     await message.reply({
-      content: '## Luraph v' + version + ' Deobfuscated!\n\n' + previewText + '\n\n' +
-        (isTrace || engineError ? '⚠️' : '✅') + ' **DAILY DEOBF · Luraph v' + version + '**\n' +
-        (engineError
-          ? 'The engine stopped before finishing (' + (/SIGKILL|memory/i.test(String(engineError.message)) ? 'the server ran out of memory' : String(engineError.message || engineError).split('\n')[0].slice(0, 160)) +
-            '), so this is what it had recovered by then' + (isTrace ? ' (a behaviour trace).' : ' (a partial VM lift).')
-          : isTrace
-          ? 'The VM lift was incomplete, so the main file is a behaviour trace (what the script did in the sandbox).'
-          : 'Dedicated v' + version + ' engine finished.') +
-        '\nOutput size: ' + formatBytes(stat.size) + '\nAttached: Luraph' + versionTag + '_deobfuscated.lua' +
-        (SEND_ALL_FILES ? extraFiles.map((f) => ', ' + luaFileName(f.name)).join('') + ' and engine report.' : '') +
-        engineSummaryLines(result.stderr || result.stdout || ''),
       // One file: the result. DEOB_SEND_ALL=1 (host) adds the other result of
       // the run, the engine report and the PureLuau copy for debugging.
       files: SEND_ALL_FILES
@@ -2399,10 +2387,7 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
       );
     }
     await progress.complete('The Luraph v' + version + ' reconstruction, engine report and automatic PureLuau pass finished.');
-    await prompt.edit({
-      content: '✅ Luraph v' + version + ' analysis finished. The reconstructed Luau file is attached above.',
-      components: [],
-    }).catch(() => {});
+    await prompt.delete().catch(() => {});
   } catch (error) {
     await progress.fail(error);
     throw error;

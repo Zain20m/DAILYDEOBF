@@ -290,6 +290,24 @@ def strip_luraph_runtime(output: Path) -> None:
     except Exception as exc:  # cleanup must never break deobfuscation
         eprint(f"[!] Luraph cleanup skipped (original output preserved): {exc}")
 
+def write_flattened_analysis(output: Path) -> None:
+    """Write a non-executable index when the lift is a flattened state machine."""
+    try:
+        from analysis_export import write_analysis
+        source = read_source(output)
+        # Avoid generating a duplicate companion for ordinary structured lifts.
+        if not re.search(r"\\bwhile\\s+true\\s+do\\b", source) or not re.search(
+            r"\\bif\\s+[A-Za-z_]\\w*\\s*==\\s*-?\\d+\\s+then\\b", source
+        ):
+            return
+        report = output.with_suffix(".analysis.txt")
+        line_count, branch_count = write_analysis(output, report)
+        eprint(f"[+] wrote non-executable analysis: {report} "
+               f"({line_count} source lines, {branch_count} state branches)")
+    except Exception as exc:  # analysis companion must never break the main output
+        eprint(f"[!] analysis export skipped (deobfuscated output preserved): {exc}")
+
+
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
     normalize_compat_args(args)
@@ -351,6 +369,8 @@ def main(argv=None) -> int:
 
         if not args.keep_luraph_runtime:
             strip_luraph_runtime(output)
+
+        write_flattened_analysis(output)
 
         print(str(output))
         eprint(f"[+] wrote: {output}")

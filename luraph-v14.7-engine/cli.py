@@ -300,14 +300,19 @@ def strip_luraph_runtime(output: Path) -> None:
         if report or flattened != cleaned:
             removed = (report or {}).get("removed_luraph_lines", 0)
             helpers = len((report or {}).get("functions", []))
+            pool_protos = len((report or {}).get("pool_prototypes_removed", []))
+            renamed_main = (report or {}).get("main_function_renamed")
             before_states = len(re.findall(r"\bstate\s*==\s*\d+\b", cleaned))
             after_states = len(re.findall(r"\bstate\s*==\s*\d+\b", recovered))
             dispatch_removed = max(0, before_states - after_states)
             constants_left = len(re.findall(r"\bluraph_constant\w*\b", recovered))
             unresolved = len(re.findall(r"""error\(["']devirt:""", recovered))
             eprint("[+] Luraph cleanup: "
-                   f"{removed} bootstrap lines and {helpers} named runtime helpers removed; "
+                   f"{removed} bootstrap lines, {helpers} named runtime helpers, and "
+                   f"{pool_protos} orphaned constant-pool prototypes removed; "
                    f"{dispatch_removed} state checks eliminated by proven deflattening")
+            if renamed_main:
+                eprint(f"[+] recovered entrypoint: {renamed_main} -> recovered_main")
             if constants_left or unresolved:
                 eprint("[!] Kept mixed recovered content intact: "
                        f"{constants_left} Luraph-named register references, "

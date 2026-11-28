@@ -179,9 +179,7 @@ once('12*60_000', /12 \* 60_000/g, '55_000');
 once('stall 180k', /stallTimeoutMs:\s*180_000/g, 'stallTimeoutMs: 18_000');
 once('stall 120k', /stallTimeoutMs:\s*120_000/g, 'stallTimeoutMs: 18_000');
 
-// 14.x quick path
-once('14.x runtime', /const largeFileRuntimeSeconds = \[[^\]]+\]\[largeFileTier\];/,
-  'const largeFileRuntimeSeconds = [25, 35, 45, 55][largeFileTier];');
+// Preserve the 14.x engine's size-based runtime timeout configuration.
 once('14.x max-runs', /'--max-runs', options\.fast \? '[^']+' : '[^']+',/,
   "'--max-runs', options.fast ? '2' : '3',");
 once('14.x rounds', /'--devirt-rounds', options\.fast \? '[^']+' : '[^']+',/,

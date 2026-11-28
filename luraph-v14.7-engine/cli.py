@@ -269,7 +269,7 @@ def normalize_compat_args(args):
 
 
 def strip_luraph_runtime(output: Path) -> None:
-    """Remove explicit Luraph scaffolding without rewriting recovered source."""
+    """Remove separable Luraph scaffolding; preserve mixed recovered functions."""
     try:
         from strip_runtime import strip
         from obfuscators.luraph_v14_9.vmmap import luau_ast_executable
@@ -280,8 +280,12 @@ def strip_luraph_runtime(output: Path) -> None:
             output.write_text(cleaned, encoding="utf-8", newline="")
         if report:
             eprint("[+] Luraph cleanup: "
-                   f"{report.get('removed_luraph_lines', 0)} Luraph-only lines removed; "
-                   f"{len(report.get('functions', []))} named runtime helpers removed")
+                   f"{report.get('removed_luraph_lines', 0)} scaffolding lines removed; "
+                   f"{len(report.get('functions', []))} runtime stubs removed")
+            mixed = report.get("mixed_recovered_functions", [])
+            if mixed:
+                eprint("[!] Mixed recovered functions retained intact (their Luraph registers "
+                       "are interleaved with script logic): " + ", ".join(mixed))
     except Exception as exc:  # cleanup must never break deobfuscation
         eprint(f"[!] Luraph post-processing skipped (current output preserved): {exc}")
 

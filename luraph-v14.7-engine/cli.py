@@ -280,15 +280,35 @@ def strip_luraph_runtime(output: Path) -> None:
         from obfuscators.luraph_v14_9.vmmap import luau_ast_executable
 
         original = read_source(output)
-        cleaned, report = strip(original, luau_ast_executable())
+        ast_exe = luau_ast_executable()
+
+        # The source-level lifter can recover functions while leaving their
+        # control flow flattened. Run the existing conservative deflattener
+        # before classifying/removing runtime scaffolding, so state-machine
+        # branches are reconstructed and actual script statements survive.
+        try:
+            from unflatten import deflatten_text
+            deflattened = deflatten_text(original, ast_exe)
+        except Exception as exc:  # noqa: BLE001 - preserve the lifted source
+            deflattened = original
+            eprint(f"[!] Luraph control-flow recovery skipped: {exc}")
+
+        if deflattened != original:
+            output.write_text(deflattened, encoding="utf-8", newline="")
+            eprint("[+] reconstructed flattened Luraph control flow")
+            original = deflattened
+
+        cleaned, report = strip(original, ast_exe)
         if cleaned != original and report:
             output.write_text(cleaned, encoding="utf-8", newline="")
+        if report:
             removed = report.get("bootstrap_lines", 0)
             functions = len(report.get("functions", []))
             constants = report.get("constant_entries_inlined", 0)
-            eprint("[+] removed Luraph-only scaffolding: "
-                   f"{removed} bootstrap lines, {functions} helper functions, "
-                   f"{constants} constant-pool references inlined")
+            if removed or functions or constants:
+                eprint("[+] Luraph cleanup: "
+                       f"{removed} bootstrap lines, {functions} helper functions, "
+                       f"{constants} constant-pool references inlined")
     except Exception as exc:  # cleanup must never break deobfuscation
         eprint(f"[!] Luraph cleanup skipped (original output preserved): {exc}")
 

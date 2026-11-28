@@ -2283,15 +2283,12 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
           // Two full source-generation passes keep Discord v14 runs responsive.
           // Raise DEVIRT_MAX_FULL_LIFTS when a difficult sample needs more rounds.
           DEVIRT_MAX_FULL_LIFTS: process.env.DEVIRT_MAX_FULL_LIFTS || '2',
-          // Keep variable-count copy modelling enabled for fast v14.7 runs:
-          // turning it off on every >400 KB input was saving time but losing code.
-          // Respect an explicit low-memory setting; other versions retain the
-          // previous size-based safeguard.
-          ...(options.fast && process.env.DEOB_LOW_MEMORY !== '1'
-            ? { DEVIRT_SYMBOLIC_FOR: '1' }
-            : (process.env.DEOB_LOW_MEMORY === '1' ||
-               (!options.fast && Buffer.byteLength(input.source, 'utf8') > 400_000)
-              ? { DEVIRT_SYMBOLIC_FOR: '0' } : {})),
+          // Symbolic numeric-for handling is required for real v14.x handlers
+          // that copy variable-length call/vararg results into VM registers.
+          // Disabling it by upload size produced "numeric for with symbolic
+          // bounds" errors and dropped otherwise recoverable handler code.
+          // Only an explicit DEVIRT_SYMBOLIC_FOR=0 opt-out may disable it.
+          DEVIRT_SYMBOLIC_FOR: process.env.DEVIRT_SYMBOLIC_FOR === '0' ? '0' : '1',
           // The VM can execute long decoder loops without touching the fake
           // environment. Raise the consecutive-idle threshold for large input
           // tiers so legitimate constant decoding is not mistaken for a spin.

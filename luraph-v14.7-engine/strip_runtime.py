@@ -89,6 +89,110 @@ def _refs(name, text):
     return len(re.findall(r"\b%s\b" % re.escape(name), text))
 
 
+
+def _code_mask(source):
+    """True for source characters outside Lua strings and comments."""
+    mask = [True] * len(source)
+    i, n = 0, len(source)
+    while i < n:
+        if source.startswith("--", i):
+            # Lua line comment or long comment.
+            j = i + 2
+            if j < n and source[j] == "[":
+                m = re.match(r"\[(=*)\[", source[j:])
+                if m:
+                    close = "]" + m.group(1) + "]"
+                    end = source.find(close, j + len(m.group(0)))
+                    end = n if end < 0 else end + len(close)
+                    for k in range(i, end):
+                        mask[k] = False
+                    i = end
+                    continue
+            end = source.find("\n", i)
+            end = n if end < 0 else end
+            for k in range(i, end):
+                mask[k] = False
+            i = end
+            continue
+        if source[i] in ("'", '"'):
+            quote = source[i]
+            j = i + 1
+            while j < n:
+                if source[j] == "\\":
+                    j += 2
+                    continue
+                if source[j] == quote:
+                    j += 1
+                    break
+                j += 1
+            for k in range(i, min(j, n)):
+                mask[k] = False
+            i = j
+            continue
+        if source[i] == "[":
+            m = re.match(r"\[(=*)\[", source[i:])
+            if m:
+                close = "]" + m.group(1) + "]"
+                end = source.find(close, i + len(m.group(0)))
+                end = n if end < 0 else end + len(close)
+                for k in range(i, end):
+                    mask[k] = False
+                i = end
+                continue
+        i += 1
+    return mask
+
+
+def _inline_constant_pool(text):
+    """Inline only literal/global constant slots; retain the pool if it escapes.
+
+    This is deliberately conservative: computed indexes, table escapes and
+    non-atomic values are left intact. Replacements are made only in Lua code,
+    never inside strings or comments.
+    """
+    table = re.search(
+        r"(?m)^local luraph_constants = \{\n(.*?)\n\}\n", text, re.S
+    )
+    if not table:
+        return text, 0
+
+    values = {}
+    for line in table.group(1).splitlines():
+        entry = re.match(r"^\s*\[(\d+)\]\s*=\s*(.*?)\s*,\s*(?:--.*)?$", line)
+        if not entry:
+            return text, 0
+        index, value = entry.groups()
+        value = re.sub(r"\s+--\[\[.*?\]\]\s*$", "", value).strip()
+        # Only expressions that are atomic and have no side effects.
+        if not (
+            value in ("nil", "true", "false")
+            or re.fullmatch(r"-?\d+(?:\.\d+)?", value)
+            or re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", value)
+            or (len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'))
+        ):
+            continue
+        values[index] = value
+
+    if not values:
+        return text, 0
+
+    mask = _code_mask(text)
+    pattern = re.compile(r"\bluraph_constants\s*\[\s*(\d+)\s*\]")
+    edits = []
+    for match in pattern.finditer(text):
+        if match.group(1) not in values:
+            continue
+        if not all(mask[match.start():match.end()]):
+            continue
+        edits.append((match.start(), match.end(), values[match.group(1)]))
+
+    if not edits:
+        return text, 0
+    out = text
+    for start, end, value in reversed(edits):
+        out = out[:start] + value + out[end:]
+    return out, len(edits)
+
 def strip(text, exe):
     """-> (text, report) ; report is None when nothing was removed."""
     if os.environ.get("DEOB_KEEP_LURAPH_RUNTIME"):
@@ -96,6 +200,7 @@ def strip(text, exe):
     root = _parse(text, exe)
     if root is None:
         return text, None
+    text, inlined_constants = _inline_constant_pool(text)
     lines = text.split("\n")
     stmts = []
     for s in root.get("body", []):
@@ -116,7 +221,7 @@ def strip(text, exe):
     main = [(l0, l1) for l0, l1, first in stmts if l0 < first_proto and not PREAMBLE.match(first)
             and not (first.startswith("local ") and first.rstrip().endswith("= ...") and l0 == l1)]
     drop = []          # (first line, last line, what)
-    report = {"bootstrap_lines": 0, "functions": []}
+    report = {"bootstrap_lines": 0, "functions": [], "constant_entries_inlined": inlined_constants}
     if main:
         # A lifted bootstrap can contain a small number of Roblox-looking
         # environment probes (for example, checking game/workspace) alongside

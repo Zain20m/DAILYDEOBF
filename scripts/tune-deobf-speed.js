@@ -18,7 +18,7 @@ let src = fs.readFileSync(indexPath, 'utf8');
 let hits = 0;
 
 function once(label, find, replace) {
-  if (!src.includes(find) && typeof find === 'string') {
+  if (typeof find === 'string' && !src.includes(find)) {
     console.log('[speed] skip (not found):', label);
     return;
   }
@@ -64,12 +64,7 @@ if (!src.includes('[speed-quality] forced defaults')) {
   }
 }
 
-// ---- global timeout ----
-once(
-  'ENGINE_TIMEOUT_MS',
-  /const ENGINE_TIMEOUT_MS = [^;]+;/,
-  'const ENGINE_TIMEOUT_MS = 60_000; // speed-quality'
-);
+// Preserve the engine's configured timeout. Do not inject a global 60-second cap.
 
 // ---- replace entire v15 engine runner ----
 const V15_OLD_START = '  function runLuraphV15Engine(target) {';
@@ -192,22 +187,7 @@ once('14.x max-runs', /'--max-runs', options\.fast \? '[^']+' : '[^']+',/,
 once('14.x rounds', /'--devirt-rounds', options\.fast \? '[^']+' : '[^']+',/,
   "'--devirt-rounds', options.fast ? '8' : '12',");
 
-// Cap runCommand hard timeout argument if something still passes 5+ minutes
-// (defensive: clamp inside runCommand)
-if (!src.includes('/* speed-quality clamp */') && src.includes('function runCommand(')) {
-  const rc = src.indexOf('function runCommand(');
-  // Find the function body, not the "{}" in the default options parameter.
-  const signatureEnd = src.indexOf(') {', rc);
-  const brace = signatureEnd >= 0 ? signatureEnd + 2 : -1;
-  if (rc >= 0 && brace > 0) {
-    src = src.slice(0, brace + 1) +
-      '\n  /* speed-quality clamp */\n' +
-      '  if (Number.isFinite(timeoutMs) && timeoutMs > 60_000 && process.env.DEOB_ALLOW_SLOW !== \'1\') timeoutMs = 60_000;\n' +
-      src.slice(brace + 1);
-    hits += 1;
-    console.log('[speed] runCommand clamp ≤60s');
-  }
-}
+// No global runCommand timeout clamp: each engine uses its own configured timeout.
 
 fs.writeFileSync(indexPath, src);
 console.log('[speed] done, changes:', hits);

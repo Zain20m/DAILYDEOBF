@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from strip_runtime import strip
+from obfuscators.luraph_v14_9.vmmap import luau_ast_executable
 
 
 def main():
@@ -29,7 +30,7 @@ local function recovered_proto_p_28(...)
     return text
 end
 '''
-    cleaned, report = strip(source)
+    cleaned, report = strip(source, luau_ast_executable())
     assert report is not None
     assert "luraph_constants" not in cleaned, cleaned
     assert "luraph_runtime1" not in cleaned, cleaned
@@ -44,7 +45,7 @@ local function recovered_proto_p_1()
     return "still recovered"
 end
 '''
-    cleaned, _ = strip(refs)
+    cleaned, _ = strip(refs, luau_ast_executable())
     assert "luraph_constants" not in cleaned
     assert "Instance" not in cleaned
     assert "still recovered" in cleaned
@@ -59,7 +60,7 @@ while true do
     end
 end
 '''
-    cleaned, report = strip(vm)
+    cleaned, report = strip(vm, luau_ast_executable())
     assert cleaned == vm
     assert report is None
 

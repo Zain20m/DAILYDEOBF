@@ -24,6 +24,7 @@ class SymbolicNumericForTests(unittest.TestCase):
         class FakeLifter:
             def __init__(self):
                 self.lvreg = {}
+                self.out = []
 
             def fval(self, _expr):
                 return devirt.NOFOLD

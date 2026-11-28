@@ -47,6 +47,43 @@ const {
 } = require('./scripts/idx-resolver');
 
 const TOKEN = process.env.DISCORD_TOKEN;
+const PASTEFY_API_TOKEN = process.env.PASTEFY_API_TOKEN;
+
+// Upload a completed result once, then expose normal and raw Pastefy links.
+async function createPastefyLinks(title, content) {
+  if (!PASTEFY_API_TOKEN) return null;
+  const response = await fetch('https://pastefy.app/api/v2/paste', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + PASTEFY_API_TOKEN,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({
+      title,
+      content,
+      type: 'PASTE',
+      visibility: 'UNLISTED',
+      encrypted: false,
+    }),
+    signal: AbortSignal.timeout(20000),
+  });
+  const body = await response.json().catch(() => ({}));
+  const paste = body && (body.paste || body);
+  if (!response.ok || !paste || !paste.id) {
+    throw new Error('Pastefy upload failed (' + response.status + '): ' +
+      String(body && (body.message || body.error) || 'Invalid API response').slice(0, 180));
+  }
+  const normalUrl = 'https://pastefy.app/' + encodeURIComponent(paste.id);
+  const rawValue = String(paste.raw_url || '');
+  const rawUrl = /^https?:\\/\\//i.test(rawValue)
+    ? rawValue
+    : 'https://pastefy.app/' + (rawValue.startsWith('/') ? rawValue.slice(1) : encodeURIComponent(paste.id) + '/raw');
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setLabel('Open on Pastefy').setStyle(ButtonStyle.Link).setURL(normalUrl),
+    new ButtonBuilder().setLabel('Raw').setStyle(ButtonStyle.Link).setURL(rawUrl)
+  );
+}
 const PREFIX = '.deobf';
 const MAX_OUTPUT_BYTES = 18 * 1024 * 1024;
 const MAX_INPUT_BYTES = 18 * 1024 * 1024;
@@ -2366,9 +2403,21 @@ async function processLuraph14x(message, prompt, input, version, options = {}) {
     ].join('\n');
     await fs.writeFile(reportPath, report, 'utf8');
 
+    let pastefyComponents = [];
+    try {
+      const pastefyRow = await createPastefyLinks(
+        'Luraph' + versionTag + '_deobfuscated.lua',
+        await fs.readFile(outputPath, 'utf8')
+      );
+      if (pastefyRow) pastefyComponents = [pastefyRow];
+    } catch (pastefyError) {
+      console.warn('[Pastefy] Could not publish Luraph result:', pastefyError.message);
+    }
+
     await message.reply({
       // One file: the result. DEOB_SEND_ALL=1 (host) adds the other result of
       // the run, the engine report and the PureLuau copy for debugging.
+      components: pastefyComponents,
       files: SEND_ALL_FILES
         ? [
           new AttachmentBuilder(outputPath, { name: 'Luraph' + versionTag + '_deobfuscated.luau' }),

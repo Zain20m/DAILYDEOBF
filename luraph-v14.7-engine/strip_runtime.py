@@ -1,25 +1,13 @@
-"""Drop Luraph's own runtime / anti-tamper code from a lifted v14.x result.
+"""Conservative Luraph scaffolding cleanup for lifted v14.x output.
 
-The lifted root proto of a Luraph v14 file is Luraph's bootstrap, not the
-script: it caches the globals it trusts (rawget, setfenv, string.*, ...),
-hooks `tostring`/`rawset` on them to detect tampering, checks the debug
-library and loadstring (`LPH_NO_UPVALUES`), and only then calls the script.
-The script itself ends up in the functions lifted on their own
-(`recovered_proto_*`).  That bootstrap is the long `tbl5[n] = v(x, "tostring")
-v9(x, "tostring", fn)` noise at the top of every result.
+The pass recognizes a large top-level state dispatcher only when multiple
+Luraph runtime fingerprints are also present. It removes that root bootstrap
+and explicitly named top-level runtime stubs. Every recovered_proto_* function
+is preserved byte-for-byte, including mixed constant-pool/VM functions that
+still contain Luraph registers. Those mixed functions require further
+devirtualization before their scaffolding can be separated safely.
 
-This pass removes, at top level only:
-  * the root body (everything between the constants/stubs and the first
-    `recovered_proto_*`) when it carries Luraph's markers and makes no
-    Roblox API call -- i.e. it is only the bootstrap;
-  * `recovered_proto_*` functions that are likewise Luraph-only (markers,
-    no API call) or are Luraph's huge-arity internal helpers, when nothing
-    kept refers to them;
-  * `luraph_constants` entries and stubs nothing kept refers to any more.
-
-It never touches the inside of kept code, and if the stripped text does not
-parse, or nothing script-like would be left, the input is returned
-unchanged.  DEOB_KEEP_LURAPH_RUNTIME=1 turns the pass off.
+DEOB_KEEP_LURAPH_RUNTIME=1 turns the pass off.
 """
 
 import json

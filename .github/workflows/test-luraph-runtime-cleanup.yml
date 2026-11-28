@@ -1,0 +1,31 @@
+name: Test Luraph runtime cleanup
+
+on:
+  push:
+    paths:
+      - "luraph-v14.7-engine/cli.py"
+      - "luraph-v14.7-engine/strip_runtime.py"
+      - "luraph-v14.7-engine/test_strip_runtime.py"
+      - "luraph-v14.7-engine/obfuscators/luraph_v14_9/vmmap.py"
+      - ".github/workflows/test-luraph-runtime-cleanup.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile cleanup sources
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          for name in ("cli.py", "strip_runtime.py", "test_strip_runtime.py"):
+              path = Path("luraph-v14.7-engine") / name
+              compile(path.read_text(encoding="utf-8"), str(path), "exec")
+          print("Cleanup Python sources compile.")
+          PY
+      - name: Test safe Luraph runtime removal
+        run: python3 luraph-v14.7-engine/test_strip_runtime.py

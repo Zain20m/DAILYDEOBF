@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression test for removing Luraph-only output scaffolding."""
+"""Regression tests for removal-only Luraph scaffolding cleanup."""
 
 import sys
 from pathlib import Path
@@ -7,57 +7,63 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from strip_runtime import strip, _inline_constant_pool
-from obfuscators.luraph_v14_9.vmmap import luau_ast_executable
+from strip_runtime import strip
 
 
 def main():
-    source = '''local cached_tostring = tostring
-local runtime_probe = game:GetService("RunService")
-
-local function recovered_proto_game()
-    local Players = game:GetService("Players")
-    return Players.LocalPlayer
-end
-
-local function recovered_proto_debug_check()
-    error("The debug library is required on Luau platforms. Please open a support ticket.")
-end
-'''
-    cleaned, report = strip(source, luau_ast_executable())
-
-    assert report is not None, "expected the Luraph scaffolding to be detected"
-    assert "game:GetService(\"Players\")" in cleaned, cleaned
-    assert "cached_tostring" not in cleaned, cleaned
-    assert "runtime_probe" in cleaned, cleaned
-    assert report["bootstrap_lines"] > 0, report
-    assert "recovered_proto_debug_check" not in cleaned, cleaned
-    assert "debug library is required" not in cleaned, cleaned
-
-
-    pool_source = '''local luraph_constants = {
-    [1] = "GetService",
-    [2] = nil --[[ function ]],
-    [3] = 42,
-    [4] = game,
+    source = '''local luraph_constants = {
+    [1] = "close",
+    [2] = Instance,
 }
-local method = obj[luraph_constants[1]]
-local empty = luraph_constants[2]
-local count = luraph_constants[3]
-local text = "luraph_constants[1]" -- luraph_constants[3]
-consume(luraph_constants)
+local function luraph_runtime1(...)
+    return nil
+end
+local function recovered_proto_p_27(player)
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "Test GUI"
+    return gui
+end
+local function recovered_proto_p_28(...)
+    -- Luraph marker in a comment should not cause this function to vanish.
+    local text = "ordinary recovered content"
+    return text
+end
 '''
-    inlined, count = _inline_constant_pool(pool_source)
-    assert count == 3, count
-    assert 'obj["GetService"]' in inlined, inlined
-    assert "local empty = nil" in inlined, inlined
-    assert "local count = 42" in inlined, inlined
-    assert '"luraph_constants[1]"' in inlined, inlined
-    assert "-- luraph_constants[3]" in inlined, inlined
-    assert "consume(luraph_constants)" in inlined, inlined
+    cleaned, report = strip(source)
+    assert report is not None
+    assert "luraph_constants" not in cleaned, cleaned
+    assert "luraph_runtime1" not in cleaned, cleaned
+    assert "recovered_proto_p_27" in cleaned, cleaned
+    assert 'Instance.new("ScreenGui")' in cleaned, cleaned
+    assert "recovered_proto_p_28" in cleaned, cleaned
+    assert "ordinary recovered content" in cleaned, cleaned
 
-    print("Luraph runtime cleanup regression passed.")
-    print("Kept actual Roblox API code and removed the debug-ticket bootstrap.")
+    # Explicit pool references are removed, not inlined or substituted.
+    refs = '''local recovered_value = luraph_constants[2]
+local function recovered_proto_p_1()
+    return "still recovered"
+end
+'''
+    cleaned, _ = strip(refs)
+    assert "luraph_constants" not in cleaned
+    assert "Instance" not in cleaned
+    assert "still recovered" in cleaned
+
+    # Ambiguous VM/control-flow code is retained rather than guessed away.
+    vm = '''local state = 10
+while true do
+    if state == 10 then
+        state = 20
+    else
+        break
+    end
+end
+'''
+    cleaned, report = strip(vm)
+    assert cleaned == vm
+    assert report is None
+
+    print("Luraph removal-only cleanup tests passed.")
 
 
 if __name__ == "__main__":

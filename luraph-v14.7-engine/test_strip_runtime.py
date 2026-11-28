@@ -150,6 +150,54 @@ end
     assert "while true do" in cleaned
     assert report is None or report["bootstrap_lines"] == 0
 
+    # An orphaned recovered prototype that only returns Luraph's large
+    # numeric constant pool is runtime scaffolding, not a user function.
+    pool_entries = [
+        '[0] = function() return "runtime" end,',
+        '[1] = "Luraph",',
+        '[2] = "The debug library is required on Luau platforms",',
+        '[3] = "Please open a support ticket",',
+        '[4] = "short_src",',
+        '[5] = "linedefined",',
+        '[6] = "lastlinedefined",',
+        '[7] = "setfenv",',
+        '[8] = "getfenv",',
+    ] + [f'[{i}] = "pool{i}",' for i in range(9, 42)]
+    pool_source = (
+        "local function recovered_proto_p_1(...)\\n"
+        "    return ({\\n        " + "\\n        ".join(pool_entries) + "\\n    })\\n"
+        "end\\n\\n"
+        "-- lifted on its own (upvalues it uses come first in the parameter list)\\n"
+        "local function recovered_proto_p_27(...)\\n"
+        "    local Players = game:GetService(\\"Players\\")\\n"
+        "    local gui = Instance.new(\\"ScreenGui\\")\\n"
+        "    return Players, gui\\n"
+        "end\\n"
+        "-- ============================================================\\n"
+        "--  recovered functions : 2\\n"
+        "--  unlifted VM blocks   : 0\\n"
+        "--deobf by daily deobf\\n"
+    )
+    cleaned, report = strip(pool_source, exe)
+    assert report is not None
+    assert report["pool_prototypes_removed"] == ["recovered_proto_p_1"]
+    assert report["main_function_renamed"] == "recovered_proto_p_27"
+    assert "recovered_proto_p_1" not in cleaned
+    assert "local function recovered_main(...)" in cleaned
+    assert 'game:GetService("Players")' in cleaned
+    assert 'Instance.new("ScreenGui")' in cleaned
+    assert "Luraph" not in cleaned
+    assert "recovered functions :" not in cleaned
+    assert "--deobf by daily deobf" in cleaned
+
+    # A pool prototype referenced by another function is not considered dead.
+    referenced_pool = pool_source.replace(
+        "local function recovered_proto_p_27(...)",
+        "local function recovered_proto_p_27(...)\\n    local pool = recovered_proto_p_1()",
+    )
+    referenced, _ = strip(referenced_pool, exe)
+    assert "recovered_proto_p_1" in referenced
+
     print("Luraph v14.7 removal-only regression tests passed.")
 
 

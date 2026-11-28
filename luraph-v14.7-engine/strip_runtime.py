@@ -128,19 +128,22 @@ def strip(text, exe):
         # when the root has clear Luraph markers. The real script body is in
         # recovered_proto_* functions, not in this root bootstrap.
         mtext = "\n".join(body_of(a, b) for a, b in main)
-        if MARKERS.search(mtext):
-            api_statements = [
-                (a, b) for a, b in main if API.search(body_of(a, b))
-            ]
-            non_api_statements = [
-                (a, b) for a, b in main if not API.search(body_of(a, b))
-            ]
-            # Do not strip a root that is mostly actual API-using script code.
-            # A Luraph root is normally dominated by runtime statements.
-            if non_api_statements and len(non_api_statements) >= len(api_statements):
-                for a, b in non_api_statements:
-                    drop.append((a, b, "bootstrap"))
-                    report["bootstrap_lines"] += b - a + 1
+        # In v14.7 the root bootstrap is not guaranteed to contain a
+        # printable Luraph marker: those strings can live in a recovered
+        # helper, while the root only caches globals and dispatches protos.
+        # The presence of recovered_proto_* declarations is the structural
+        # signal that this root is the VM wrapper. Keep API-using root
+        # statements, and remove the non-API wrapper statements.
+        api_statements = [
+            (a, b) for a, b in main if API.search(body_of(a, b))
+        ]
+        non_api_statements = [
+            (a, b) for a, b in main if not API.search(body_of(a, b))
+        ]
+        if non_api_statements and len(non_api_statements) >= len(api_statements):
+            for a, b in non_api_statements:
+                drop.append((a, b, "bootstrap"))
+                report["bootstrap_lines"] += b - a + 1
 
     kept_protos = []
     for l0, l1, m in protos:

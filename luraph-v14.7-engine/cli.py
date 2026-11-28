@@ -300,11 +300,11 @@ def strip_luraph_runtime(output: Path) -> None:
         if report or flattened != cleaned:
             removed = (report or {}).get("removed_luraph_lines", 0)
             helpers = len((report or {}).get("functions", []))
-            before_states = len(re.findall(r"\\bstate\\s*==\\s*\\d+\\b", cleaned))
-            after_states = len(re.findall(r"\\bstate\\s*==\\s*\\d+\\b", recovered))
+            before_states = len(re.findall(r"\bstate\s*==\s*\d+\b", cleaned))
+            after_states = len(re.findall(r"\bstate\s*==\s*\d+\b", recovered))
             dispatch_removed = max(0, before_states - after_states)
-            constants_left = len(re.findall(r"\\bluraph_constant\\w*\\b", recovered))
-            unresolved = len(re.findall(r'error\\(["\\']devirt:', recovered))
+            constants_left = len(re.findall(r"\bluraph_constant\w*\b", recovered))
+            unresolved = len(re.findall(r"""error\(["']devirt:""", recovered))
             eprint("[+] Luraph cleanup: "
                    f"{removed} bootstrap lines and {helpers} named runtime helpers removed; "
                    f"{dispatch_removed} state checks eliminated by proven deflattening")

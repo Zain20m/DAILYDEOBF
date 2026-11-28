@@ -269,11 +269,11 @@ def normalize_compat_args(args):
 
 
 def strip_luraph_runtime(output: Path) -> None:
-    """Remove Luraph-only bootstrap scaffolding after a successful lift.
+    """Recover flattened control flow, then remove proven Luraph-only scaffolding.
 
-    This is a post-pass: it never changes VM tracing or lifting. The
-    stripper validates the candidate with luau-ast and returns the original
-    text unchanged whenever it cannot prove the removal is safe.
+    Both passes run after lifting. The deflattener reconstructs only
+    statically-provable dispatchers; the runtime stripper keeps uncertain
+    code. Candidates are parsed with luau-ast before they are accepted.
     """
     try:
         from strip_runtime import strip
@@ -310,7 +310,7 @@ def strip_luraph_runtime(output: Path) -> None:
                        f"{removed} bootstrap lines, {functions} helper functions, "
                        f"{constants} constant-pool references inlined")
     except Exception as exc:  # cleanup must never break deobfuscation
-        eprint(f"[!] Luraph cleanup skipped (original output preserved): {exc}")
+        eprint(f"[!] Luraph post-processing skipped (current output preserved): {exc}")
 
 def write_flattened_analysis(output: Path) -> None:
     """Write a non-executable index when the lift is a flattened state machine."""

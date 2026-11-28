@@ -164,19 +164,19 @@ end
         '[8] = "getfenv",',
     ] + [f'[{i}] = "pool{i}",' for i in range(9, 42)]
     pool_source = (
-        "local function recovered_proto_p_1(...)\\n"
-        "    return ({\\n        " + "\\n        ".join(pool_entries) + "\\n    })\\n"
-        "end\\n\\n"
-        "-- lifted on its own (upvalues it uses come first in the parameter list)\\n"
-        "local function recovered_proto_p_27(...)\\n"
-        "    local Players = game:GetService(\\"Players\\")\\n"
-        "    local gui = Instance.new(\\"ScreenGui\\")\\n"
-        "    return Players, gui\\n"
-        "end\\n"
-        "-- ============================================================\\n"
-        "--  recovered functions : 2\\n"
-        "--  unlifted VM blocks   : 0\\n"
-        "--deobf by daily deobf\\n"
+        "local function recovered_proto_p_1(...)\n"
+        "    return ({\n        " + "\n        ".join(pool_entries) + "\n    })\n"
+        "end\n\n"
+        "-- lifted on its own (upvalues it uses come first in the parameter list)\n"
+        "local function recovered_proto_p_27(...)\n"
+        "    local Players = game:GetService(\"Players\")\n"
+        "    local gui = Instance.new(\"ScreenGui\")\n"
+        "    return Players, gui\n"
+        "end\n"
+        "-- ============================================================\n"
+        "--  recovered functions : 2\n"
+        "--  unlifted VM blocks   : 0\n"
+        "--deobf by daily deobf\n"
     )
     cleaned, report = strip(pool_source, exe)
     assert report is not None
@@ -193,7 +193,7 @@ end
     # A pool prototype referenced by another function is not considered dead.
     referenced_pool = pool_source.replace(
         "local function recovered_proto_p_27(...)",
-        "local function recovered_proto_p_27(...)\\n    local pool = recovered_proto_p_1()",
+        "local function recovered_proto_p_27(...)\n    local pool = recovered_proto_p_1()",
     )
     referenced, _ = strip(referenced_pool, exe)
     assert "recovered_proto_p_1" in referenced

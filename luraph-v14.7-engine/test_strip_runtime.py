@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from strip_runtime import strip
+from strip_runtime import strip, _inline_constant_pool
 from obfuscators.luraph_v14_9.vmmap import luau_ast_executable
 
 
@@ -33,6 +33,28 @@ end
     assert report["bootstrap_lines"] > 0, report
     assert "recovered_proto_debug_check" not in cleaned, cleaned
     assert "debug library is required" not in cleaned, cleaned
+
+
+    pool_source = '''local luraph_constants = {
+    [1] = "GetService",
+    [2] = nil --[[ function ]],
+    [3] = 42,
+    [4] = game,
+}
+local method = obj[luraph_constants[1]]
+local empty = luraph_constants[2]
+local count = luraph_constants[3]
+local text = "luraph_constants[1]" -- luraph_constants[3]
+consume(luraph_constants)
+'''
+    inlined, count = _inline_constant_pool(pool_source)
+    assert count == 3, count
+    assert 'obj["GetService"]' in inlined, inlined
+    assert "local empty = nil" in inlined, inlined
+    assert "local count = 42" in inlined, inlined
+    assert '"luraph_constants[1]"' in inlined, inlined
+    assert "-- luraph_constants[3]" in inlined, inlined
+    assert "consume(luraph_constants)" in inlined, inlined
 
     print("Luraph runtime cleanup regression passed.")
     print("Kept actual Roblox API code and removed the debug-ticket bootstrap.")

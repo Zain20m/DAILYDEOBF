@@ -192,140 +192,85 @@ def _inline_constant_pool(text):
         out = out[:start] + value + out[end:]
     return out, len(edits)
 
-def strip(text, exe):
-    """-> (text, report) ; report is None when nothing was removed."""
+def strip(text, exe=None):
+    """Remove explicitly identifiable Luraph scaffolding without rewriting recovered code.
+
+    This is intentionally removal-only: recovered_proto_* bodies are never
+    transformed, renamed, folded, or discarded. Ambiguous VM/control-flow code
+    is retained because it may contain recovered script behavior.
+    """
     if os.environ.get("DEOB_KEEP_LURAPH_RUNTIME"):
         return text, None
-    text, inlined_constants = _inline_constant_pool(text)
-    report = {"bootstrap_lines": 0, "functions": [], "constant_entries_inlined": inlined_constants}
-    root = _parse(text, exe)
-    if root is None:
-        return text, report if inlined_constants else None
-    lines = text.split("\n")
-    stmts = []
-    for s in root.get("body", []):
-        l0, l1 = _loc(s["location"])
-        stmts.append((l0, l1, lines[l0]))
-    if not stmts:
-        return text, report if inlined_constants else None
 
-    def body_of(l0, l1):
-        return "\n".join(lines[l0:l1 + 1])
+    lines = text.splitlines(keepends=True)
+    removed = set()
+    report = {
+        "bootstrap_lines": 0,
+        "functions": [],
+        "constant_entries_inlined": 0,
+        "removed_luraph_lines": 0,
+    }
 
-    protos = [(l0, l1, m) for l0, l1, first in stmts for m in [PROTO.match(first)] if m]
-    if not protos:
-        return text, report if inlined_constants else None
-    first_proto = protos[0][0]
-    # the root body: top-level statements before the first lifted-alone
-    # function that are not the constants table / stubs
-    main = [(l0, l1) for l0, l1, first in stmts if l0 < first_proto and not PREAMBLE.match(first)
-            and not (first.startswith("local ") and first.rstrip().endswith("= ...") and l0 == l1)]
-    drop = []          # (first line, last line, what)
-    if main:
-        # A lifted bootstrap can contain a small number of Roblox-looking
-        # environment probes (for example, checking game/workspace) alongside
-        # the Luraph anti-tamper setup. The old all-or-nothing API test caused
-        # one such probe to block removal of the entire bootstrap.
-        #
-        # Classify root statements independently: keep every statement that
-        # actually uses a Roblox API, but remove the non-API statements only
-        # when the root has clear Luraph markers. The real script body is in
-        # recovered_proto_* functions, not in this root bootstrap.
-        mtext = "\n".join(body_of(a, b) for a, b in main)
-        # In v14.7 the root bootstrap is not guaranteed to contain a
-        # printable Luraph marker: those strings can live in a recovered
-        # helper, while the root only caches globals and dispatches protos.
-        # The presence of recovered_proto_* declarations is the structural
-        # signal that this root is the VM wrapper. Keep API-using root
-        # statements, and remove the non-API wrapper statements.
-        api_statements = [
-            (a, b) for a, b in main if API.search(body_of(a, b))
-        ]
-        non_api_statements = [
-            (a, b) for a, b in main if not API.search(body_of(a, b))
-        ]
-        if non_api_statements and len(non_api_statements) >= len(api_statements):
-            for a, b in non_api_statements:
-                drop.append((a, b, "bootstrap"))
-                report["bootstrap_lines"] += b - a + 1
-
-    kept_protos = []
-    for l0, l1, m in protos:
-        body = body_of(l0, l1)
-        nparams = len([p for p in m.group(2).split(",") if p.strip()])
-        nlines = l1 - l0 + 1
-        # a quoted string that looks like a Roblox member or a word of game
-        # text (PascalCase or a phrase) marks real script code
-        game_str = re.search(r'"[A-Z][a-z]\w+|"[a-z]+_[a-z]', body)
-        luraph_only = POOL_USE.search(body) or not API.search(body) and (
-            MARKERS.search(body)                        # Luraph text markers
-            or nparams >= HUGE_ARITY                    # VM-internal arity
-            or (DECODER.search(body) and "% 256" in body)  # LPH_ENCSTR decryptor
-            or len(CONST_ENTRY.findall(body)) >= 24     # the constant pool
-            # a large function that touches the game in no way and carries no
-            # game text: a Luraph numeric unpacker / VM helper
-            or (nlines >= 40 and not game_str))
-        if luraph_only:
-            drop.append((l0, l1, m.group(1)))
-        else:
-            kept_protos.append(m.group(1))
-    if not kept_protos:
-        # nothing script-like would be left: better the full output
-        return text, None
-
-    # never drop a function something kept still calls
-    def kept_text(dropset):
-        out = []
-        cut = sorted((a, b) for a, b, _ in dropset)
-        i = 0
-        for a, b in cut:
-            out.extend(lines[i:a])
-            i = b + 1
-        out.extend(lines[i:])
-        return "\n".join(out)
-
-    changed = True
-    while changed:
-        changed = False
-        kt = kept_text(drop)
-        for d in list(drop):
-            if d[2] != "bootstrap" and _refs(d[2], kt):
-                drop.remove(d)
-                changed = True
-    if not drop:
-        new = _drop_lift_notes(_refine_names(_inline_temps(_inline_aliases(_merge_ifs(_fold_iterators(
-            _unwrap_main(text, exe), exe), exe), exe), exe), exe))
-        if new == text:
-            return text, None
-        return new, report
-
-    # cut, taking each function's describing comment with it
-    marks = {}
-    for a, b, what in drop:
-        a2 = _comment_start(lines, a) if what != "bootstrap" else a
-        marks[a2] = (b, what)
-        if what != "bootstrap":
-            report["functions"].append(what)
-    out = []
+    # Remove explicit Luraph constant-pool declarations as a whole table.
     i = 0
     while i < len(lines):
-        if i in marks:
-            b, what = marks[i]
-            # (Luraph's bootstrap goes without a note: the file starts with
-            # the script; the log says how much was removed)
-            i = b + 1
+        if re.match(r"^\s*local\s+luraph_constants\s*=\s*\{", lines[i]):
+            depth = 0
+            j = i
+            while j < len(lines):
+                code = re.sub(r"--.*$", "", lines[j])
+                depth += code.count("{") - code.count("}")
+                removed.update(range(i, j + 1))
+                if depth <= 0:
+                    break
+                j += 1
+            i = j + 1
             continue
-        out.append(lines[i])
         i += 1
-    new = "\n".join(out)
-    # "-- captured proto N: K parameters, not script code (not shown)" notes
-    new = re.sub(r"(?m)^-- captured proto \S+: \d+ parameters, not script code \(not shown\)\n\n?", "", new)
-    new = _prune_preamble(new)
-    new = re.sub(r"\n{3,}", "\n\n", new)
-    if _parse(new, exe) is None:
+
+    # Remove clearly named Luraph-only top-level helpers using parser ranges.
+    if exe:
+        root = _parse(text, exe)
+        if root:
+            for stmt in root.get("body", []):
+                try:
+                    first, last = _loc(stmt["location"])
+                except Exception:
+                    continue
+                head = lines[first].strip() if first < len(lines) else ""
+                if re.match(
+                    r"local\s+function\s+(?:luraph_runtime\w*|luraph_undecrypted_function)\s*\(",
+                    head,
+                ):
+                    removed.update(range(first, last + 1))
+                    report["functions"].append(head.split("(")[0].replace("local function ", ""))
+
+    # Remove remaining standalone Luraph references/checks, not arbitrary
+    # statements merely because they occur in a flattened VM dispatcher.
+    explicit = re.compile(
+        r"\b(?:luraph_constants|luraph_runtime\w*|luraph_undecrypted_function|LPH_[A-Z0-9_]+)\b"
+    )
+    for idx, line in enumerate(lines):
+        if idx in removed:
+            continue
+        code = re.sub(r"--.*$", "", line)
+        if explicit.search(code):
+            removed.add(idx)
+
+    # Drop Luraph-only comments/metadata, leaving ordinary comments untouched.
+    for idx, line in enumerate(lines):
+        if idx in removed:
+            continue
+        if re.match(r"^\s*--.*(?:Luraph|LPH_)", line, re.I):
+            removed.add(idx)
+
+    if not removed:
         return text, None
-    return _drop_lift_notes(_refine_names(_inline_temps(_inline_aliases(_merge_ifs(_fold_iterators(
-        _unwrap_main(new, exe), exe), exe), exe), exe), exe)), report
+
+    output = "".join(line for idx, line in enumerate(lines) if idx not in removed)
+    report["removed_luraph_lines"] = len(removed)
+    report["bootstrap_lines"] = len(removed)
+    return output, report
 
 
 _TEMP = re.compile(r"^(\t*)local ([A-Za-z_]\w*) = ([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)$")

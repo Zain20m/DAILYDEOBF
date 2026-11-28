@@ -1464,8 +1464,12 @@ def _strip_flattened_bootstrap(text, exe, root, stmts, lines, pool_report):
     for a, b, first in stmts:
         if a >= dispatcher:
             break
-        if PREAMBLE.match(first):
+        preamble_fn = re.match(r"^local function (luraph_runtime\\d+|luraph_undecrypted_function)\\(", first)
+        if preamble_fn and _refs(preamble_fn.group(1), text) == 1:
             drops.append((a, b))
+            continue
+        # Keep the constant pool unless a separate pass proves it is unused.
+        if re.match(r"^local luraph_constants\\s*=", first):
             continue
         chunk = "\n".join(lines[a:b + 1])
         # Explicit Luraph/anti-tamper markers are required. API-using statements

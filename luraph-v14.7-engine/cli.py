@@ -209,6 +209,8 @@ def parser() -> argparse.ArgumentParser:
 
     out = p.add_argument_group("output/debug")
     out.add_argument("--debug", action="store_true", help="keep intermediate files")
+    out.add_argument("--keep-luraph-runtime", action="store_true",
+                     help="keep Luraph bootstrap/anti-tamper scaffolding in the output")
     out.add_argument("--keep-work", action="store_true", help="keep the temporary work directory")
     out.add_argument("--no-credit", action="store_true", help="omit the generated-file header")
     out.add_argument("--keep-preamble", action="store_true", default=False,
@@ -264,6 +266,29 @@ def normalize_compat_args(args):
         if not hasattr(args, name):
             setattr(args, name, value)
 
+
+
+def strip_luraph_runtime(output: Path) -> None:
+    """Remove Luraph-only bootstrap scaffolding after a successful lift.
+
+    This is a post-pass: it never changes VM tracing or lifting. The
+    stripper validates the candidate with luau-ast and returns the original
+    text unchanged whenever it cannot prove the removal is safe.
+    """
+    try:
+        from strip_runtime import strip
+        from obfuscators.luraph_v14_9.vmmap import luau_ast_executable
+
+        original = read_source(output)
+        cleaned, report = strip(original, luau_ast_executable())
+        if cleaned != original and report:
+            output.write_text(cleaned, encoding="utf-8", newline="")
+            removed = report.get("bootstrap_lines", 0)
+            functions = len(report.get("functions", []))
+            eprint("[+] removed Luraph-only scaffolding: "
+                   f"{removed} bootstrap lines, {functions} helper functions")
+    except Exception as exc:  # cleanup must never break deobfuscation
+        eprint(f"[!] Luraph cleanup skipped (original output preserved): {exc}")
 
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
@@ -323,6 +348,9 @@ def main(argv=None) -> int:
         output.parent.mkdir(parents=True, exist_ok=True)
         if result_path.resolve() != output.resolve():
             shutil.copyfile(result_path, output)
+
+        if not args.keep_luraph_runtime:
+            strip_luraph_runtime(output)
 
         print(str(output))
         eprint(f"[+] wrote: {output}")

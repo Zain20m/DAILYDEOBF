@@ -77,6 +77,51 @@ def _refs(name, text):
     return len(re.findall(r"\b%s\b" % re.escape(name), text))
 
 
+def _looks_like_luraph_pool_proto(name, body):
+    """Recognize an orphaned lifted Luraph constant-pool/runtime factory.
+
+    Some lifts place the entire Luraph pool inside a recovered_proto_* function
+    whose only statement returns a large numeric-keyed table. That function is
+    not user script logic when it is unreferenced and carries the runtime's
+    environment/debug fingerprints.
+    """
+    if not name.startswith("recovered_proto_"):
+        return False
+    if not re.search(r"\breturn\s*\(\s*\{", body):
+        return False
+    if not re.search(r"(?m)^\s*\[0\]\s*=\s*function\s*\(", body):
+        return False
+    if len(re.findall(r"(?m)^\s*\[\d+\]\s*=", body)) < 32:
+        return False
+
+    fingerprints = (
+        "Luraph",
+        "The debug library is required",
+        "support ticket",
+        "short_src",
+        "linedefined",
+        "lastlinedefined",
+        "setfenv",
+        "getfenv",
+        "LPH_",
+        "__metatable",
+    )
+    return sum(bool(re.search(re.escape(marker), body, re.I)) for marker in fingerprints) >= 3
+
+
+def _looks_like_main_proto(body):
+    """Require real script/API activity before giving a lone proto the main name."""
+    signals = (
+        r"\bgame\s*:\s*GetService\s*\(",
+        r"\bInstance\.new\s*\(",
+        r"\bPlayers\.LocalPlayer\b",
+        r"\bgame\.Players\b",
+        r"\btask\.(?:spawn|wait)\s*\(",
+        r"\b(?:sendW|http_request|request|loadstring)\s*\(",
+    )
+    return sum(bool(re.search(pattern, body)) for pattern in signals) >= 2
+
+
 
 def _code_mask(source):
     """True for source characters outside Lua strings and comments."""
@@ -249,7 +294,20 @@ def strip(text, exe=None):
         "constant_entries_inlined": 0,
         "removed_luraph_lines": 0,
         "mixed_recovered_functions": [],
+        "pool_prototypes_removed": [],
+        "main_function_renamed": None,
     }
+
+    # Drop only an unreferenced proto that is demonstrably the Luraph
+    # constant-pool/runtime factory, not an ordinary recovered script function.
+    pool_protos = []
+    for first, last, name in proto_starts:
+        body = "".join(lines[first:last + 1])
+        if _refs(name, text) == 1 and _looks_like_luraph_pool_proto(name, body):
+            pool_protos.append((first, last, name))
+            note_start = _comment_start(lines, first)
+            removed.update(range(note_start, last + 1))
+            report["pool_prototypes_removed"].append(name)
 
     # This exact layout appears in the uploaded v14.7 sample: top-level locals
     # followed by a very large do/while runtime dispatcher, then lifted prototypes.
@@ -262,7 +320,10 @@ def strip(text, exe=None):
     # not standalone constant-pool declarations. Deleting their lines corrupts
     # the recovered function, so record them rather than cutting them.
     protected = []
+    pool_spans = {(first, last) for first, last, _ in pool_protos}
     for first, last, name in proto_starts:
+        if (first, last) in pool_spans:
+            continue
         protected.append((first, last))
         body = "".join(lines[first:last + 1])
         if re.search(r"\bluraph_constant\w*\b|\bLPH_[A-Z0-9_]+\b|[\"']Luraph[\"']", body):
@@ -312,6 +373,32 @@ def strip(text, exe=None):
         return text, None
 
     output = "".join(line for idx, line in enumerate(lines) if idx not in removed)
+
+    # If the pool was removed and exactly one orphaned vararg proto remains,
+    # label it as the recovered entrypoint. Its body is copied byte-for-byte.
+    if pool_protos:
+        remaining = [
+            (first, last, name) for first, last, name in proto_starts
+            if (first, last) not in pool_spans and
+            not any(a <= first <= b for a, b, _ in pool_protos)
+        ]
+        if len(remaining) == 1:
+            first, last, name = remaining[0]
+            match = PROTO.match(lines[first].strip())
+            body = "".join(lines[first:last + 1])
+            if match and match.group(2).strip() == "..." and _refs(name, text) == 1 and _looks_like_main_proto(body):
+                output = re.sub(
+                    r"(?m)^local function " + re.escape(name) + r"(?=\s*\()",
+                    "local function recovered_main",
+                    output,
+                    count=1,
+                )
+                report["main_function_renamed"] = name
+
+        # Remove the lifter's own notes and trailing statistics, not script code.
+        output = _drop_lift_notes(output)
+        output = _drop_generated_lift_summary(output)
+
     report["removed_luraph_lines"] = len(removed)
     report["bootstrap_lines"] = sum(1 for i in removed if i < first_proto)
     return output, report
@@ -415,6 +502,21 @@ def _drop_lift_notes(text):
     start with code (a file preview shows its first lines). Comments only:
     the code is the same."""
     return _LIFT_NOTES.sub("", text).lstrip("\n")
+
+
+
+def _drop_generated_lift_summary(text):
+    """Remove the lifter's trailing line-count/partial-lift report only."""
+    marker = re.search(r"(?m)^--\s*={8,}\s*$", text)
+    if not marker:
+        return text
+    tail = text[marker.start():]
+    if not re.search(r"recovered functions\s*:|unlifted VM blocks\s*:|NOTE: partial lift:", tail, re.I):
+        return text
+    credit = re.search(r"(?m)^--deobf by daily\s*deobf\s*$", tail, re.I)
+    if credit:
+        return text[:marker.start()].rstrip() + "\n" + tail[credit.start():].strip() + "\n"
+    return text[:marker.start()].rstrip() + "\n"
 
 
 def _refine_names(text, exe):

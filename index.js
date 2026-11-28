@@ -76,7 +76,7 @@ async function createPastefyLinks(title, content) {
   }
   const normalUrl = 'https://pastefy.app/' + encodeURIComponent(paste.id);
   const rawValue = String(paste.raw_url || '');
-  const rawUrl = /^https?:\\/\\//i.test(rawValue)
+  const rawUrl = rawValue.startsWith('https://') || rawValue.startsWith('http://')
     ? rawValue
     : 'https://pastefy.app/' + (rawValue.startsWith('/') ? rawValue.slice(1) : encodeURIComponent(paste.id) + '/raw');
   return new ActionRowBuilder().addComponents(

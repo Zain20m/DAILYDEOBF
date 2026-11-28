@@ -600,9 +600,12 @@ class IBInterp(S.Interp):
             vals = [self.eval(st["from"], scope), self.eval(st["to"], scope)]
             if st.get("step"):
                 vals.append(self.eval(st["step"], scope))
-            if any(isinstance(x, (Lin, SpreadIdx)) for x in vals):
+            # A Lin used as the step is a symbolic numeric expression, not
+            # the multiple-result bound handled by lin_for. Preserve that loop
+            # as a fused runtime loop instead of trying to execute it here.
+            if any(isinstance(x, (Lin, SpreadIdx)) for x in vals[:2]):
                 return None
-            return "for" if any(script_value(x) for x in vals) else None
+            return "for" if any(script_value(x) or isinstance(x, Lin) for x in vals) else None
         vals = self.eval_list(st["values"], scope, 3)
         return "forin" if script_value(vals[0]) else None
 
@@ -658,9 +661,21 @@ class IBInterp(S.Interp):
         elif t == "AstStatFor":
             i, lim, step = (Reg(LV_BASE + self._lv(("for", loc, part))) for part in ("i", "lim", "step"))
             sv = L.fval(step)
-            if not isinstance(sv, (int, float)) or isinstance(sv, bool) or sv == 0:
-                raise Unsupported("fused numeric loop with an unknown step")
-            if not self.cond_true(Bin("CompareLe" if sv > 0 else "CompareGe", i, lim)):
+            if isinstance(sv, (int, float)) and not isinstance(sv, bool):
+                # A known step lets us keep the condition compact. Zero follows
+                # Lua's non-positive-step comparison.
+                condition = Bin("CompareLe" if sv > 0 else "CompareGe", i, lim)
+            else:
+                # The step can be a runtime value (including a symbolic
+                # vararg count). Decide its sign in the lifted control flow;
+                # do not reject the entire handler just because it is unknown.
+                positive = Bin("CompareGt", step, Const(0))
+                condition = Bin(
+                    "Or",
+                    Bin("And", positive, Bin("CompareLe", i, lim)),
+                    Bin("And", Un("Not", positive), Bin("CompareGe", i, lim)),
+                )
+            if not self.cond_true(condition):
                 return
             inner.vars[st["var"]["location"]] = i
         else:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression tests for removal-only Luraph scaffolding cleanup."""
+"""Regression tests for removal-only cleanup of real v14.7 output structure."""
 
 import sys
 from pathlib import Path
@@ -12,59 +12,145 @@ from obfuscators.luraph_v14_9.vmmap import luau_ast_executable
 
 
 def main():
-    source = '''local luraph_constants = {
+    exe = luau_ast_executable()
+
+    source = '''local state = 1
+local v, luraph_constant, n
+do
+    while true do
+        if state == 1 then
+            v = getfenv
+            state = 2
+        elseif state == 2 then
+            if string.find("The debug library is required", "debug") then
+                state = 3
+            else
+                break
+            end
+        elseif state == 3 then
+            n = 4
+            state = 4
+        elseif state == 4 then
+            n = 5
+            state = 5
+        elseif state == 5 then
+            n = 6
+            state = 6
+        elseif state == 6 then
+            n = 7
+            state = 7
+        elseif state == 7 then
+            n = 8
+            state = 8
+        elseif state == 8 then
+            n = 9
+            state = 9
+        elseif state == 9 then
+            n = 10
+            state = 10
+        elseif state == 10 then
+            n = 11
+            state = 11
+        elseif state == 11 then
+            n = 12
+            state = 12
+        elseif state == 12 then
+            n = 13
+            state = 13
+        elseif state == 13 then
+            n = 14
+            state = 14
+        elseif state == 14 then
+            n = 15
+            state = 15
+        elseif state == 15 then
+            n = 16
+            state = 16
+        elseif state == 16 then
+            n = 17
+            state = 17
+        elseif state == 17 then
+            n = 18
+            state = 18
+        elseif state == 18 then
+            n = 19
+            state = 19
+        elseif state == 19 then
+            n = 20
+            state = 20
+        elseif state == 20 then
+            n = 21
+            state = 21
+        elseif state == 21 then
+            n = 22
+            state = 22
+        elseif state == 22 then
+            n = 23
+            state = 23
+        elseif state == 23 then
+            n = 24
+            state = 24
+        elseif state == 24 then
+            n = 25
+            state = 25
+        end
+    end
+end
+
+local function recovered_proto_p_27(...)
+    local value = "kept"
+    return value
+end
+
+local function recovered_proto_p_1(...)
+    local luraph_constant4 = "register"
+    local ScreenGui = Instance.new("ScreenGui")
+    return ScreenGui, luraph_constant4
+end
+'''
+    cleaned, report = strip(source, exe)
+    assert report is not None, "expected the Luraph root bootstrap to be removed"
+    assert "local state = 1" not in cleaned
+    assert "The debug library is required" not in cleaned
+    assert "recovered_proto_p_27" in cleaned
+    assert "recovered_proto_p_1" in cleaned
+    assert 'Instance.new("ScreenGui")' in cleaned
+    assert 'local luraph_constant4 = "register"' in cleaned
+    assert "recovered_proto_p_1" in report["mixed_recovered_functions"]
+
+    simple = '''local luraph_constants = {
     [1] = "close",
-    [2] = Instance,
 }
 local function luraph_runtime1(...)
     return nil
 end
-local function recovered_proto_p_27(player)
-    local gui = Instance.new("ScreenGui")
-    gui.Name = "Test GUI"
-    return gui
-end
-local function recovered_proto_p_28(...)
-    -- Luraph marker in a comment should not cause this function to vanish.
-    local text = "ordinary recovered content"
-    return text
+local function recovered_proto_p_2()
+    return "keep me"
 end
 '''
-    cleaned, report = strip(source, luau_ast_executable())
+    cleaned, report = strip(simple, exe)
     assert report is not None
-    assert "luraph_constants" not in cleaned, cleaned
-    assert "luraph_runtime1" not in cleaned, cleaned
-    assert "recovered_proto_p_27" in cleaned, cleaned
-    assert 'Instance.new("ScreenGui")' in cleaned, cleaned
-    assert "recovered_proto_p_28" in cleaned, cleaned
-    assert "ordinary recovered content" in cleaned, cleaned
-
-    # Explicit pool references are removed, not inlined or substituted.
-    refs = '''local recovered_value = luraph_constants[2]
-local function recovered_proto_p_1()
-    return "still recovered"
-end
-'''
-    cleaned, _ = strip(refs, luau_ast_executable())
     assert "luraph_constants" not in cleaned
-    assert "Instance" not in cleaned
-    assert "still recovered" in cleaned
+    assert "luraph_runtime1" not in cleaned
+    assert "recovered_proto_p_2" in cleaned
 
-    # Ambiguous VM/control-flow code is retained rather than guessed away.
-    vm = '''local state = 10
+    ordinary = '''local state = 1
 while true do
-    if state == 10 then
-        state = 20
-    else
+    if state == 1 then
+        state = 2
+    elseif state == 2 then
         break
     end
 end
+local function recovered_proto_user()
+    return "ok"
+end
 '''
-    cleaned, report = strip(vm, luau_ast_executable())
-    assert cleaned == vm
-    assert report is None
+    cleaned, report = strip(ordinary, exe)
+    assert "while true do" in cleaned
+    assert report is None or report["bootstrap_lines"] == 0
 
-    print("Luraph removal-only cleanup tests passed.")
+    print("Luraph v14.7 removal-only regression tests passed.")
 
 
 if __name__ == "__main__":

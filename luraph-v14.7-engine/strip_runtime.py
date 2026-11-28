@@ -1442,10 +1442,10 @@ def _prune_preamble(text):
 
 
 _FLAT_BOOTSTRAP = re.compile(
-    r"\\b(?:LPH_[A-Z0-9_]+|debug\\.getinfo|debug\\.info|"
+    r"\b(?:LPH_[A-Z0-9_]+|debug\.getinfo|debug\.info|"
     r"setfenv|getfenv|hookfunction|checkcaller|islclosure|"
-    r"getgenv| getrenv|rawset\\s*\\(\\s*_G|"
-    r"support ticket|short_src|linedefined)\\b",
+    r"getgenv| getrenv|rawset\s*\(\s*_G|"
+    r"support ticket|short_src|linedefined)\b",
     re.I,
 )
 
@@ -1454,7 +1454,7 @@ def _strip_flattened_bootstrap(text, exe, root, stmts, lines, pool_report):
     flattened dispatcher. Never remove the dispatcher or statements inside it."""
     dispatcher = None
     for a, b, first in stmts:
-        if re.match(r"^\\s*while\\s+true\\s+do\\s*$", first):
+        if re.match(r"^\s*while\s+true\s+do\s*$", first):
             dispatcher = a
             break
     if dispatcher is None:
@@ -1467,7 +1467,7 @@ def _strip_flattened_bootstrap(text, exe, root, stmts, lines, pool_report):
         if PREAMBLE.match(first):
             drops.append((a, b))
             continue
-        chunk = "\\n".join(lines[a:b + 1])
+        chunk = "\n".join(lines[a:b + 1])
         # Explicit Luraph/anti-tamper markers are required. API-using statements
         # are always retained, even if they also contain a marker.
         if _FLAT_BOOTSTRAP.search(chunk) and not API.search(chunk):
@@ -1482,7 +1482,7 @@ def _strip_flattened_bootstrap(text, exe, root, stmts, lines, pool_report):
         out.extend(lines[cursor:a])
         cursor = b + 1
     out.extend(lines[cursor:])
-    cleaned = "\\n".join(out)
+    cleaned = "\n".join(out)
     if _parse(cleaned, exe) is None:
         return text, pool_report
 

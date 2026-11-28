@@ -121,7 +121,7 @@ def _inline_constant_pool(text):
 
     protos = [(l0, l1, m) for l0, l1, first in stmts for m in [PROTO.match(first)] if m]
     if not protos:
-        return text, pool_report
+        return _strip_flattened_bootstrap(text, exe, root, stmts, lines, pool_report)
     first_proto = protos[0][0]
     # the root body: top-level statements before the first lifted-alone
     # function that are not the constants table / stubs
@@ -1438,6 +1438,58 @@ def _prune_preamble(text):
         lambda match: values[match.group(1)], rest
     )
     return rewritten, len(uses)
+
+
+
+_FLAT_BOOTSTRAP = re.compile(
+    r"\\b(?:LPH_[A-Z0-9_]+|debug\\.getinfo|debug\\.info|"
+    r"setfenv|getfenv|hookfunction|checkcaller|islclosure|"
+    r"getgenv| getrenv|rawset\\s*\\(\\s*_G|"
+    r"support ticket|short_src|linedefined)\\b",
+    re.I,
+)
+
+def _strip_flattened_bootstrap(text, exe, root, stmts, lines, pool_report):
+    """Remove only independently identifiable top-level Luraph setup before a
+    flattened dispatcher. Never remove the dispatcher or statements inside it."""
+    dispatcher = None
+    for a, b, first in stmts:
+        if re.match(r"^\\s*while\\s+true\\s+do\\s*$", first):
+            dispatcher = a
+            break
+    if dispatcher is None:
+        return text, pool_report
+
+    drops = []
+    for a, b, first in stmts:
+        if a >= dispatcher:
+            break
+        if PREAMBLE.match(first):
+            drops.append((a, b))
+            continue
+        chunk = "\\n".join(lines[a:b + 1])
+        # Explicit Luraph/anti-tamper markers are required. API-using statements
+        # are always retained, even if they also contain a marker.
+        if _FLAT_BOOTSTRAP.search(chunk) and not API.search(chunk):
+            drops.append((a, b))
+
+    if not drops:
+        return text, pool_report
+
+    out = []
+    cursor = 0
+    for a, b in sorted(drops):
+        out.extend(lines[cursor:a])
+        cursor = b + 1
+    out.extend(lines[cursor:])
+    cleaned = "\\n".join(out)
+    if _parse(cleaned, exe) is None:
+        return text, pool_report
+
+    report = dict(pool_report or {})
+    report["bootstrap_lines"] = sum(b - a + 1 for a, b in drops)
+    report["flattened_bootstrap"] = True
+    return cleaned, report
 
 
 def strip(text, exe):

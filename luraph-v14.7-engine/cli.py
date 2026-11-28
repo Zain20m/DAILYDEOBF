@@ -308,6 +308,24 @@ def write_flattened_analysis(output: Path) -> None:
         eprint(f"[!] analysis export skipped (deobfuscated output preserved): {exc}")
 
 
+def write_control_flow_report(output: Path) -> None:
+    """Create a static CFG report for flattened state-machine lifts."""
+    try:
+        from control_flow import write_control_flow
+        source = read_source(output)
+        if not re.search(r"\\bwhile\\s+true\\s+do\\b", source):
+            return
+        report = output.with_suffix(".controlflow.txt")
+        lines, blocks = write_control_flow(output, report)
+        if blocks:
+            eprint(f"[+] wrote control-flow report: {report} "
+                   f"({blocks} state blocks, {lines} source lines)")
+        else:
+            report.unlink(missing_ok=True)
+    except Exception as exc:  # report generation must never break the deobfuscation
+        eprint(f"[!] control-flow recovery skipped (original output preserved): {exc}")
+
+
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
     normalize_compat_args(args)
@@ -371,6 +389,7 @@ def main(argv=None) -> int:
             strip_luraph_runtime(output)
 
         write_flattened_analysis(output)
+        write_control_flow_report(output)
 
         print(str(output))
         eprint(f"[+] wrote: {output}")

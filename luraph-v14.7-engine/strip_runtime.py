@@ -192,84 +192,140 @@ def _inline_constant_pool(text):
         out = out[:start] + value + out[end:]
     return out, len(edits)
 
-def strip(text, exe=None):
-    """Remove explicitly identifiable Luraph scaffolding without rewriting recovered code.
+def _looks_like_luraph_bootstrap(source):
+    """Strong structural fingerprint for the lifted root bootstrap.
 
-    This is intentionally removal-only: recovered_proto_* bodies are never
-    transformed, renamed, folded, or discarded. Ambiguous VM/control-flow code
-    is retained because it may contain recovered script behavior.
+    A large state dispatcher by itself is not enough: the root must also show
+    Luraph runtime/environment-probe fingerprints. This avoids deleting a
+    game's own flattened main function.
+    """
+    state_tests = len(re.findall(r"\bstate\s*==\s*\d+\b", source))
+    if state_tests < 24:
+        return False
+    fingerprints = (
+        "The debug library is required",
+        "support ticket",
+        "short_src",
+        "linedefined",
+        "lastlinedefined",
+        "setfenv",
+        "getfenv",
+        "LPH_",
+        "luraph_constant",
+    )
+    return sum(token in source for token in fingerprints) >= 3
+
+
+def strip(text, exe=None):
+    """Remove separable Luraph scaffolding while preserving lifted functions.
+
+    The lifted root bootstrap is removed only when it has a large numeric
+    dispatcher AND multiple Luraph runtime fingerprints. Recovered prototype
+    bodies are protected byte-for-byte: even when they contain Luraph VM
+    registers or a mixed constant/dispatch table, this pass will not delete
+    individual lines from those functions.
     """
     if os.environ.get("DEOB_KEEP_LURAPH_RUNTIME"):
         return text, None
+    if not exe:
+        return text, None
+
+    root = _parse(text, exe)
+    if root is None:
+        return text, None
 
     lines = text.splitlines(keepends=True)
+    root_body = root.get("body", [])
+    proto_starts = []
+    statements = []
+    for stmt in root_body:
+        try:
+            first, last = _loc(stmt["location"])
+        except Exception:
+            continue
+        head = lines[first].strip() if 0 <= first < len(lines) else ""
+        statements.append((first, last, head, stmt))
+        m = PROTO.match(head)
+        if m:
+            proto_starts.append((first, last, m.group(1)))
+
+    if not proto_starts:
+        return text, None
+
+    first_proto = min(item[0] for item in proto_starts)
+    prelude = "".join(lines[:first_proto])
     removed = set()
     report = {
         "bootstrap_lines": 0,
         "functions": [],
         "constant_entries_inlined": 0,
         "removed_luraph_lines": 0,
+        "mixed_recovered_functions": [],
     }
 
-    # Remove explicit Luraph constant-pool declarations as a whole table.
-    i = 0
-    while i < len(lines):
-        if re.match(r"^\s*local\s+luraph_constants\s*=\s*\{", lines[i]):
-            depth = 0
-            j = i
-            while j < len(lines):
-                code = re.sub(r"--.*$", "", lines[j])
-                depth += code.count("{") - code.count("}")
-                removed.update(range(i, j + 1))
-                if depth <= 0:
-                    break
-                j += 1
-            i = j + 1
+    # This exact layout appears in the uploaded v14.7 sample: top-level locals
+    # followed by a very large do/while runtime dispatcher, then lifted prototypes.
+    # Remove only that proven root bootstrap span.
+    if _looks_like_luraph_bootstrap(prelude):
+        removed.update(range(first_proto))
+
+    # Protect every lifted prototype. The identifiers luraph_constant,
+    # luraph_constant2, ... are live registers inside some recovered functions,
+    # not standalone constant-pool declarations. Deleting their lines corrupts
+    # the recovered function, so record them rather than cutting them.
+    protected = []
+    for first, last, name in proto_starts:
+        protected.append((first, last))
+        body = "".join(lines[first:last + 1])
+        if re.search(r"\bluraph_constant\w*\b|\bLPH_[A-Z0-9_]+\b|[\"']Luraph[\"']", body):
+            report["mixed_recovered_functions"].append(name)
+
+    # Remove explicit top-level constant tables and named no-op runtime stubs.
+    # The AST statement bounds ensure multiline declarations are removed whole.
+    for first, last, head, stmt in statements:
+        if any(first >= x and last <= y for x, y in protected):
             continue
-        i += 1
+        if first < first_proto and first in removed:
+            continue
+        if re.match(r"local\s+luraph_constants\s*=\s*\{", head):
+            removed.update(range(first, last + 1))
+            continue
+        if re.match(
+            r"local\s+function\s+(?:luraph_runtime\w*|luraph_undecrypted_function)\s*\(",
+            head,
+        ):
+            removed.update(range(first, last + 1))
+            report["functions"].append(head.split("(")[0].replace("local function ", ""))
 
-    # Remove clearly named Luraph-only top-level helpers using parser ranges.
-    if exe:
-        root = _parse(text, exe)
-        if root:
-            for stmt in root.get("body", []):
-                try:
-                    first, last = _loc(stmt["location"])
-                except Exception:
-                    continue
-                head = lines[first].strip() if first < len(lines) else ""
-                if re.match(
-                    r"local\s+function\s+(?:luraph_runtime\w*|luraph_undecrypted_function)\s*\(",
-                    head,
-                ):
-                    removed.update(range(first, last + 1))
-                    report["functions"].append(head.split("(")[0].replace("local function ", ""))
-
-    # Remove remaining standalone Luraph references/checks, not arbitrary
-    # statements merely because they occur in a flattened VM dispatcher.
-    explicit = re.compile(
-        r"\b(?:luraph_constants|luraph_runtime\w*|luraph_undecrypted_function|LPH_[A-Z0-9_]+)\b"
-    )
+    # A bare reference statement outside lifted prototypes is scaffolding only
+    # when it is a whole line. Never delete a line from a recovered function.
     for idx, line in enumerate(lines):
-        if idx in removed:
+        if idx in removed or any(x <= idx <= y for x, y in protected):
             continue
-        code = re.sub(r"--.*$", "", line)
-        if explicit.search(code):
+        code = re.sub(r"--.*$", "", line).strip()
+        if not code:
+            continue
+        if re.fullmatch(
+            r"(?:local\s+)?[A-Za-z_]\w*\s*=\s* luraph_constants(?:\s*\[\s*\d+\s*\])?",
+            code,
+        ):
+            removed.add(idx)
+        elif re.fullmatch(r"luraph_constants\s*\[\s*\d+\s*\]\s*=.*", code):
             removed.add(idx)
 
-    # Drop Luraph-only comments/metadata, leaving ordinary comments untouched.
+    # Strip only Luraph-labelled comments outside recovered function bodies.
     for idx, line in enumerate(lines):
-        if idx in removed:
+        if idx in removed or any(x <= idx <= y for x, y in protected):
             continue
         if re.match(r"^\s*--.*(?:Luraph|LPH_)", line, re.I):
             removed.add(idx)
 
-    if not removed:
+    if not removed and not report["mixed_recovered_functions"]:
         return text, None
 
     output = "".join(line for idx, line in enumerate(lines) if idx not in removed)
     report["removed_luraph_lines"] = len(removed)
-    report["bootstrap_lines"] = len(removed)
+    report["bootstrap_lines"] = sum(1 for i in removed if i < first_proto)
     return output, report
 
 

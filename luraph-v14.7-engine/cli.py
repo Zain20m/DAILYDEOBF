@@ -269,23 +269,49 @@ def normalize_compat_args(args):
 
 
 def strip_luraph_runtime(output: Path) -> None:
-    """Remove separable Luraph scaffolding; preserve mixed recovered functions."""
+    """Remove the proven root bootstrap, then reconstruct recovered dispatchers.
+
+    The deflattener follows only statically-proven numeric control variables
+    and slices original statements into their execution order. It runs after
+    the root bootstrap is removed, so it is focused on recovered functions.
+    """
     try:
         from strip_runtime import strip
+        from unflatten import deflatten_text
         from obfuscators.luraph_v14_9.vmmap import luau_ast_executable
 
         original = read_source(output)
-        cleaned, report = strip(original, luau_ast_executable())
+        ast_exe = luau_ast_executable()
+
+        # First remove the structurally identified Luraph root bootstrap.
+        cleaned, report = strip(original, ast_exe)
         if cleaned != original:
             output.write_text(cleaned, encoding="utf-8", newline="")
-        if report:
+
+        # Then de-flatten only what remains: the recovered prototypes and their
+        # nested closures. This never guesses symbolic branches or rewrites
+        # recovered statements; it reorders source slices only when proven.
+        recovered = cleaned
+        flattened = deflatten_text(recovered, ast_exe)
+        if flattened != recovered:
+            output.write_text(flattened, encoding="utf-8", newline="")
+            recovered = flattened
+
+        if report or flattened != cleaned:
+            removed = (report or {}).get("removed_luraph_lines", 0)
+            helpers = len((report or {}).get("functions", []))
+            before_states = len(re.findall(r"\\bstate\\s*==\\s*\\d+\\b", cleaned))
+            after_states = len(re.findall(r"\\bstate\\s*==\\s*\\d+\\b", recovered))
+            dispatch_removed = max(0, before_states - after_states)
+            constants_left = len(re.findall(r"\\bluraph_constant\\w*\\b", recovered))
+            unresolved = len(re.findall(r'error\\(["\\']devirt:', recovered))
             eprint("[+] Luraph cleanup: "
-                   f"{report.get('removed_luraph_lines', 0)} scaffolding lines removed; "
-                   f"{len(report.get('functions', []))} runtime stubs removed")
-            mixed = report.get("mixed_recovered_functions", [])
-            if mixed:
-                eprint("[!] Mixed recovered functions retained intact (their Luraph registers "
-                       "are interleaved with script logic): " + ", ".join(mixed))
+                   f"{removed} bootstrap lines and {helpers} named runtime helpers removed; "
+                   f"{dispatch_removed} state checks eliminated by proven deflattening")
+            if constants_left or unresolved:
+                eprint("[!] Kept mixed recovered content intact: "
+                       f"{constants_left} Luraph-named register references, "
+                       f"{unresolved} unresolved devirt blocks remain")
     except Exception as exc:  # cleanup must never break deobfuscation
         eprint(f"[!] Luraph post-processing skipped (current output preserved): {exc}")
 

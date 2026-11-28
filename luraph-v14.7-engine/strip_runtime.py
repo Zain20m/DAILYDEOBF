@@ -118,13 +118,29 @@ def strip(text, exe):
     drop = []          # (first line, last line, what)
     report = {"bootstrap_lines": 0, "functions": []}
     if main:
+        # A lifted bootstrap can contain a small number of Roblox-looking
+        # environment probes (for example, checking game/workspace) alongside
+        # the Luraph anti-tamper setup. The old all-or-nothing API test caused
+        # one such probe to block removal of the entire bootstrap.
+        #
+        # Classify root statements independently: keep every statement that
+        # actually uses a Roblox API, but remove the non-API statements only
+        # when the root has clear Luraph markers. The real script body is in
+        # recovered_proto_* functions, not in this root bootstrap.
         mtext = "\n".join(body_of(a, b) for a, b in main)
-        if MARKERS.search(mtext) and not API.search(mtext):
-            a = main[0][0]
-            b = main[-1][1]
-            # whole span: blank lines/comments between its statements too
-            drop.append((a, b, "bootstrap"))
-            report["bootstrap_lines"] = b - a + 1
+        if MARKERS.search(mtext):
+            api_statements = [
+                (a, b) for a, b in main if API.search(body_of(a, b))
+            ]
+            non_api_statements = [
+                (a, b) for a, b in main if not API.search(body_of(a, b))
+            ]
+            # Do not strip a root that is mostly actual API-using script code.
+            # A Luraph root is normally dominated by runtime statements.
+            if non_api_statements and len(non_api_statements) >= len(api_statements):
+                for a, b in non_api_statements:
+                    drop.append((a, b, "bootstrap"))
+                    report["bootstrap_lines"] += b - a + 1
 
     kept_protos = []
     for l0, l1, m in protos:

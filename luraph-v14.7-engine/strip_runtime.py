@@ -494,7 +494,8 @@ _LIFT_NOTES = re.compile(
     r"-- lifted on its own \(upvalues it uses come first in the parameter list\)\n"
     r"|^-- a function Luraph never decrypted: it did not run while the script was\n"
     r"-- analysed \(Luraph decrypts a function's code on its first call\)\n"
-    r"|^-- unresolved Luraph runtime helper; preserved as a safe stub\n")
+    r"|^-- unresolved Luraph runtime helper; preserved as a safe stub\n"
+    r"|^-- lifted on its own \\(upvalues it uses come first in the parameter list\\)\n")
 
 
 def _drop_lift_notes(text):

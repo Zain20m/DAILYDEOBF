@@ -272,9 +272,10 @@ def strip_luraph_runtime(output: Path) -> None:
     """Remove explicit Luraph scaffolding without rewriting recovered source."""
     try:
         from strip_runtime import strip
+        from obfuscators.luraph_v14_9.vmmap import luau_ast_executable
 
         original = read_source(output)
-        cleaned, report = strip(original)
+        cleaned, report = strip(original, luau_ast_executable())
         if cleaned != original:
             output.write_text(cleaned, encoding="utf-8", newline="")
         if report:
